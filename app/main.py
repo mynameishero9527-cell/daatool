@@ -42,6 +42,12 @@ def startup() -> None:
                 sector.sync_concepts()
             except Exception as exc:  # noqa: BLE001
                 log.warning("概念映射同步失败: %s", exc)
+        if query("SELECT COUNT(*) AS n FROM alert_log")[0]["n"] == 0:
+            from .services import alerts
+            try:
+                alerts.scan_all()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("首次提醒扫描失败: %s", exc)
     threading.Thread(target=bootstrap, daemon=True).start()
     # 4) 启动定时任务
     scheduler.start()

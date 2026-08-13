@@ -6,8 +6,8 @@ from .cache import cache
 from .database import get_meta
 from .datasources.base import HEALTH
 from .services import (
-    commodity, cycle, darkpool, finance, global_index, kline, macro, market,
-    rating, recommend, screener, sector, stocklist,
+    alerts, commodity, cycle, darkpool, finance, forecast, global_index, kline,
+    macro, market, rating, recommend, screener, sector, stocklist,
 )
 from .services import metrics as metrics_svc
 from .database import query as db_query
@@ -22,9 +22,24 @@ def dashboard():
     return {
         "indices": market.get_indices_overview(),
         "stats": market.market_stats(),
-        "movers": market.top_movers(5),
+        "movers": market.top_movers(20),
         "watchlist": market.get_watchlist(),
     }
+
+
+@router.get("/alerts")
+def get_alerts(limit: int = Query(50, le=100)):
+    return alerts.get_alerts(limit)
+
+
+@router.get("/market/minute")
+def market_minute():
+    return kline.get_minute("sh000001")
+
+
+@router.get("/market/forecast")
+def market_forecast():
+    return forecast.get_forecast()
 
 
 @router.get("/quote")
@@ -129,6 +144,11 @@ def commodities(categories: str = ""):
     return {"catalog": list(commodity.CATALOG.keys()), "items": commodity.get_quotes(cats)}
 
 
+@router.get("/commodities/kline")
+def commodities_kline(symbol: str, period: str = "day"):
+    return commodity.get_kline(symbol, period)
+
+
 @router.post("/commodities/watch")
 def commodities_watch(symbol: str):
     return commodity.toggle_watch(symbol)
@@ -147,8 +167,12 @@ def etfs():
 # ---------------- 个股推荐 ----------------
 
 @router.get("/recommend")
-def recommend_board(board: str = "composite", limit: int = Query(50, le=100)):
-    return {"boards": recommend.BOARDS, **recommend.get_board(board, limit)}
+def recommend_board(board: str = "composite", page: int = 1,
+                    page_size: int = Query(20, le=100), advice: str = "",
+                    min_score: float = 0, vol_filter: str = "", order_by: str = ""):
+    return {"boards": recommend.BOARDS,
+            **recommend.get_board(board, page=page, page_size=page_size, advice=advice,
+                                  min_score=min_score, vol_filter=vol_filter, order_by=order_by)}
 
 
 # ---------------- 板块资金 / 画像 / 财务 / 周期（3.0） ----------------

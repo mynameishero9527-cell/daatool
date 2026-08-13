@@ -102,6 +102,58 @@ def fetch_commodities(symbols: list[str]) -> dict[str, dict]:
     return result
 
 
+def fetch_domestic_futures(symbols: list[str]) -> dict[str, dict]:
+    """国内商品期货主力合约（nf_ 前缀）。"""
+    raw = _fetch_raw(symbols)
+    result = {}
+    for sym, p in raw.items():
+        if not sym.startswith("nf_") or len(p) < 15 or not p[8]:
+            continue
+        price = _f(p[8])
+        prev_settle = _f(p[10])
+        pct = round((price - prev_settle) / prev_settle * 100, 2) if price and prev_settle else None
+        result[sym] = {
+            "symbol": sym, "name": p[0],
+            "price": price, "prev_close": prev_settle,
+            "open": _f(p[2]), "high": _f(p[3]), "low": _f(p[4]),
+            "pct": pct, "time": f"{p[17] if len(p) > 17 else ''} {p[1]}",
+        }
+    return result
+
+
+_GLOBAL_KLINE_URL = (
+    "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var%20_=/"
+    "GlobalFuturesService.getGlobalFuturesDailyKLine?symbol={symbol}"
+)
+_INNER_KLINE_URL = (
+    "https://stock.finance.sina.com.cn/futures/api/jsonp.php/var%20_=/"
+    "InnerFuturesNewService.getDailyKLine?symbol={symbol}"
+)
+
+
+def fetch_futures_kline(symbol: str, inner: bool, count: int = 250) -> list[list]:
+    """商品期货日K：[[date,open,close,high,low,volume],...]（取最近 count 根）。"""
+    import json as _json
+    url = (_INNER_KLINE_URL if inner else _GLOBAL_KLINE_URL).format(symbol=symbol)
+    resp = tracked_get(SOURCE, url, headers=_HQ_HEADERS)
+    text = resp.text
+    start, end = text.find("(["), text.rfind("])")
+    if start < 0 or end < 0:
+        return []
+    rows = _json.loads(text[start + 1:end + 1])
+    out = []
+    for r in rows[-count:]:
+        try:
+            if inner:
+                out.append([r["d"], float(r["o"]), float(r["c"]), float(r["h"]), float(r["l"]), float(r["v"])])
+            else:
+                out.append([r["date"], float(r["open"]), float(r["close"]),
+                            float(r["high"]), float(r["low"]), float(r["volume"])])
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
 def fetch_finance_reports(code: str, num: int = 6) -> list[dict]:
     """财务报告关键指标（真实披露数据）。code 为 6 位数字代码。
 

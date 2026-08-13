@@ -17,7 +17,7 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
-  font-size: 14px;
+  font-size: 15px;
 }
 
 /* 顶栏 */
@@ -57,10 +57,10 @@ main { padding: 16px 18px; max-width: 1500px; margin: 0 auto; }
   margin-bottom: 14px;
 }
 .card-title {
-  font-size: 15px; font-weight: 600; margin-bottom: 12px;
+  font-size: 16px; font-weight: 600; margin-bottom: 12px;
   display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
 }
-.muted { color: var(--muted); font-size: 12px; font-weight: 400; }
+.muted { color: var(--muted); font-size: 13px; font-weight: 400; }
 .empty { color: var(--muted); text-align: center; padding: 30px 0; }
 
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
@@ -101,9 +101,9 @@ main { padding: 16px 18px; max-width: 1500px; margin: 0 auto; }
 .movers .mv-item:hover { background: var(--card-hover); }
 
 /* 表格 */
-table { width: 100%; border-collapse: collapse; }
-th, td { padding: 8px 10px; text-align: right; white-space: nowrap; }
-th { color: var(--muted); font-weight: 500; font-size: 12px; border-bottom: 1px solid var(--border); }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { padding: 9px 11px; text-align: right; white-space: nowrap; }
+th { color: var(--muted); font-weight: 500; font-size: 13px; border-bottom: 1px solid var(--border); }
 td { border-bottom: 1px solid rgba(42,53,72,.5); }
 th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
 tbody tr:hover { background: var(--card-hover); cursor: pointer; }
@@ -210,6 +210,48 @@ input:focus { border-color: var(--accent); }
 .src-row { display: flex; justify-content: space-between; align-items: center; padding: 9px 4px; border-bottom: 1px solid rgba(42,53,72,.5); }
 .progress { height: 8px; background: var(--bg2); border-radius: 4px; overflow: hidden; margin-top: 8px; }
 .progress .p { height: 100%; background: var(--accent); }
+
+/* ---- 4.0 新增 ---- */
+.movers-scroll > div { max-height: 260px; overflow-y: auto; }
+
+.alert-feed { max-height: 320px; overflow-y: auto; }
+.alert-item { display: flex; gap: 10px; padding: 9px 4px; border-bottom: 1px solid rgba(42,53,72,.5); align-items: flex-start; }
+.alert-item .time { color: var(--muted); font-size: 12px; white-space: nowrap; padding-top: 3px; }
+.alert-item .body { flex: 1; line-height: 1.6; }
+.alert-item .detail { color: var(--muted); font-size: 12px; }
+.at-buy_point { background: #8b1a1a; color: #ffb3b3; }
+.at-sell_point { background: #0f5c3d; color: #a9eccd; }
+.at-index_move { background: #7a4a12; color: #ffd9a8; }
+.at-fund_switch { background: #24406e; color: #a8c8ff; }
+.at-rotation { background: #4a3070; color: #d0b8ff; }
+
+/* 评分分档背景（FR4-04-5） */
+tr.score-55 td { background: rgba(255, 169, 64, .06); }
+tr.score-65 td { background: rgba(255, 140, 60, .10); }
+tr.score-75 td { background: rgba(255, 100, 60, .14); }
+tr.score-85 td { background: rgba(255, 82, 82, .20); }
+tr.score-95 td { background: rgba(255, 60, 60, .30); }
+
+/* 分页器 */
+.pager { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+.pager .info { color: var(--muted); font-size: 13px; }
+
+/* 概率条 */
+.prob-bar { height: 12px; border-radius: 6px; background: var(--bg2); overflow: hidden; margin: 8px 0; }
+.prob-bar .p { height: 100%; background: linear-gradient(90deg, #ffa940, #ff5252); border-radius: 6px; }
+.prob-num { font-size: 34px; font-weight: 800; }
+
+/* 筛选器两列布局（UX4-01） */
+.cond-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 24px; }
+@media (max-width: 1000px) { .cond-grid { grid-template-columns: 1fr; } }
+.cond-group .g-label { display: flex; align-items: center; gap: 8px; }
+.g-clear { color: var(--muted); font-size: 11px; cursor: pointer; text-decoration: underline; }
+.g-clear:hover { color: var(--up); }
+.collapse-toggle { color: var(--accent); font-size: 12px; cursor: pointer; }
+.sticky-result {
+  position: sticky; top: 54px; z-index: 20; background: var(--card);
+  padding: 8px 0; margin: -8px 0 4px;
+}
 
 /* ---- 2.0 新增 ---- */
 .grid-3 { display: grid; grid-template-columns: 1.1fr 1fr 1.2fr; gap: 14px; }

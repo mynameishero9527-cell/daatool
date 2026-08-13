@@ -140,6 +140,16 @@ CREATE TABLE IF NOT EXISTS concept_board (
     updated_at  TEXT NOT NULL
 );
 
+-- 4.0：智能提醒历史
+CREATE TABLE IF NOT EXISTS alert_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    alert_type  TEXT NOT NULL,       -- buy_point/sell_point/index_move/fund_switch/rotation
+    title       TEXT NOT NULL,
+    detail      TEXT DEFAULT '',
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_alert_time ON alert_log(created_at);
+
 CREATE TABLE IF NOT EXISTS finance_report (
     code        TEXT NOT NULL,
     report_date TEXT NOT NULL,

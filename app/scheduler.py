@@ -7,7 +7,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from .cache import cache
 from .config import INTERVAL_MEDIUM, INTERVAL_NEWS, INTERVAL_REALTIME, INTERVAL_SNAPSHOT
 from .database import set_meta
-from .services import commodity, global_index, macro, market, stocklist
+from .services import alerts, commodity, global_index, macro, market, stocklist
 from .services import metrics as metrics_svc
 
 log = logging.getLogger("scheduler")
@@ -108,6 +108,8 @@ def start() -> None:
                   day_of_week="mon-fri", hour=15, minute=40, id="metrics_rebuild")
     sched.add_job(_run("盘中指标轻量重算", _job_metrics_recompute, only_trading=True),
                   "interval", minutes=10, id="metrics_recompute")
+    sched.add_job(_run("智能提醒扫描(10分钟)", alerts.scan_all, only_trading=True),
+                  "interval", minutes=10, id="alerts")
     sched.add_job(_run("每日维护", _job_daily_maintain), "cron", hour=2, minute=0, id="maintain")
     sched.start()
     _scheduler = sched
@@ -122,7 +124,8 @@ def status() -> list[dict]:
                     "snapshot": "全市场快照刷新", "premarket": "盘前准备",
                     "postmarket": "盘后同步", "maintain": "每日维护",
                     "metrics_rebuild": "盘后指标重建(K线+四大指标)",
-                    "metrics_recompute": "盘中指标轻量重算"}.get(job.id, job.id)
+                    "metrics_recompute": "盘中指标轻量重算",
+                    "alerts": "智能提醒扫描(10分钟)"}.get(job.id, job.id)
             st = JOB_STATUS.get(name, {})
             jobs.append({
                 "id": job.id, "name": name,

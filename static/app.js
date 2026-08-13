@@ -47,6 +47,63 @@ async function loadDashboard() {
   } catch (err) { console.warn(err); }
   loadMarketSentiment();
   loadMarketCycle();
+  loadMiniMinute();
+  loadForecast();
+  loadAlerts();
+}
+
+let miniChart = null;
+async function loadMiniMinute() {
+  try {
+    const d = await api("/api/market/minute");
+    if (!d.points || !d.points.length) return;
+    miniChart ||= echarts.init($("#miniMinute"), "dark");
+    const prices = d.points.map((p) => p[1]);
+    const base = d.prev_close || prices[0];
+    const last = prices[prices.length - 1];
+    $("#miniMinuteTime").textContent = `${fmt(last)}（${pct((last - base) / base * 100)}）${d.offline ? " · 离线数据" : ""}`;
+    miniChart.setOption({
+      backgroundColor: "transparent", animation: false,
+      grid: { left: 50, right: 10, top: 8, bottom: 20 },
+      tooltip: { trigger: "axis", backgroundColor: "#1a2230", borderColor: "#2a3548", textStyle: { color: "#dbe4f0", fontSize: 12 } },
+      xAxis: { type: "category", data: d.points.map((p) => `${p[0].slice(0, 2)}:${p[0].slice(2)}`),
+        axisLine: { lineStyle: { color: "#2a3548" } }, axisLabel: { fontSize: 10 } },
+      yAxis: { scale: true, splitLine: { lineStyle: { color: "#202a3b" } }, axisLabel: { fontSize: 10 } },
+      series: [{ type: "line", data: prices, showSymbol: false,
+        lineStyle: { color: last >= base ? "#ff5252" : "#26c281", width: 1.5 },
+        areaStyle: { color: last >= base ? "rgba(255,82,82,.12)" : "rgba(38,194,129,.12)" },
+        markLine: { symbol: "none", data: [{ yAxis: base }], lineStyle: { color: "#7d8aa0", type: "dashed" }, label: { show: false } } }],
+    }, true);
+  } catch (err) { console.warn(err); }
+}
+
+async function loadForecast() {
+  try {
+    const f = await api("/api/market/forecast");
+    $("#forecastBox").innerHTML = `
+      <div style="text-align:center">
+        <span class="prob-num ${f.prob_up >= 58 ? "up" : f.prob_up <= 42 ? "down" : "flat"}">${f.prob_up}%</span>
+        <span class="badge ${f.prob_up >= 58 ? "level-4" : f.prob_up <= 42 ? "level-1" : "level-2"}">明日${esc(f.view)}</span>
+      </div>
+      <div class="prob-bar"><div class="p" style="width:${f.prob_up}%"></div></div>
+      ${f.factors.map((x) => `<div class="kv"><span class="k">${esc(x.name)}</span>
+        <span>${esc(x.value)} <span class="num ${cls(x.impact)}">${sign(x.impact)}${fmt(x.impact, 1)}</span></span></div>`).join("")}
+      <div class="muted" style="font-size:11px;margin-top:6px">${esc(f.disclaimer)}</div>`;
+  } catch (err) { console.warn(err); }
+}
+
+async function loadAlerts() {
+  try {
+    const d = await api("/api/alerts");
+    $("#alertFeed").innerHTML = d.items.length ? d.items.map((a) => `
+      <div class="alert-item">
+        <span class="time">${esc(a.created_at.slice(5, 16).replace("T", " "))}</span>
+        <div class="body">
+          <span class="badge at-${a.alert_type}">${esc(a.type_name)}</span> ${esc(a.title)}
+          ${a.detail ? `<div class="detail">${esc(a.detail)}</div>` : ""}
+        </div>
+      </div>`).join("") : '<div class="empty">暂无提醒，交易时段每10分钟自动扫描</div>';
+  } catch (err) { console.warn(err); }
 }
 
 async function loadMarketSentiment() {
@@ -572,27 +629,41 @@ async function initScreener() {
   } catch (err) { console.warn(err); }
 }
 
+let industriesCollapsed = true;
+function condGroup(group, label, buttonsHtml, collapsible = false) {
+  const count = (screenerState[group] || []).length;
+  return `<div class="cond-group">
+    <div class="g-label">${label}${count ? ` <span class="badge sector-tag" style="font-size:10px;padding:0 6px">${count}</span>` : ""}
+      ${count ? `<span class="g-clear" onclick="clearGroup('${group}')">清除</span>` : ""}
+      ${collapsible ? `<span class="collapse-toggle" onclick="toggleIndustries()">${industriesCollapsed ? "展开 ▾" : "收起 ▴"}</span>` : ""}
+    </div>
+    <div class="btn-group multi" data-group="${group}" ${collapsible && industriesCollapsed ? 'style="display:none"' : ""}>
+      ${buttonsHtml}</div></div>`;
+}
+
 function renderScreenerConditions() {
   const m = screenerMeta;
-  let html = '<div class="chips" id="condChips"></div>';
-  html += `<div class="cond-group"><div class="g-label">所属板块</div><div class="btn-group multi" data-group="boards">
-    ${m.boards.map((b) => `<button class="opt ${screenerState.boards.includes(b) ? "active" : ""}" data-val="${b}">${b}</button>`).join("")}</div></div>`;
+  const totalConds = Object.entries(screenerState).filter(([, v]) => Array.isArray(v) && v.length).reduce((a, [, v]) => a + v.length, 0);
+  let html = `<div class="chips" id="condChips"></div><div class="cond-grid">`;
+  html += condGroup("boards", "所属板块",
+    m.boards.map((b) => `<button class="opt ${screenerState.boards.includes(b) ? "active" : ""}" data-val="${b}">${b}</button>`).join(""));
   if (m.industries.length) {
-    html += `<div class="cond-group"><div class="g-label">所属行业</div><div class="btn-group multi" data-group="industries">
-      ${m.industries.map((b) => `<button class="opt ${screenerState.industries.includes(b) ? "active" : ""}" data-val="${b}">${b}</button>`).join("")}</div></div>`;
+    html += condGroup("industries", `所属行业（${m.industries.length}个）`,
+      m.industries.map((b) => `<button class="opt ${screenerState.industries.includes(b) ? "active" : ""}" data-val="${b}">${b}</button>`).join(""), true);
   }
   for (const [group, buckets] of Object.entries(m.buckets)) {
-    html += `<div class="cond-group"><div class="g-label">${GROUP_LABELS[group] || group}</div><div class="btn-group multi" data-group="${group}">
-      ${Object.entries(buckets).map(([k, label]) =>
-        `<button class="opt ${(screenerState[group] || []).includes(k) ? "active" : ""}" data-val="${k}">${esc(label)}</button>`).join("")}</div></div>`;
+    html += condGroup(group, GROUP_LABELS[group] || group,
+      Object.entries(buckets).map(([k, label]) =>
+        `<button class="opt ${(screenerState[group] || []).includes(k) ? "active" : ""}" data-val="${k}">${esc(label)}</button>`).join(""));
   }
-  html += `<div class="cond-inline" style="margin-top:8px">
+  html += `</div><div class="cond-inline" style="margin-top:8px">
     <span><span class="g-label muted">股价区间</span>
       <input id="priceMin" placeholder="最低" value="${screenerState.price_min}">
       ~ <input id="priceMax" placeholder="最高" value="${screenerState.price_max}"></span>
     <label style="color:var(--muted);font-size:13px">
       <input type="checkbox" id="excludeSt" ${screenerState.exclude_st ? "checked" : ""}> 剔除 ST/退市
-    </label></div>`;
+    </label>
+    <span class="muted">已选条件 ${totalConds} 项</span></div>`;
   $("#screenerConditions").innerHTML = html;
   renderChips();
 
@@ -626,6 +697,16 @@ function renderChips() {
   }
   $("#condChips").innerHTML = chips.join("") || '<span class="muted" style="font-size:12px">未设置条件（默认展示全市场按购买指数排序）</span>';
 }
+
+window.clearGroup = (group) => {
+  if (Array.isArray(screenerState[group])) screenerState[group] = [];
+  renderScreenerConditions();
+  runScreenerDebounced();
+};
+window.toggleIndustries = () => {
+  industriesCollapsed = !industriesCollapsed;
+  renderScreenerConditions();
+};
 
 window.removeCond = (group, val) => {
   const arr = screenerState[group];
@@ -867,10 +948,10 @@ function renderCommodities(items) {
   const offline = items.length && items[0].offline;
   $("#commodityGrid").innerHTML = (offline ? '<div class="offline-banner" style="grid-column:1/-1">商品行情暂不可用，请稍后</div>' : "") +
     (items.map((c) => `
-    <div class="q-card">
+    <div class="q-card" style="cursor:pointer" onclick="openCommodityKline('${c.symbol}','${esc(c.name)}')" title="点击查看K线">
       <div class="head">
-        <div><div class="name">${esc(c.name)}</div><div class="sub">${esc(c.category)} · ${esc(c.unit)}</div></div>
-        <span class="star ${c.watched ? "on" : ""}" onclick="toggleCommodity('${c.symbol}')">${c.watched ? "★" : "☆"}</span>
+        <div><div class="name">${esc(c.name)} <span class="muted" style="font-size:10px">K线 ›</span></div><div class="sub">${esc(c.category)} · ${esc(c.unit)}</div></div>
+        <span class="star ${c.watched ? "on" : ""}" onclick="event.stopPropagation();toggleCommodity('${c.symbol}')">${c.watched ? "★" : "☆"}</span>
       </div>
       <div class="price ${cls(c.pct)}">${fmt(c.price, 3)}</div>
       <div class="chg ${cls(c.pct)}">${pct(c.pct)}</div>
@@ -878,6 +959,69 @@ function renderCommodities(items) {
     </div>`).join("") || '<div class="empty" style="grid-column:1/-1">请选择至少一个分类</div>');
 }
 window.toggleCommodity = async (sym) => { await post(`/api/commodities/watch?symbol=${sym}`); loadCommodities(); };
+
+/* 商品K线（FR4-03-2） */
+let ckChart = null;
+let ckState = { symbol: null, name: "", period: "day" };
+
+window.openCommodityKline = (symbol, name) => {
+  ckState = { ...ckState, symbol, name };
+  $("#commodityKlineCard").style.display = "";
+  loadCommodityKline();
+  $("#commodityKlineCard").scrollIntoView({ behavior: "smooth", block: "nearest" });
+};
+window.closeCommodityKline = () => { $("#commodityKlineCard").style.display = "none"; };
+
+$("#ckPeriod").addEventListener("click", (e) => {
+  const btn = e.target.closest(".opt");
+  if (!btn) return;
+  ckState.period = btn.dataset.p;
+  $$("#ckPeriod .opt").forEach((b) => b.classList.toggle("active", b === btn));
+  loadCommodityKline();
+});
+
+async function loadCommodityKline() {
+  if (!ckState.symbol) return;
+  ckChart ||= echarts.init($("#ckChart"), "dark");
+  ckChart.showLoading({ maskColor: "rgba(13,17,23,.6)", textColor: "#dbe4f0" });
+  try {
+    const d = await api(`/api/commodities/kline?symbol=${ckState.symbol}&period=${ckState.period}`);
+    ckChart.hideLoading();
+    if (d.error || !d.dates || !d.dates.length) {
+      $("#ckTitle").textContent = `${ckState.name} — ${d.error || "暂无K线数据"}`;
+      ckChart.clear();
+      return;
+    }
+    $("#ckTitle").textContent = `${d.name}（${d.unit}）${{ day: "日K", week: "周K", month: "月K" }[d.period]}`;
+    const maSeries = Object.entries(d.ma).map(([n, values], i) => ({
+      name: `MA${n}`, type: "line", data: values, showSymbol: false, smooth: true,
+      lineStyle: { width: 1, color: ["#e8c46b", "#4a9eff", "#c678dd"][i] },
+    }));
+    ckChart.setOption({
+      backgroundColor: "transparent", animation: false,
+      tooltip: { trigger: "axis", axisPointer: { type: "cross" }, backgroundColor: "#1a2230", borderColor: "#2a3548", textStyle: { color: "#dbe4f0", fontSize: 12 } },
+      legend: { data: maSeries.map((s) => s.name), textStyle: { color: "#7d8aa0" }, top: 0 },
+      grid: [{ left: 60, right: 20, top: 28, height: "62%" }, { left: 60, right: 20, top: "78%", height: "16%" }],
+      xAxis: [
+        { type: "category", data: d.dates, gridIndex: 0, axisLine: { lineStyle: { color: "#2a3548" } } },
+        { type: "category", data: d.dates, gridIndex: 1, show: false },
+      ],
+      yAxis: [
+        { scale: true, gridIndex: 0, splitLine: { lineStyle: { color: "#202a3b" } } },
+        { gridIndex: 1, splitNumber: 2, axisLabel: { show: false }, splitLine: { show: false } },
+      ],
+      dataZoom: [{ type: "inside", xAxisIndex: [0, 1], start: 40, end: 100 },
+                 { type: "slider", xAxisIndex: [0, 1], top: "96%", height: 12, borderColor: "#2a3548" }],
+      series: [
+        { name: "K线", type: "candlestick", data: d.kline,
+          itemStyle: { color: "#ff5252", color0: "#26c281", borderColor: "#ff5252", borderColor0: "#26c281" } },
+        ...maSeries,
+        { name: "成交量", type: "bar", xAxisIndex: 1, yAxisIndex: 1, data: d.volumes,
+          itemStyle: { color: (p) => (d.kline[p.dataIndex][1] >= d.kline[p.dataIndex][0] ? "#ff5252" : "#26c281") } },
+      ],
+    }, true);
+  } catch (err) { ckChart.hideLoading(); console.warn(err); }
+}
 
 /* ---------------- 全球指数 ---------------- */
 let globalSub = "indices";
@@ -921,10 +1065,40 @@ async function loadGlobal() {
 
 /* ---------------- 个股推荐 ---------------- */
 let recommendBoard = "composite";
+const recState = { page: 1, page_size: 20, advice: "", min_score: 0, vol_filter: "", order_by: "" };
+
+const scoreRowClass = (s) => s >= 95 ? "score-95" : s >= 85 ? "score-85" : s >= 75 ? "score-75" : s >= 65 ? "score-65" : s >= 55 ? "score-55" : "";
+
+for (const [id, key] of [["recAdvice", "advice"], ["recScore", "min_score"], ["recVol", "vol_filter"], ["recOrder", "order_by"]]) {
+  $(`#${id}`).addEventListener("click", (e) => {
+    const btn = e.target.closest(".opt");
+    if (!btn) return;
+    recState[key] = key === "min_score" ? Number(btn.dataset.v) : btn.dataset.v;
+    recState.page = 1;
+    $$(`#${id} .opt`).forEach((b) => b.classList.toggle("active", b === btn));
+    loadRecommend();
+  });
+}
+
+function renderPager(d) {
+  $("#recPager").innerHTML = `
+    <button class="btn small ghost" ${d.page <= 1 ? "disabled" : ""} onclick="recPage(${d.page - 1})">‹ 上一页</button>
+    <span class="info">第 ${d.page} / ${d.pages} 页 · 共 ${d.total} 条</span>
+    <button class="btn small ghost" ${d.page >= d.pages ? "disabled" : ""} onclick="recPage(${d.page + 1})">下一页 ›</button>
+    <span class="info" style="margin-left:12px">每页</span>
+    <span class="btn-group">${[20, 50, 100].map((n) =>
+      `<button class="opt ${recState.page_size === n ? "active" : ""}" onclick="recPageSize(${n})">${n}</button>`).join("")}</span>`;
+}
+window.recPage = (p) => { recState.page = p; loadRecommend(); };
+window.recPageSize = (n) => { recState.page_size = n; recState.page = 1; loadRecommend(); };
+
 async function loadRecommend() {
   const box = $("#recommendTable");
   try {
-    const d = await api(`/api/recommend?board=${recommendBoard}`);
+    const qs = new URLSearchParams({ board: recommendBoard, page: recState.page,
+      page_size: recState.page_size, advice: recState.advice,
+      min_score: recState.min_score, vol_filter: recState.vol_filter, order_by: recState.order_by });
+    const d = await api(`/api/recommend?${qs}`);
     if (!$("#recommendBoards").children.length) {
       $("#recommendBoards").innerHTML = Object.entries(d.boards).map(([k, v]) =>
         `<button class="opt ${k === recommendBoard ? "active" : ""}" data-board="${k}">${v}</button>`).join("");
@@ -941,8 +1115,8 @@ async function loadRecommend() {
       ${isStab ? "<th>闸门</th><th>星级</th>" : ""}<th>购买指数</th><th>情绪</th>
       <th>量能</th><th>评分</th><th>提示</th><th>入选理由</th>
     </tr></thead><tbody>${d.items.map((r, i) => `
-      <tr onclick="openStock('${r.code}','${esc(r.name)}')">
-        <td>${i + 1}</td><td>${esc(r.name)} <span class="muted">${r.code}</span></td>
+      <tr class="${scoreRowClass(r.score)}" onclick="openStock('${r.code}','${esc(r.name)}')">
+        <td>${(d.page - 1) * d.page_size + i + 1}</td><td>${esc(r.name)} <span class="muted">${r.code}</span></td>
         <td class="num ${cls(r.pct)}">${fmt(r.price)}</td>
         <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
         <td class="num">${fmt(r.metric_value)}</td>
@@ -951,18 +1125,20 @@ async function loadRecommend() {
         <td class="num">${r.buy_index !== null && r.buy_index !== undefined ? `<b>${fmt(r.buy_index, 0)}</b>` : "-"}</td>
         <td>${r.sent_level ? esc(r.sent_level) : "-"}</td>
         <td>${esc(r.volume_desc)}</td>
-        <td class="num">${fmt(r.score, 1)}</td>
+        <td class="num"><b>${fmt(r.score, 1)}</b></td>
         <td><span class="badge ${r.advice === "增持" ? "advice-buy" : r.advice === "减持" ? "advice-sell" : "advice-hold"}" style="font-size:12px;padding:2px 8px">${r.advice}</span></td>
-        <td class="muted" style="font-size:12px;white-space:normal;min-width:180px">${esc(r.reason || "")}</td>
+        <td class="muted" style="font-size:12px;white-space:normal;min-width:220px;max-width:340px">${esc(r.reason || "")}</td>
       </tr>`).join("")}</tbody></table>
-      <div class="muted" style="margin-top:8px;font-size:12px">榜单为量化参考，不构成投资建议。</div>`
-      : '<div class="empty">榜单暂无数据：企稳/指标类榜单需先在设置页执行「重建指标」</div>';
+      <div class="muted" style="margin-top:8px;font-size:12px">评分行背景：≥55 淡橙 → ≥95 深红 递进。榜单为量化参考，不构成投资建议。</div>`
+      : '<div class="empty">该筛选条件下无个股（企稳/指标类榜单需先在设置页执行「重建指标」）</div>';
+    renderPager(d);
   } catch (err) { box.innerHTML = '<div class="empty">加载失败</div>'; console.warn(err); }
 }
 $("#recommendBoards").addEventListener("click", (e) => {
   const btn = e.target.closest(".opt");
   if (!btn) return;
   recommendBoard = btn.dataset.board;
+  recState.page = 1;
   $$("#recommendBoards .opt").forEach((b) => b.classList.toggle("active", b === btn));
   loadRecommend();
 });
@@ -1068,7 +1244,7 @@ async function loadSettingsHealthOnly() {
   } catch { $("#healthDot").className = "dot bad"; }
 }
 
-window.addEventListener("resize", () => { klineChart?.resize(); sectorChart?.resize(); });
+window.addEventListener("resize", () => { klineChart?.resize(); sectorChart?.resize(); ckChart?.resize(); miniChart?.resize(); });
 
 /* 首屏 */
 loadDashboard();

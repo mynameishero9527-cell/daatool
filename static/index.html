@@ -31,6 +31,16 @@
   <!-- 行情看板 -->
   <section class="page active" id="page-dashboard">
     <div class="index-strip" id="indexStrip"></div>
+    <div class="grid-2" style="grid-template-columns: 1.5fr 1fr">
+      <div class="card">
+        <div class="card-title">上证指数 · 实时分时 <span class="muted" id="miniMinuteTime"></span></div>
+        <div id="miniMinute" style="height:190px"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">明日预测概率 <span class="muted">启发式估计</span></div>
+        <div id="forecastBox"><div class="empty">计算中…</div></div>
+      </div>
+    </div>
     <div class="grid-3">
       <div class="card">
         <div class="card-title">市场统计 <span class="muted" id="statsTime"></span></div>
@@ -42,9 +52,13 @@
         <div id="marketCycle"></div>
       </div>
       <div class="card">
-        <div class="card-title">领涨 / 领跌</div>
-        <div class="grid-2 movers" id="movers"></div>
+        <div class="card-title">领涨 / 领跌 <span class="muted">各20条</span></div>
+        <div class="grid-2 movers movers-scroll" id="movers"></div>
       </div>
+    </div>
+    <div class="card">
+      <div class="card-title">智能提醒 <span class="muted">每10分钟自动扫描 · 量化参考不构成投资建议</span></div>
+      <div id="alertFeed" class="alert-feed"><div class="empty">暂无提醒</div></div>
     </div>
     <div class="card">
       <div class="card-title">自选股
@@ -97,7 +111,7 @@
       <div id="screenerConditions"><div class="empty">加载中…</div></div>
     </div>
     <div class="card">
-      <div class="card-title"><span>筛选结果 <span class="muted" id="screenerCount"></span></span>
+      <div class="card-title sticky-result"><span>筛选结果 <span class="muted" id="screenerCount"></span></span>
         <span class="btn-group" id="screenerOrder">
           <button class="opt active" data-order="buy_index">按购买指数</button>
           <button class="opt" data-order="main_flow">按主力净流入</button>
@@ -154,6 +168,17 @@
   <section class="page" id="page-commodity">
     <div class="btn-group sub-tabs multi" id="commodityCats"></div>
     <div class="cards-grid" id="commodityGrid"></div>
+    <div class="card" id="commodityKlineCard" style="display:none">
+      <div class="card-title"><span id="ckTitle">商品K线</span>
+        <span class="btn-group" id="ckPeriod">
+          <button class="opt active" data-p="day">日K</button>
+          <button class="opt" data-p="week">周K</button>
+          <button class="opt" data-p="month">月K</button>
+          <button class="btn small ghost" onclick="closeCommodityKline()" style="margin-left:8px">关闭</button>
+        </span>
+      </div>
+      <div id="ckChart" style="height:380px"></div>
+    </div>
   </section>
 
   <!-- 全球指数 -->
@@ -168,7 +193,42 @@
   <!-- 个股推荐 -->
   <section class="page" id="page-recommend">
     <div class="btn-group sub-tabs" id="recommendBoards"></div>
-    <div class="card" id="recommendTable"><div class="empty">加载中…</div></div>
+    <div class="card">
+      <div class="cond-inline" style="margin-bottom:10px; gap:20px">
+        <span><span class="g-label muted">操作提示</span>
+          <span class="btn-group" id="recAdvice">
+            <button class="opt active" data-v="">全部</button>
+            <button class="opt" data-v="增持">增持</button>
+            <button class="opt" data-v="减持">减持</button>
+            <button class="opt" data-v="保持不变">保持不变</button>
+          </span></span>
+        <span><span class="g-label muted">评分下限</span>
+          <span class="btn-group" id="recScore">
+            <button class="opt active" data-v="0">全部</button>
+            <button class="opt" data-v="55">≥55</button>
+            <button class="opt" data-v="65">≥65</button>
+            <button class="opt" data-v="75">≥75</button>
+            <button class="opt" data-v="85">≥85</button>
+            <button class="opt" data-v="95">≥95</button>
+          </span></span>
+        <span><span class="g-label muted">量能</span>
+          <span class="btn-group" id="recVol">
+            <button class="opt active" data-v="">全部</button>
+            <button class="opt" data-v="surge">放量</button>
+            <button class="opt" data-v="normal">平稳</button>
+            <button class="opt" data-v="shrink">缩量</button>
+          </span></span>
+        <span><span class="g-label muted">排序</span>
+          <span class="btn-group" id="recOrder">
+            <button class="opt active" data-v="">榜单指标</button>
+            <button class="opt" data-v="score">评分</button>
+            <button class="opt" data-v="buy_index">购买指数</button>
+            <button class="opt" data-v="pct">涨跌幅</button>
+          </span></span>
+      </div>
+      <div id="recommendTable"><div class="empty">加载中…</div></div>
+      <div class="pager" id="recPager"></div>
+    </div>
   </section>
 
   <!-- 设置 -->

@@ -25,17 +25,54 @@ def _rows(sql: str, params: tuple = (), limit: int = 50) -> list[dict]:
     return query(sql + " LIMIT ?", (*params, limit))
 
 
-def get_board(board: str, limit: int = 50) -> dict:
+def get_board(board: str, limit: int = 50, page: int = 1, page_size: int = 20,
+              advice: str = "", min_score: float = 0, vol_filter: str = "",
+              order_by: str = "") -> dict:
+    """榜单：先取足量候选（缓存），再做二级筛选 + 排序 + 分页。"""
     if board not in BOARDS:
         board = "composite"
 
     def loader():
-        payload = {"board": board, "title": BOARDS[board], "items": _build(board, limit)}
+        payload = {"board": board, "title": BOARDS[board], "items": _build(board, 200)}
         if board == "stabilize":
             payload["stats"] = metrics_svc.stabilize_stats()
         return payload
 
-    return cached(f"recommend:{board}:{limit}", 120, loader)
+    data = cached(f"recommend:{board}", 120, loader)
+    items = data["items"]
+
+    # 二级维度筛选（FR4-04-2）
+    if advice in ("增持", "减持", "保持不变"):
+        items = [i for i in items if i["advice"] == advice]
+    if min_score:
+        items = [i for i in items if (i["score"] or 0) >= min_score]
+    if vol_filter == "surge":
+        items = [i for i in items if (i["volume_ratio"] or 0) >= 1.5]
+    elif vol_filter == "normal":
+        items = [i for i in items if 0.8 <= (i["volume_ratio"] or 0) < 1.5]
+    elif vol_filter == "shrink":
+        items = [i for i in items if (i["volume_ratio"] or 1) < 0.8]
+
+    # 排序优化（FR4-04-3）
+    keys = {"score": lambda i: i["score"] or 0,
+            "buy_index": lambda i: i["buy_index"] or 0,
+            "pct": lambda i: i["pct"] or 0,
+            "metric": lambda i: i["metric_value"] or 0}
+    if order_by in keys:
+        items = sorted(items, key=keys[order_by], reverse=True)
+
+    # 分页（FR4-04-1）
+    page_size = page_size if page_size in (20, 50, 100) else 20
+    total = len(items)
+    pages = max(1, (total + page_size - 1) // page_size)
+    page = max(1, min(page, pages))
+    start = (page - 1) * page_size
+    return {
+        "board": board, "title": BOARDS[board],
+        "items": items[start:start + page_size],
+        "total": total, "page": page, "pages": pages, "page_size": page_size,
+        **({"stats": data.get("stats")} if data.get("stats") else {}),
+    }
 
 
 def _build(board: str, limit: int) -> list[dict]:
@@ -108,7 +145,7 @@ def _build(board: str, limit: int) -> list[dict]:
             "buy_index": r.get("buy_index"),
             "sentiment": r.get("senti"),
             "dark_power": r.get("dark_power"),
-            "reason": reason(r),
+            "reason": _rich_reason(reason(r), r),
         }
         if r.get("senti") is not None:
             item["sent_level"] = metrics_svc.sentiment_level(r["senti"])[0]
@@ -122,6 +159,28 @@ def _build(board: str, limit: int) -> list[dict]:
 
 def _yi(wan: float | None) -> float | None:
     return round(wan / 10000, 2) if wan is not None else None
+
+
+def _rich_reason(core: str, r: dict) -> str:
+    """入选理由增强（FR4-04-4）：核心理由 + 多周期表现 + 量能 + 资金 + 暗盘特征。"""
+    parts = [core]
+    perf = []
+    if r["pct_d5"] is not None:
+        perf.append(f"5日{r['pct_d5']:+.1f}%")
+    if r["pct_d20"] is not None:
+        perf.append(f"20日{r['pct_d20']:+.1f}%")
+    if perf:
+        parts.append("、".join(perf))
+    if r["volume_ratio"] is not None:
+        parts.append(f"{rating.volume_desc(r['volume_ratio'])}（量比{r['volume_ratio']:.2f}）")
+    if r["turnover_rate"] is not None:
+        parts.append(f"换手{r['turnover_rate']:.1f}%")
+    main_d5 = r.get("main_net_in_d5")
+    if main_d5:
+        parts.append(f"5日主力净{'流入' if main_d5 > 0 else '流出'}{abs(main_d5) / 10000:.1f}亿")
+    if r.get("divergence") and r["divergence"] != "无":
+        parts.append(f"具{r['divergence']}特征")
+    return "；".join(dict.fromkeys(parts))
 
 
 def _quick_score(r: dict) -> tuple[float, str]:
