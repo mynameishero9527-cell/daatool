@@ -102,6 +102,49 @@ def month_ganzhi(d: date) -> str:
     return GAN[(first_gan + months_from_yin) % 10] + ZHI[zhi_idx]
 
 
+# 九宫方位（洛书后天八卦）
+JIUGONG = [
+    ("巽·东南", "离·正南", "坤·西南"),
+    ("震·正东", "中宫", "兑·正西"),
+    ("艮·东北", "坎·正北", "乾·西北"),
+]
+
+# 季节 → 五行旺相休囚死（春木夏火秋金冬水，土旺四季末）
+_WANGXIANG = {
+    "春": {"旺": "木", "相": "火", "休": "水", "囚": "金", "死": "土"},
+    "夏": {"旺": "火", "相": "土", "休": "木", "囚": "水", "死": "金"},
+    "秋": {"旺": "金", "相": "水", "休": "土", "囚": "火", "死": "木"},
+    "冬": {"旺": "水", "相": "木", "休": "金", "囚": "土", "死": "火"},
+}
+
+
+def _season_of(d: date) -> str:
+    md = (d.month, d.day)
+    if (2, 4) <= md < (5, 5):
+        return "春"
+    if (5, 5) <= md < (8, 7):
+        return "夏"
+    if (8, 7) <= md < (11, 7):
+        return "秋"
+    return "冬"
+
+
+def _day_summary(d: date) -> dict:
+    """某日的干支/节气/节日速览（用于明日预览）。"""
+    dgz = day_ganzhi(d)
+    term = next((n for n, m, dd in SOLAR_TERMS if m == d.month and dd == d.day), None)
+    festival = None
+    for name, md, *_ in FESTIVALS_FIXED:
+        if (d.month, d.day) == md:
+            festival = name
+    for name, fd, *_ in FESTIVALS_LUNAR.get(d.year, []):
+        if fd == d:
+            festival = name
+    return {"date": d.isoformat(), "weekday": "周" + "一二三四五六日"[d.weekday()],
+            "day_ganzhi": f"{dgz}日", "solar_term": term, "festival": festival,
+            "caishen": CAISHEN[dgz[0]]}
+
+
 def get_almanac(d: date | None = None) -> dict:
     d = d or date.today()
     ygz, zodiac = year_ganzhi(d)
@@ -109,6 +152,8 @@ def get_almanac(d: date | None = None) -> dict:
     mgz = month_ganzhi(d)
     day_gan = dgz[0]
     term_today = next((n for n, m, dd in SOLAR_TERMS if m == d.month and dd == d.day), None)
+    season = _season_of(d)
+    wx = _WANGXIANG[season]
     return {
         "date": d.isoformat(),
         "weekday": "周" + "一二三四五六日"[d.weekday()],
@@ -118,7 +163,12 @@ def get_almanac(d: date | None = None) -> dict:
         "caishen": CAISHEN[day_gan],
         "shichen": [{"name": n, "direction": dr} for n, dr in SHICHEN],
         "solar_term": term_today,
-        "note": "干支按1949-10-01甲子日推算；节气/农历为通用近似日期；方位为民俗文化参考",
+        "season": season,
+        "wangxiang": wx,
+        "wangxiang_text": f"{season}季：{wx['旺']}旺、{wx['相']}相、{wx['休']}休、{wx['囚']}囚、{wx['死']}死",
+        "jiugong": [list(row) for row in JIUGONG],
+        "tomorrow": _day_summary(d + timedelta(days=1)),
+        "note": "干支按1949-10-01甲子日推算；节气/农历为通用近似日期；方位五行为民俗文化参考",
     }
 
 

@@ -121,6 +121,78 @@ def get_sector_stocks(dim: str, name: str, limit: int = 30) -> list[dict]:
     return rows
 
 
+# ---------------- 板块周期阶段与季节性常识（FR7-05-3/4） ----------------
+
+SEASONAL_KNOWLEDGE = {
+    "食品饮料": "Q3中秋备货、Q4春节旺季为传统强势窗口；白酒动销数据是关键跟踪点",
+    "煤炭": "冬储（11月-次年1月）与夏季用电高峰（7-8月）双旺季",
+    "公用事业": "夏冬用电用气高峰受益；电价气价政策为催化",
+    "家用电器": "夏季空调旺季（5-7月）+ 双11大促备货（9-10月）",
+    "农林牧渔": "春耕（2-3月种业）、生猪周期独立于季节，关注能繁母猪存栏拐点",
+    "建筑装饰": "春季开工季（3-4月）+ 年末赶工，基建订单集中披露期强势",
+    "建筑材料": "随开工季节奏，水泥价格3-5月、9-11月双旺季",
+    "社会服务": "暑期（7-8月）与法定长假（五一/十一）前为旅游酒店传统布局窗口",
+    "传媒": "春节档/暑期档电影季，寒暑假游戏流水高峰",
+    "纺织服饰": "换季备货（3月/9月）与出口订单季",
+    "医药生物": "冬季流感季（11-1月）呼吸道用药需求上升；集采落地为压制因素",
+    "国防军工": "年末订单确认季（Q4）与重大阅兵/航展催化",
+    "电力设备": "夏季用电高峰前电网招标（4-6月）；光伏装机年末抢装",
+    "汽车": "金九银十传统旺季；年末新能源抢装冲量",
+    "银行": "年报分红季（4-6月）高股息配置窗口",
+    "非银金融": "牛市初期弹性最大（成交额放大直接受益）",
+    "房地产": "金三银四、金九银十销售季；政策宽松窗口敏感",
+    "钢铁": "随基建地产开工季（3-5月、9-11月）",
+    "有色金属": "跟随全球商品周期与美元流动性，季节性弱、事件性强",
+    "石油石化": "冬季取暖油需求与OPEC会议节奏",
+    "电子": "下半年消费电子新品季（9-11月苹果/华为发布带动果链）",
+    "计算机": "年末订单验收季（Q4收入确认）；两会前政策主题活跃",
+    "通信": "运营商资本开支披露期（3-4月）与新技术大会催化",
+}
+
+
+def get_sector_cycles() -> list[dict]:
+    """全行业周期阶段：按多周期动量与位置判定 + 季节性常识。"""
+    def loader():
+        rows = query(
+            """SELECT l.industry AS name, COUNT(*) AS n,
+                      ROUND(AVG(s.pct), 2) AS pct,
+                      ROUND(AVG(s.pct_d5), 2) AS d5,
+                      ROUND(AVG(s.pct_d20), 2) AS d20,
+                      ROUND(AVG(s.pct_d60), 2) AS d60,
+                      ROUND(AVG(m.pos60), 3) AS pos60,
+                      ROUND(SUM(s.main_net_in) / 10000, 1) AS net_in_yi
+               FROM stock_snapshot s
+               JOIN stock_list l ON l.code = s.code
+               LEFT JOIN stock_metrics m ON m.code = s.code
+               WHERE l.industry != '' AND s.pct IS NOT NULL
+               GROUP BY l.industry ORDER BY d20 DESC""")
+        out = []
+        for r in rows:
+            d20, d60, pos = r["d20"] or 0, r["d60"] or 0, r["pos60"] or 0.5
+            d5 = r["d5"] or 0
+            if d20 > 8 and d5 > 0:
+                stage, css = "上升期", "level-4"
+                desc = "多周期动量向上，资金关注度高"
+            elif pos > 0.65 and d5 <= 0:
+                stage, css = "高位滞涨", "level-3"
+                desc = "涨幅居前但短线转弱，注意兑现节奏"
+            elif d20 < -8 and d5 < 0:
+                stage, css = "下降期", "level-1"
+                desc = "调整趋势未止，等待企稳信号"
+            elif pos < 0.35 and abs(d5) < 3:
+                stage, css = "底部盘整", "level-2"
+                desc = "低位缩量整理，可跟踪资金回流"
+            else:
+                stage, css = "震荡期", "level-2"
+                desc = "方向未明，跟随大盘节奏"
+            out.append({
+                **r, "stage": stage, "stage_css": css, "stage_desc": desc,
+                "seasonal": SEASONAL_KNOWLEDGE.get(r["name"], "季节性规律不显著，以事件与资金驱动为主"),
+            })
+        return out
+    return cached("sector:cycles", 300, loader)
+
+
 # ---------------- 个股画像（FR3-04） ----------------
 
 def get_profile(code: str) -> dict:

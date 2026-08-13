@@ -6,8 +6,9 @@ from .cache import cache
 from .database import get_meta
 from .datasources.base import HEALTH
 from .services import (
-    alerts, commodity, cycle, darkpool, finance, forecast, global_index, kline,
-    macro, market, rating, recommend, screener, sector, stocklist,
+    ai, alerts, announcement, attribution, commodity, cycle, darkpool, finance,
+    forecast, global_index, kline, knowledge, macro, market, rating, recommend,
+    screener, sector, stocklist,
 )
 from .services import metrics as metrics_svc
 from .database import query as db_query
@@ -33,8 +34,8 @@ def get_alerts(limit: int = Query(50, le=100)):
 
 
 @router.get("/market/minute")
-def market_minute():
-    return kline.get_minute("sh000001")
+def market_minute(code: str = "sh000001"):
+    return kline.get_minute(market.normalize_code(code) or code)
 
 
 @router.get("/market/forecast")
@@ -112,6 +113,7 @@ def analysis(code: str):
         "metrics": metrics2,
         "dark": darkpool.get_dark_power(norm),
         "pull_smash": darkpool.get_pull_smash(norm),
+        "attribution": attribution.get_attribution(norm),
     }
 
 
@@ -298,6 +300,40 @@ def macro_add_event(payload: dict):
 @router.post("/macro/custom-event/delete")
 def macro_delete_event(event_id: int):
     return macro.delete_custom_event(event_id)
+
+
+# ---------------- 常识 / 公告 / 板块周期 / AI（7.0） ----------------
+
+@router.get("/knowledge")
+def get_knowledge(q: str = ""):
+    return knowledge.get_knowledge(q)
+
+
+@router.get("/announcements")
+def get_announcements(code: str = "", limit: int = Query(60, le=100)):
+    return announcement.get_announcements(code, limit)
+
+
+@router.get("/sector/cycles")
+def sector_cycles():
+    return sector.get_sector_cycles()
+
+
+@router.get("/ai/config")
+def ai_config():
+    return ai.get_config()
+
+
+@router.post("/ai/config")
+def ai_save_config(payload: dict):
+    return ai.save_config(payload.get("api_base", ""), payload.get("api_key", ""),
+                          payload.get("model", ""))
+
+
+@router.post("/ai/analyze")
+def ai_analyze(payload: dict):
+    return ai.analyze(payload.get("mode", "market"), payload.get("code", ""),
+                      payload.get("question", ""))
 
 
 # ---------------- 系统 / 设置 ----------------

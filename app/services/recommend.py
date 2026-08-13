@@ -14,6 +14,8 @@ BOARDS = {
     "composite": "综合推荐",
     "hot_turnover": "活跃成交",
     "sector_leader": "板块最强股",
+    "sector_weakest": "板块最弱股",
+    "top_losers": "跌幅最大",
     "demon": "妖股潜力",
 }
 
@@ -134,6 +136,22 @@ def _build(board: str, limit: int) -> list[dict]:
                           + (s.volume_ratio - 1) * 8 + s.amplitude * 0.5) DESC""", limit=limit)
         metric = ("妖股潜力分", lambda r: _demon_score(r))
         reason = lambda r: _demon_reason(r)
+    elif board == "top_losers":
+        rows = _rows(
+            f"{_SELECT} WHERE {_BASE_FILTER} ORDER BY s.pct ASC", limit=limit)
+        metric = ("今日跌幅%", lambda r: r["pct"])
+        reason = lambda r: f"当日跌幅居前 {r['pct']}%，风险观察对象"
+    elif board == "sector_weakest":
+        rows = _rows(
+            f"""{_SELECT}
+                WHERE {_BASE_FILTER} AND l.industry != '' AND s.pct = (
+                    SELECT MIN(s2.pct) FROM stock_snapshot s2
+                    JOIN stock_list l2 ON l2.code = s2.code
+                    WHERE l2.industry = l.industry AND s2.pct IS NOT NULL
+                      AND s2.name NOT LIKE '%ST%' AND s2.name NOT LIKE '%退%')
+                ORDER BY s.pct ASC""", limit=40)
+        metric = ("板块平均涨跌%", lambda r: _industry_avg_pct(r["industry"]))
+        reason = lambda r: f"「{r['industry']}」板块当日最弱，跌幅 {r['pct']}%"
     elif board == "sector_leader":
         # 板块最强股（FR5-05-2）：每个申万一级行业当日最强个股
         rows = _rows(

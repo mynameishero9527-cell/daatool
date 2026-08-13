@@ -50,12 +50,47 @@ async function loadDashboard() {
   loadMiniMinute();
   loadForecast();
   loadAlerts();
+  loadDashAlmanac();
+}
+
+let dashAlmanacLoaded = false;
+async function loadDashAlmanac() {
+  if (dashAlmanacLoaded) return;
+  try {
+    const a = await api("/api/macro/almanac");
+    const t = a.tomorrow || {};
+    $("#dashAlmanac").innerHTML = `
+      <div style="font-size:15px">${esc(a.date)}（${esc(a.weekday)}）</div>
+      <div class="desc-hl">${esc(a.year_ganzhi)}【${esc(a.zodiac)}年】${esc(a.month_ganzhi)} ${esc(a.day_ganzhi)}
+        ${a.solar_term ? `<span class="badge level-3">${esc(a.solar_term)}</span>` : ""}</div>
+      <div class="muted" style="font-size:12px;margin:4px 0">${esc(a.wuxing)} ｜ 财神：${esc(a.caishen)}</div>
+      <div class="kv"><span class="k">旺相休囚</span><span style="color:#e8c46b">${esc(a.wangxiang_text)}</span></div>
+      <div class="jiugong">${a.jiugong.flat().map((c) =>
+        `<div class="${c === "中宫" ? "center" : ""}">${esc(c)}</div>`).join("")}</div>
+      <div class="kv"><span class="k">明日预览</span>
+        <span>${esc(t.date || "")}（${esc(t.weekday || "")}）${esc(t.day_ganzhi || "")}
+        ${t.solar_term ? `<span class="badge level-3">${esc(t.solar_term)}</span>` : ""}
+        ${t.festival ? `<span class="badge level-4">${esc(t.festival)}</span>` : ""}
+        <span class="muted">财神${esc(t.caishen || "")}</span></span></div>
+      <div class="muted" style="font-size:11px;margin-top:4px">${esc(a.note)}</div>`;
+    dashAlmanacLoaded = true;
+  } catch (err) { console.warn(err); }
 }
 
 let miniChart = null;
+let miniIndexCode = "sh000001";
+$("#miniIndexBtns").addEventListener("click", (e) => {
+  const btn = e.target.closest(".opt");
+  if (!btn) return;
+  miniIndexCode = btn.dataset.code;
+  $("#miniMinuteName").textContent = btn.dataset.name;
+  $$("#miniIndexBtns .opt").forEach((b) => b.classList.toggle("active", b === btn));
+  loadMiniMinute();
+});
+
 async function loadMiniMinute() {
   try {
-    const d = await api("/api/market/minute");
+    const d = await api(`/api/market/minute?code=${miniIndexCode}`);
     if (!d.points || !d.points.length) return;
     miniChart ||= echarts.init($("#miniMinute"), "dark");
     const prices = d.points.map((p) => p[1]);
@@ -389,6 +424,28 @@ function gaugeHtml(label, value, levelText, extra = "") {
   </div>`;
 }
 
+function attributionHtml(att) {
+  if (!att || (!att.reasons.length && att.risk_index === null)) return "";
+  const risk = att.risk_index ?? 0;
+  return `
+    <div class="card-title" style="font-size:14px;margin-top:2px">今日${(att.industry_pct ?? 0) >= 0 ? "上涨" : "下跌"}归因
+      ${att.industry ? `<span class="muted">所属：${esc(att.industry)}（板块 ${pct(att.industry_pct)}）</span>` : ""}</div>
+    ${att.reasons.map((r) => `<div class="reason-item"><span class="rt">[${esc(r.type)}]</span><span class="desc-hl" style="font-size:14px">${esc(r.text)}</span></div>`).join("")}
+    ${att.sector_events.length ? `
+      <div class="card-title" style="font-size:14px;margin-top:10px">板块重大事件</div>
+      ${att.sector_events.map((e) => `<div class="reason-item">
+        <span class="badge dir-${e.direction}">${esc(e.direction)}</span>
+        <span class="badge level-${e.level}">${esc(e.desc)}</span>
+        <span style="font-size:13px">${esc(e.text)}…</span></div>`).join("")}` : ""}
+    <div class="card-title" style="font-size:14px;margin-top:10px">利空风险指数
+      <span class="num ${risk >= 60 ? "up" : risk >= 40 ? "flat" : "down"}" style="font-size:20px;font-weight:800">${fmt(risk, 0)}</span></div>
+    <div class="risk-bar"><div class="p" style="width:${risk}%"></div></div>
+    ${risk >= 60 ? `<div class="risk-warn">${esc(att.risk_warning)}</div>`
+      : `<div class="desc-hl" style="font-size:13px">${esc(att.risk_warning)}</div>`}
+    ${att.risk_factors && att.risk_factors.length ? `<div class="muted" style="font-size:12px;margin-top:3px">风险因素：${att.risk_factors.map(esc).join("；")}</div>` : ""}
+    <hr style="border-color:var(--border);margin:10px 0">`;
+}
+
 function pullSmashHtml(ps) {
   if (!ps || !ps.available) return "";
   const patternBadge = ps.pattern_score
@@ -465,8 +522,9 @@ async function loadAnalysis() {
         <div class="score-num ${r.score >= 55 ? "up" : r.score < 45 ? "down" : "flat"}">${r.score}</div>
         <span class="badge ${r.grade_css}">${r.grade} · ${r.volume_desc}</span><br>
         <span class="badge ${r.advice_css}" style="margin-top:8px">${r.advice}</span>
-        <div class="muted" style="margin-top:8px">${esc(r.advice_reason)}</div>
+        <div class="desc-hl" style="margin-top:8px">${esc(r.advice_reason)}</div>
       </div>
+      ${attributionHtml(d.attribution)}
       ${Object.entries(r.components).map(([k, v]) => `
         <div class="comp-bar"><span class="label">${k}</span>
           <div class="track"><div class="fill" style="width:${v}%"></div></div>
@@ -695,7 +753,7 @@ async function loadMacro() {
     const path = macroSub === "policy" ? "/api/macro/policies" : macroSub === "major" ? "/api/macro/major" : "/api/macro/news";
     const rows = applyNewsFilter(await api(path));
     const offline = rows.length && rows[0].offline;
-    box.innerHTML = newsFilterBar() +
+    box.innerHTML = newsFilterBar() + '<div id="eventDetailBox"></div>' +
       (offline ? '<div class="offline-banner">当前展示本地缓存数据（离线）</div>' : "") +
       (rows.length ? rows.map((n) => `
       <div class="news-item">
@@ -707,13 +765,17 @@ async function loadMacro() {
             <span class="badge dir-${n.impact_direction}">${n.impact_direction}</span>
             ${n.is_policy ? '<span class="badge sector-tag">政策</span>' : ""}
             ${(n.affected_sectors || []).map((s) => `<span class="badge sector-tag">${esc(s)}</span>`).join("")}
+            ${(n.affected_sectors || []).length ? `<button class="btn small ghost" onclick='showNewsStocks(${JSON.stringify((n.affected_sectors || []).join(","))}, ${JSON.stringify((n.text || "").slice(0, 24))})'>相关个股 ›</button>` : ""}
           </div>
           ${n.brief ? `<div class="muted" style="font-size:12px;margin-top:3px">💡 ${esc(n.brief)}</div>` : ""}
+          ${n.commentary ? `<div class="desc-hl" style="font-size:13px;margin-top:3px">💬 ${esc(n.commentary)}</div>` : ""}
         </div>
       </div>`).join("") : '<div class="empty">该筛选条件下暂无数据</div>');
     bindNewsFilters();
   } catch (err) { box.innerHTML = '<div class="empty">加载失败，稍后自动重试</div>'; console.warn(err); }
 }
+
+window.showNewsStocks = (sectors, title) => showEventDetail(title, sectors);
 
 window.showEventDetail = async (title, sectors = "") => {
   const box = $("#eventDetailBox");
@@ -1381,6 +1443,155 @@ $("#recommendBoards").addEventListener("click", (e) => {
   loadRecommend();
 });
 
+/* ---------------- 公司公告（FR7-04） ---------------- */
+async function loadAnnouncements() {
+  const code = $("#annSearch").value.trim();
+  $("#annList").innerHTML = '<div class="empty">加载中…</div>';
+  try {
+    const d = await api(`/api/announcements?code=${encodeURIComponent(code)}`);
+    $("#annNote").textContent = d.note + (d.target_name ? ` · 当前筛选：${d.target_name}` : "");
+    $("#annRatings").innerHTML = d.ratings ? `
+      <div class="outlook-summary" style="margin-bottom:10px">
+        <b>📊 ${esc(d.target_name)} 机构评级</b> <span class="muted">${d.ratings.simulated ? "规则模拟·仅供参考" : ""}</span><br>
+        评级分布：${Object.entries(d.ratings.distribution).filter(([, n]) => n > 0).map(([k, n]) => `${k} ${n} 家`).join(" · ")}
+        ｜ 一致目标价 <b>${fmt(d.ratings.consensus_target)}</b><br>
+        <span class="muted" style="font-size:12px">${d.ratings.items.slice(0, 5).map((it) =>
+          `${esc(it.broker)}:${it.rating}(${fmt(it.target_price)})`).join("　")}</span>
+      </div>` : "";
+    $("#annList").innerHTML = d.items.length ? d.items.map((a) => `
+      <div class="news-item">
+        <span class="time">${esc((a.time || "").slice(5, 16))}</span>
+        <div class="body">${esc(a.text)}
+          <div class="meta">
+            <span class="badge sector-tag">${esc(a.tag)}</span>
+            <span class="badge dir-${a.direction}">${esc(a.direction)}</span>
+            <span class="badge level-${a.impact_level}">${esc(a.impact_desc)}</span>
+            ${(a.affected_sectors || []).map((s) => `<span class="badge sector-tag">${esc(s)}</span>`).join("")}
+          </div>
+          ${a.brief ? `<div class="desc-hl" style="font-size:13px;margin-top:3px">💡 ${esc(a.brief)}</div>` : ""}
+        </div>
+      </div>`).join("") : '<div class="empty">暂无匹配公告（公告源为7x24快讯识别）</div>';
+  } catch (err) { $("#annList").innerHTML = '<div class="empty">加载失败</div>'; }
+}
+window.loadAnnouncements = loadAnnouncements;
+window.clearAnnSearch = () => { $("#annSearch").value = ""; loadAnnouncements(); };
+
+/* ---------------- 股票常识（FR7-03） ---------------- */
+async function loadKnowledge() {
+  const kw = $("#kbSearch").value.trim();
+  try {
+    const groups = await api(`/api/knowledge?q=${encodeURIComponent(kw)}`);
+    $("#kbContent").innerHTML = groups.length ? groups.map((g) => `
+      <div class="region-title">${esc(g.group)}（${g.items.length}）</div>
+      ${g.items.map((it) => `<div class="kb-item">
+        <div class="term">${esc(it.term)}</div>
+        <div class="desc">${esc(it.desc)}</div></div>`).join("")}`).join("")
+      : '<div class="empty">未找到相关词条</div>';
+  } catch (err) { console.warn(err); }
+}
+$("#kbSearch").addEventListener("input", debounce(loadKnowledge, 300));
+
+/* ---------------- AI 分析（FR7-07） ---------------- */
+let aiMode = "market";
+$("#aiModeBtns").addEventListener("click", (e) => {
+  const btn = e.target.closest(".opt");
+  if (!btn) return;
+  aiMode = btn.dataset.mode;
+  $$("#aiModeBtns .opt").forEach((b) => b.classList.toggle("active", b === btn));
+  $("#aiInput").placeholder = aiMode === "stock" ? "输入股票代码，如 300432"
+    : aiMode === "custom" ? "输入你的问题，如：新能源板块还能持有吗"
+    : "大盘综述无需输入，直接点击开始分析";
+});
+
+async function loadAiConfig() {
+  try {
+    const c = await api("/api/ai/config");
+    $("#aiBase").value = c.api_base || "";
+    $("#aiKey").value = c.api_key || "";
+    $("#aiModel").value = c.model || "";
+    $("#aiStatus").textContent = c.configured ? "✅ 已配置" : "未配置（使用本地规则分析）";
+  } catch (err) { console.warn(err); }
+}
+
+window.saveAiConfig = async () => {
+  const res = await api("/api/ai/config", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ api_base: $("#aiBase").value, api_key: $("#aiKey").value, model: $("#aiModel").value }),
+  });
+  $("#aiStatus").textContent = res.configured ? "✅ 已配置" : "未配置（使用本地规则分析）";
+};
+
+window.runAiAnalyze = async () => {
+  const input = $("#aiInput").value.trim();
+  $("#aiOutput").innerHTML = '<div class="empty">分析中，请稍候…</div>';
+  try {
+    const d = await api("/api/ai/analyze", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: aiMode, code: aiMode === "stock" ? input : "", question: aiMode === "custom" ? input : "" }),
+    });
+    $("#aiOutput").textContent = d.text;
+    $("#aiOutput").innerHTML = `<div class="muted" style="margin-bottom:8px">来源：${esc(d.source)}</div>` + esc(d.text).replace(/\n/g, "<br>");
+  } catch (err) { $("#aiOutput").innerHTML = '<div class="empty">分析失败，请检查配置</div>'; }
+};
+
+/* AI 小窗 + 右键菜单（FR7-07-4） */
+let ctxStock = null;
+document.addEventListener("contextmenu", (e) => {
+  const el = e.target.closest("[onclick]");
+  const m = el && /openStock\('([^']+)','([^']*)'\)/.exec(el.getAttribute("onclick") || "");
+  if (!m) { $("#ctxMenu").style.display = "none"; return; }
+  e.preventDefault();
+  ctxStock = { code: m[1], name: m[2] };
+  const menu = $("#ctxMenu");
+  menu.style.display = "";
+  menu.style.left = Math.min(e.clientX, window.innerWidth - 190) + "px";
+  menu.style.top = Math.min(e.clientY, window.innerHeight - 90) + "px";
+});
+document.addEventListener("click", () => { $("#ctxMenu").style.display = "none"; });
+$("#ctxAiItem").addEventListener("click", () => {
+  if (ctxStock) openAiModal(ctxStock.code, ctxStock.name);
+  $("#ctxMenu").style.display = "none";
+});
+$("#ctxOpenItem").addEventListener("click", () => {
+  if (ctxStock) openStock(ctxStock.code, ctxStock.name);
+  $("#ctxMenu").style.display = "none";
+});
+
+window.openAiModal = async (code, name) => {
+  const modal = $("#aiModal");
+  modal.style.display = "";
+  $("#aiModalTitle").textContent = `🤖 AI 分析：${name}（${code}）`;
+  $("#aiModalBody").innerHTML = '<div class="empty">分析中，请稍候…</div>';
+  try {
+    const d = await api("/api/ai/analyze", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "stock", code }),
+    });
+    $("#aiModalBody").innerHTML = `<div class="muted" style="margin-bottom:6px">来源：${esc(d.source)}</div>` + esc(d.text).replace(/\n/g, "<br>");
+  } catch (err) { $("#aiModalBody").innerHTML = '<div class="empty">分析失败</div>'; }
+};
+window.closeAiModal = () => { $("#aiModal").style.display = "none"; };
+
+// 小窗拖动
+(() => {
+  const modal = $("#aiModal"), head = $("#aiModalHead");
+  let drag = null;
+  head.addEventListener("mousedown", (e) => {
+    if (e.target.closest("button")) return;
+    const rect = modal.getBoundingClientRect();
+    drag = { dx: e.clientX - rect.left, dy: e.clientY - rect.top };
+    e.preventDefault();
+  });
+  document.addEventListener("mousemove", (e) => {
+    if (!drag) return;
+    modal.style.left = Math.max(0, e.clientX - drag.dx) + "px";
+    modal.style.top = Math.max(0, e.clientY - drag.dy) + "px";
+    modal.style.right = "auto";
+    modal.style.bottom = "auto";
+  });
+  document.addEventListener("mouseup", () => { drag = null; });
+})();
+
 /* ---------------- 设置 ---------------- */
 async function loadSettings() {
   try {
@@ -1478,6 +1689,9 @@ loaders.macro = loadMacro;
 loaders.commodity = loadCommodities;
 loaders.global = loadGlobal;
 loaders.recommend = loadRecommend;
+loaders.announce = loadAnnouncements;
+loaders.knowledge = loadKnowledge;
+loaders.ai = loadAiConfig;
 loaders.settings = loadSettings;
 
 /* 自动刷新（仅刷新当前页，避免无谓请求） */

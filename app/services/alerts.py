@@ -104,8 +104,9 @@ def _scan_rotation() -> None:
 
 
 def scan_all() -> int:
-    """一轮全量扫描（调度器每 10 分钟触发）。"""
+    """一轮全量扫描（调度器每 10 分钟触发）。买卖点每轮替换上一批（轮动推送）。"""
     before = query("SELECT COUNT(*) AS n FROM alert_log")[0]["n"]
+    execute("DELETE FROM alert_log WHERE alert_type IN ('buy_point','sell_point')")
     for fn in (_scan_buy_points, _scan_sell_points, _scan_index_move,
                _scan_fund_switch, _scan_rotation):
         try:

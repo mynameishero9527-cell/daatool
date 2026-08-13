@@ -77,11 +77,19 @@ def assess_impact(text: str) -> dict:
              f"方向{direction}"
              + (f"，或将波及 {'、'.join(sectors[:4])} 等板块" if sectors else "，暂未识别到明确受影响板块")
              + "。")
+    # 评论热度描述（FR7-02-1，规则生成）
+    heat_word = "高" if score >= 70 else "中等" if score >= 45 else "一般"
+    commentary = (
+        f"机构与论坛关注度{heat_word}（热度 {score:.0f}）"
+        + (f"，短线或{'催化' if direction == '利好' else '压制' if direction == '利空' else '扰动'}"
+           f" {'、'.join(sectors[:2])} 板块" if sectors else "")
+        + ("；政策类消息建议跟踪后续细则落地" if is_policy else "")
+        + "（规则生成，仅供参考）")
     return {
         "impact_level": level, "impact_desc": _LEVEL_DESC[level],
         "impact_direction": direction, "affected_sectors": sectors,
         "region": region, "is_policy": is_policy,
-        "score": score, "brief": brief,
+        "score": score, "brief": brief, "commentary": commentary,
     }
 
 

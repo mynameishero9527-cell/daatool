@@ -19,6 +19,9 @@
     <button class="tab" data-tab="commodity">大宗商品</button>
     <button class="tab" data-tab="global">全球指数</button>
     <button class="tab" data-tab="recommend">个股推荐</button>
+    <button class="tab" data-tab="announce">公司公告</button>
+    <button class="tab" data-tab="knowledge">股票常识</button>
+    <button class="tab" data-tab="ai">AI分析</button>
     <button class="tab" data-tab="settings">设置</button>
   </nav>
   <div class="statusbar">
@@ -33,7 +36,15 @@
     <div class="index-strip" id="indexStrip"></div>
     <div class="grid-2" style="grid-template-columns: 1.5fr 1fr">
       <div class="card">
-        <div class="card-title">上证指数 · 实时分时 <span class="muted" id="miniMinuteTime"></span></div>
+        <div class="card-title"><span id="miniMinuteName">上证指数</span> · 实时分时 <span class="muted" id="miniMinuteTime"></span>
+          <span class="btn-group" id="miniIndexBtns">
+            <button class="opt active" data-code="sh000001" data-name="上证指数">上证</button>
+            <button class="opt" data-code="sz399001" data-name="深证成指">深成</button>
+            <button class="opt" data-code="sz399006" data-name="创业板指">创业板</button>
+            <button class="opt" data-code="sh000688" data-name="科创50">科创50</button>
+            <button class="opt" data-code="sh000300" data-name="沪深300">沪深300</button>
+          </span>
+        </div>
         <div id="miniMinute" style="height:190px"></div>
       </div>
       <div class="card">
@@ -56,9 +67,15 @@
         <div class="grid-2 movers movers-scroll" id="movers"></div>
       </div>
     </div>
-    <div class="card">
-      <div class="card-title">智能提醒 <span class="muted">每10分钟自动扫描 · 量化参考不构成投资建议</span></div>
-      <div id="alertFeed" class="alert-feed"><div class="empty">暂无提醒</div></div>
+    <div class="grid-2" style="grid-template-columns: 1.6fr 1fr">
+      <div class="card">
+        <div class="card-title">智能提醒 <span class="muted">每10分钟轮动刷新买卖点 · 量化参考不构成投资建议</span></div>
+        <div id="alertFeed" class="alert-feed"><div class="empty">暂无提醒</div></div>
+      </div>
+      <div class="card">
+        <div class="card-title">今日黄历 · 九宫方位 <span class="muted">民俗文化参考</span></div>
+        <div id="dashAlmanac"><div class="empty">加载中…</div></div>
+      </div>
     </div>
     <div class="card">
       <div class="card-title">自选股
@@ -246,6 +263,66 @@
     </div>
   </section>
 
+  <!-- 公司公告 -->
+  <section class="page" id="page-announce">
+    <div class="card">
+      <div class="card-title">公司公告
+        <span class="inline-form">
+          <input id="annSearch" placeholder="输入代码/名称过滤，如 300432">
+          <button class="btn" onclick="loadAnnouncements()">查询</button>
+          <button class="btn ghost" onclick="clearAnnSearch()">全部公告</button>
+        </span>
+      </div>
+      <div class="muted" id="annNote" style="margin-bottom:8px"></div>
+      <div id="annRatings"></div>
+      <div id="annList"><div class="empty">加载中…</div></div>
+    </div>
+  </section>
+
+  <!-- 股票常识 -->
+  <section class="page" id="page-knowledge">
+    <div class="card">
+      <div class="card-title">股票常识 · 术语与技巧
+        <span class="inline-form"><input id="kbSearch" placeholder="搜索术语，如 量比"></span>
+      </div>
+      <div id="kbContent"><div class="empty">加载中…</div></div>
+    </div>
+  </section>
+
+  <!-- AI 分析 -->
+  <section class="page" id="page-ai">
+    <div class="grid-2" style="grid-template-columns: 1fr 1.6fr">
+      <div class="card">
+        <div class="card-title">AI 大模型配置 <span class="muted" id="aiStatus"></span></div>
+        <div class="kv"><span class="k">API 地址</span></div>
+        <input id="aiBase" placeholder="https://api.openai.com/v1（OpenAI兼容）" style="width:100%;margin-bottom:8px">
+        <div class="kv"><span class="k">API 密钥</span></div>
+        <input id="aiKey" type="password" placeholder="sk-..." style="width:100%;margin-bottom:8px">
+        <div class="kv"><span class="k">模型名称</span></div>
+        <input id="aiModel" placeholder="如 gpt-4o-mini / deepseek-chat" style="width:100%;margin-bottom:10px">
+        <button class="btn" onclick="saveAiConfig()">保存配置</button>
+        <div class="muted" style="margin-top:10px;font-size:12px">
+          未配置时自动使用「本地规则分析」。密钥仅存于本地数据库。<br>
+          全站任意个股行 <b>右键</b> 可唤起「AI 分析该股」小窗。
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">实时分析
+          <span class="btn-group" id="aiModeBtns">
+            <button class="opt active" data-mode="market">大盘综述</button>
+            <button class="opt" data-mode="stock">个股诊断</button>
+            <button class="opt" data-mode="custom">自由提问</button>
+          </span>
+        </div>
+        <div class="inline-form" style="margin-bottom:10px;width:100%">
+          <input id="aiInput" placeholder="选择模式后输入（个股诊断输入代码，自由提问输入问题）" style="flex:1">
+          <button class="btn" onclick="runAiAnalyze()">开始分析</button>
+        </div>
+        <div id="aiOutput" class="ai-output"><div class="empty">选择分析模式并点击「开始分析」</div></div>
+      </div>
+    </div>
+  </section>
+
   <!-- 设置 -->
   <section class="page" id="page-settings">
     <div class="grid-2">
@@ -278,6 +355,19 @@
     </div>
   </section>
 </main>
+
+<!-- AI 右键分析小窗 -->
+<div id="aiModal" class="ai-modal" style="display:none">
+  <div class="ai-modal-head" id="aiModalHead">
+    <span id="aiModalTitle">AI 分析</span>
+    <button class="btn small ghost" onclick="closeAiModal()">✕</button>
+  </div>
+  <div class="ai-modal-body" id="aiModalBody"></div>
+</div>
+<div id="ctxMenu" class="ctx-menu" style="display:none">
+  <div class="ctx-item" id="ctxAiItem">🤖 AI 分析该股</div>
+  <div class="ctx-item" id="ctxOpenItem">📈 打开个股分析</div>
+</div>
 
 <script src="/static/app.js"></script>
 </body>
