@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>A股量化工具</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/vendor/echarts.min.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">📈 A股量化工具</div>
+  <nav class="main-tabs" id="mainTabs">
+    <button class="tab active" data-tab="dashboard">行情看板</button>
+    <button class="tab" data-tab="stock">个股分析</button>
+    <button class="tab" data-tab="macro">宏观情报</button>
+    <button class="tab" data-tab="commodity">大宗商品</button>
+    <button class="tab" data-tab="global">全球指数</button>
+    <button class="tab" data-tab="recommend">个股推荐</button>
+    <button class="tab" data-tab="settings">设置</button>
+  </nav>
+  <div class="statusbar">
+    <span class="dot" id="healthDot"></span>
+    <span id="lastRefresh">-</span>
+  </div>
+</header>
+
+<main>
+  <!-- 行情看板 -->
+  <section class="page active" id="page-dashboard">
+    <div class="index-strip" id="indexStrip"></div>
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-title">市场统计 <span class="muted" id="statsTime"></span></div>
+        <div id="marketStats" class="stats-row"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">领涨 / 领跌</div>
+        <div class="grid-2 movers" id="movers"></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">自选股
+        <span class="inline-form">
+          <input id="watchInput" placeholder="输入代码，如 300432" maxlength="8">
+          <button class="btn" onclick="addWatch()">添加</button>
+        </span>
+      </div>
+      <div id="watchTable"></div>
+    </div>
+  </section>
+
+  <!-- 个股分析 -->
+  <section class="page" id="page-stock">
+    <div class="card">
+      <div class="search-wrap">
+        <input id="stockSearch" placeholder="搜索股票代码 / 名称，如 300432 或 富临">
+        <div class="search-results" id="searchResults"></div>
+      </div>
+    </div>
+    <div class="grid-stock">
+      <div class="card">
+        <div class="card-title"><span id="klineTitle">K线走势</span>
+          <span class="btn-group" id="periodBtns">
+            <button class="opt active" data-period="minute">分时</button>
+            <button class="opt" data-period="day">日K</button>
+            <button class="opt" data-period="week">周K</button>
+            <button class="opt" data-period="month">月K</button>
+          </span>
+        </div>
+        <div id="klineChart" class="chart-lg"></div>
+      </div>
+      <div class="card score-card" id="scoreCard">
+        <div class="empty">搜索并选择一只股票查看评分</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 宏观情报 -->
+  <section class="page" id="page-macro">
+    <div class="btn-group sub-tabs" id="macroTabs">
+      <button class="opt active" data-sub="news">实时快讯</button>
+      <button class="opt" data-sub="calendar">事件日历</button>
+      <button class="opt" data-sub="policy">政策追踪</button>
+      <button class="opt" data-sub="major">影响评估</button>
+    </div>
+    <div class="card" id="macroContent"><div class="empty">加载中…</div></div>
+  </section>
+
+  <!-- 大宗商品 -->
+  <section class="page" id="page-commodity">
+    <div class="btn-group sub-tabs multi" id="commodityCats"></div>
+    <div class="cards-grid" id="commodityGrid"></div>
+  </section>
+
+  <!-- 全球指数 -->
+  <section class="page" id="page-global">
+    <div class="btn-group sub-tabs" id="globalTabs">
+      <button class="opt active" data-sub="indices">全球指数</button>
+      <button class="opt" data-sub="etf">ETF 专区</button>
+    </div>
+    <div id="globalContent"></div>
+  </section>
+
+  <!-- 个股推荐 -->
+  <section class="page" id="page-recommend">
+    <div class="btn-group sub-tabs" id="recommendBoards"></div>
+    <div class="card" id="recommendTable"><div class="empty">加载中…</div></div>
+  </section>
+
+  <!-- 设置 -->
+  <section class="page" id="page-settings">
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-title">数据源健康</div>
+        <div id="sourceHealth"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">缓存状态
+          <button class="btn danger" onclick="clearCache()">清空缓存</button>
+        </div>
+        <div id="cacheStats"></div>
+        <div class="card-title" style="margin-top:14px">全量同步
+          <button class="btn" onclick="fullSync()">立即同步</button>
+        </div>
+        <div id="syncState"></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">定时任务</div>
+      <div id="jobTable"></div>
+    </div>
+  </section>
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
