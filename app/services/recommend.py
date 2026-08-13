@@ -1,7 +1,8 @@
-"""个股推荐服务：基于本地全市场快照的多维度榜单（产品文档 §2.6）。"""
+"""个股推荐服务：基于本地全市场快照+指标表的多维度榜单。"""
 from ..cache import cached
 from ..database import query
 from . import rating
+from . import metrics as metrics_svc
 
 BOARDS = {
     "main_buy": "机构买入最多",
@@ -9,11 +10,15 @@ BOARDS = {
     "main_sell": "卖出最多",
     "strong_break": "强势突破",
     "oversold": "超跌反弹",
+    "stabilize": "企稳待涨",
     "composite": "综合推荐",
     "hot_turnover": "活跃成交",
 }
 
-_BASE_FILTER = "price IS NOT NULL AND pct IS NOT NULL AND name NOT LIKE '%ST%' AND name NOT LIKE '%退%'"
+_BASE_FILTER = "s.price IS NOT NULL AND s.pct IS NOT NULL AND s.name NOT LIKE '%ST%' AND s.name NOT LIKE '%退%'"
+_SELECT = ("SELECT s.*, m.buy_index, m.sentiment AS senti, m.dark_power, m.stabilize_score, "
+           "m.stab_g1, m.stab_g2, m.stab_g3, m.stab_g4, m.divergence "
+           "FROM stock_snapshot s LEFT JOIN stock_metrics m ON m.code = s.code ")
 
 
 def _rows(sql: str, params: tuple = (), limit: int = 50) -> list[dict]:
@@ -25,7 +30,10 @@ def get_board(board: str, limit: int = 50) -> dict:
         board = "composite"
 
     def loader():
-        return {"board": board, "title": BOARDS[board], "items": _build(board, limit)}
+        payload = {"board": board, "title": BOARDS[board], "items": _build(board, limit)}
+        if board == "stabilize":
+            payload["stats"] = metrics_svc.stabilize_stats()
+        return payload
 
     return cached(f"recommend:{board}:{limit}", 120, loader)
 
@@ -33,58 +41,82 @@ def get_board(board: str, limit: int = 50) -> dict:
 def _build(board: str, limit: int) -> list[dict]:
     if board == "main_buy":
         rows = _rows(
-            f"SELECT * FROM stock_snapshot WHERE {_BASE_FILTER} AND main_net_in IS NOT NULL "
-            "ORDER BY main_net_in DESC", limit=limit)
+            f"{_SELECT} WHERE {_BASE_FILTER} AND s.main_net_in IS NOT NULL "
+            "ORDER BY s.main_net_in DESC", limit=limit)
         metric = ("主力净流入(亿)", lambda r: _yi(r["main_net_in"]))
+        reason = lambda r: f"主力净流入 {_yi(r['main_net_in'])} 亿，{rating.volume_desc(r['volume_ratio'])}"
     elif board == "retail_buy":
         # 散户净买入 ≈ 成交额中主力之外的净流入；用主力净流出且价涨作为散户接力特征
         rows = _rows(
-            f"SELECT * FROM stock_snapshot WHERE {_BASE_FILTER} AND main_net_in IS NOT NULL "
-            "AND pct > 0 ORDER BY main_net_in ASC", limit=limit)
+            f"{_SELECT} WHERE {_BASE_FILTER} AND s.main_net_in IS NOT NULL "
+            "AND s.pct > 0 ORDER BY s.main_net_in ASC", limit=limit)
         metric = ("散户净买入(亿,估)", lambda r: _yi(-(r["main_net_in"] or 0)))
+        reason = lambda r: f"股价上涨但主力净流出 {_yi(-(r['main_net_in'] or 0))} 亿，散户承接特征"
     elif board == "main_sell":
         rows = _rows(
-            f"SELECT * FROM stock_snapshot WHERE {_BASE_FILTER} AND main_net_in IS NOT NULL "
-            "ORDER BY main_net_in ASC", limit=limit)
+            f"{_SELECT} WHERE {_BASE_FILTER} AND s.main_net_in IS NOT NULL "
+            "ORDER BY s.main_net_in ASC", limit=limit)
         metric = ("主力净卖出(亿)", lambda r: _yi(-(r["main_net_in"] or 0)))
+        reason = lambda r: f"主力净卖出 {_yi(-(r['main_net_in'] or 0))} 亿，注意风险"
     elif board == "strong_break":
         rows = _rows(
-            f"SELECT * FROM stock_snapshot WHERE {_BASE_FILTER} AND volume_ratio >= 1.5 "
-            "AND pct > 2 AND pct_d20 IS NOT NULL ORDER BY pct_d20 DESC", limit=limit)
+            f"{_SELECT} WHERE {_BASE_FILTER} AND s.volume_ratio >= 1.5 "
+            "AND s.pct > 2 AND s.pct_d20 IS NOT NULL ORDER BY s.pct_d20 DESC", limit=limit)
         metric = ("20日涨幅%", lambda r: r["pct_d20"])
+        reason = lambda r: f"放量上攻，20日涨幅 {r['pct_d20']}%，量比 {r['volume_ratio']}"
     elif board == "oversold":
         rows = _rows(
-            f"SELECT * FROM stock_snapshot WHERE {_BASE_FILTER} AND pct_d20 <= -15 "
-            "AND pct > 0 AND main_net_in > 0 ORDER BY pct_d20 ASC", limit=limit)
+            f"{_SELECT} WHERE {_BASE_FILTER} AND s.pct_d20 <= -15 "
+            "AND s.pct > 0 AND s.main_net_in > 0 ORDER BY s.pct_d20 ASC", limit=limit)
         metric = ("20日跌幅%", lambda r: r["pct_d20"])
+        reason = lambda r: f"20日超跌 {r['pct_d20']}% 后止跌，主力回流 {_yi(r['main_net_in'])} 亿"
+    elif board == "stabilize":
+        rows = _rows(
+            f"{_SELECT} WHERE {_BASE_FILTER} AND m.stabilize_score IS NOT NULL "
+            "ORDER BY m.stabilize_score DESC", limit=limit)
+        metric = ("企稳强度", lambda r: r["stabilize_score"])
+        reason = lambda r: "通过四道闸门：超跌·收敛·量能确认·资金回流"
     elif board == "hot_turnover":
         rows = _rows(
-            f"SELECT * FROM stock_snapshot WHERE {_BASE_FILTER} AND amount IS NOT NULL "
-            "ORDER BY amount DESC", limit=limit)
+            f"{_SELECT} WHERE {_BASE_FILTER} AND s.amount IS NOT NULL "
+            "ORDER BY s.amount DESC", limit=limit)
         metric = ("成交额(亿)", lambda r: _yi(r["amount"]))
+        reason = lambda r: f"成交额 {_yi(r['amount'])} 亿，市场焦点股"
     else:  # composite
         rows = _rows(
-            f"""SELECT * FROM stock_snapshot WHERE {_BASE_FILTER}
-                AND main_net_in IS NOT NULL AND volume_ratio IS NOT NULL
-                ORDER BY (COALESCE(pct_d5,0) * 1.5 + COALESCE(pct_d20,0) * 0.5
-                          + main_net_in / 5000.0
-                          + (volume_ratio - 1) * 8) DESC""", limit=limit)
+            f"""{_SELECT} WHERE {_BASE_FILTER}
+                AND s.main_net_in IS NOT NULL AND s.volume_ratio IS NOT NULL
+                ORDER BY (COALESCE(s.pct_d5,0) * 1.5 + COALESCE(s.pct_d20,0) * 0.5
+                          + s.main_net_in / 5000.0
+                          + (s.volume_ratio - 1) * 8) DESC""", limit=limit)
         metric = ("综合动量", lambda r: round(
             (r["pct_d5"] or 0) * 1.5 + (r["pct_d20"] or 0) * 0.5
             + (r["main_net_in"] or 0) / 5000.0 + ((r["volume_ratio"] or 1) - 1) * 8, 1))
+        reason = lambda r: f"动量+资金+量能综合居前，5日涨幅 {r['pct_d5']}%"
 
     metric_name, metric_fn = metric
     items = []
     for r in rows:
         score, advice = _quick_score(r)
-        items.append({
+        item = {
             "code": r["code"], "name": r["name"], "price": r["price"], "pct": r["pct"],
             "metric_name": metric_name, "metric_value": metric_fn(r),
             "volume_ratio": r["volume_ratio"], "turnover_rate": r["turnover_rate"],
             "score": score, "grade": rating.grade_of(score)["name"],
             "advice": advice,
             "volume_desc": rating.volume_desc(r["volume_ratio"]),
-        })
+            "buy_index": r.get("buy_index"),
+            "sentiment": r.get("senti"),
+            "dark_power": r.get("dark_power"),
+            "reason": reason(r),
+        }
+        if r.get("senti") is not None:
+            item["sent_level"] = metrics_svc.sentiment_level(r["senti"])[0]
+        if board == "stabilize":
+            item["gates"] = [bool(r.get(f"stab_g{i}")) for i in (1, 2, 3, 4)]
+            item["stars"] = "★★★" if (r["stabilize_score"] or 0) >= 80 else \
+                            "★★" if (r["stabilize_score"] or 0) >= 65 else "★"
+        items.append(item)
     return items
 
 

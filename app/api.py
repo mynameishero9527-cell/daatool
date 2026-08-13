@@ -6,8 +6,11 @@ from .cache import cache
 from .database import get_meta
 from .datasources.base import HEALTH
 from .services import (
-    commodity, global_index, kline, macro, market, rating, recommend, stocklist,
+    commodity, darkpool, global_index, kline, macro, market, rating, recommend,
+    screener, stocklist,
 )
+from .services import metrics as metrics_svc
+from .database import query as db_query
 
 router = APIRouter(prefix="/api")
 
@@ -73,7 +76,27 @@ def get_kline(code: str, period: str = "day", count: int = Query(320, le=800)):
 def analysis(code: str):
     norm = market.normalize_code(code) or code
     quotes = market.get_quotes([norm])
-    return {"quote": quotes.get(norm), "rating": rating.score_stock(norm)}
+    rows = db_query("SELECT * FROM stock_metrics WHERE code=?", (norm,))
+    m = rows[0] if rows else None
+    metrics2 = None
+    if m:
+        buy_lv, buy_act = metrics_svc.buy_index_level(m["buy_index"] or 0)
+        sent_lv, sent_desc = metrics_svc.sentiment_level(m["sentiment"] or 50)
+        metrics2 = {
+            "buy_index": m["buy_index"], "buy_level": buy_lv, "buy_action": buy_act,
+            "sentiment": m["sentiment"], "sent_level": sent_lv, "sent_desc": sent_desc,
+            "stabilize_score": m["stabilize_score"],
+            "gates": [bool(m[f"stab_g{i}"]) for i in (1, 2, 3, 4)],
+            "rsi14": m["rsi14"], "pos60": m["pos60"], "drawdown60": m["drawdown60"],
+            "bias20": m["bias20"], "ma_bull": bool(m["ma_bull"]),
+            "divergence": m["divergence"], "updated_at": m["updated_at"],
+        }
+    return {
+        "quote": quotes.get(norm),
+        "rating": rating.score_stock(norm),
+        "metrics": metrics2,
+        "dark": darkpool.get_dark_power(norm),
+    }
 
 
 # ---------------- 宏观情报 ----------------
@@ -128,6 +151,74 @@ def recommend_board(board: str = "composite", limit: int = Query(50, le=100)):
     return {"boards": recommend.BOARDS, **recommend.get_board(board, limit)}
 
 
+# ---------------- 个股筛选器（FR2-01） ----------------
+
+@router.get("/screener/meta")
+def screener_meta():
+    return screener.meta()
+
+
+@router.post("/screener/run")
+def screener_run(conditions: dict):
+    return screener.run(conditions, limit=int(conditions.get("limit", 100)))
+
+
+@router.get("/screener/plans")
+def screener_plans():
+    return screener.list_plans()
+
+
+@router.post("/screener/plans")
+def screener_save_plan(payload: dict):
+    name = (payload.get("name") or "").strip()
+    if not name:
+        return {"ok": False, "error": "方案名不能为空"}
+    return screener.save_plan(name, payload.get("conditions") or {})
+
+
+@router.post("/screener/plans/delete")
+def screener_delete_plan(plan_id: int):
+    return screener.delete_plan(plan_id)
+
+
+# ---------------- 暗盘指标（FR2-06） ----------------
+
+@router.get("/dark/power")
+def dark_power(code: str):
+    norm = market.normalize_code(code) or code
+    return darkpool.get_dark_power(norm)
+
+
+@router.get("/dark/orderflow")
+def dark_orderflow(code: str):
+    norm = market.normalize_code(code) or code
+    return darkpool.get_orderflow(norm) or {"error": "盘口数据暂不可用"}
+
+
+# ---------------- 情绪 / 展望（FR2-04/05） ----------------
+
+@router.get("/sentiment/market")
+def sentiment_market():
+    return metrics_svc.market_sentiment()
+
+
+@router.get("/macro/outlook")
+def macro_outlook(horizon: str = "week"):
+    return macro.get_outlook(horizon)
+
+
+@router.post("/macro/custom-event")
+def macro_add_event(payload: dict):
+    return macro.add_custom_event(
+        payload.get("date", ""), payload.get("title", ""),
+        int(payload.get("impact_level", 3)), payload.get("note", ""))
+
+
+@router.post("/macro/custom-event/delete")
+def macro_delete_event(event_id: int):
+    return macro.delete_custom_event(event_id)
+
+
 # ---------------- 系统 / 设置 ----------------
 
 @router.get("/system/status")
@@ -155,6 +246,18 @@ def system_sync_state():
 def system_clear_cache():
     cache.clear()
     return {"ok": True}
+
+
+@router.post("/system/rebuild-metrics")
+def system_rebuild_metrics(include_kline: bool = True):
+    import threading
+    threading.Thread(target=metrics_svc.rebuild_all, args=(include_kline,), daemon=True).start()
+    return {"ok": True, "message": "指标重建已在后台启动"}
+
+
+@router.get("/system/metrics-state")
+def system_metrics_state():
+    return metrics_svc.state()
 
 
 @router.post("/system/source-toggle")

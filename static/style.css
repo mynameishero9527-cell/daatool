@@ -211,6 +211,59 @@ input:focus { border-color: var(--accent); }
 .progress { height: 8px; background: var(--bg2); border-radius: 4px; overflow: hidden; margin-top: 8px; }
 .progress .p { height: 100%; background: var(--accent); }
 
+/* ---- 2.0 新增 ---- */
+.grid-3 { display: grid; grid-template-columns: 1.1fr 1fr 1.2fr; gap: 14px; }
+@media (max-width: 1100px) { .grid-3 { grid-template-columns: 1fr; } }
+
+/* 情绪温度计 */
+.thermo { text-align: center; }
+.thermo .temp { font-size: 36px; font-weight: 800; }
+.thermo-bar {
+  height: 10px; border-radius: 6px; margin: 10px 6px; position: relative;
+  background: linear-gradient(90deg, #26c281, #7d8aa0 45%, #ffa940 65%, #ff5252);
+}
+.thermo-bar .pin {
+  position: absolute; top: -4px; width: 4px; height: 18px;
+  background: #fff; border-radius: 2px; transform: translateX(-2px);
+}
+.thermo .scale { display: flex; justify-content: space-between; color: var(--muted); font-size: 10px; padding: 0 6px; }
+
+/* 筛选器条件组 */
+.cond-group { margin-bottom: 10px; }
+.cond-group .g-label { color: var(--muted); font-size: 12px; margin: 6px 0 4px; }
+.cond-group .opt { padding: 4px 11px; font-size: 12px; border-radius: 6px; }
+.cond-inline { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-end; }
+.cond-inline input { width: 90px; padding: 5px 9px; }
+.chips { margin-bottom: 8px; }
+.chip {
+  display: inline-block; background: rgba(74,158,255,.15); color: var(--accent);
+  border: 1px solid var(--accent); border-radius: 12px; padding: 2px 10px;
+  font-size: 12px; margin: 2px; cursor: pointer;
+}
+.chip:hover { background: rgba(255,82,82,.15); color: var(--up); border-color: var(--up); }
+
+/* 购买指数 / 暗盘力量条 */
+.gauge { margin: 8px 0; }
+.gauge .g-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; }
+.gauge .g-num { font-size: 22px; font-weight: 800; }
+.gauge-track { height: 9px; background: var(--bg2); border-radius: 5px; overflow: hidden; margin-top: 4px; }
+.gauge-fill { height: 100%; border-radius: 5px; background: linear-gradient(90deg, #26c281, #ffa940, #ff5252); }
+
+/* 内外盘力量条 */
+.flow-bar { display: flex; height: 16px; border-radius: 8px; overflow: hidden; margin: 6px 0; font-size: 10px; line-height: 16px; color: #fff; }
+.flow-bar .fo { background: var(--up); text-align: left; padding-left: 6px; }
+.flow-bar .fi { background: var(--down); text-align: right; padding-right: 6px; }
+
+/* 展望综述 */
+.outlook-summary {
+  background: rgba(74,158,255,.08); border: 1px solid rgba(74,158,255,.3);
+  border-radius: 10px; padding: 12px 16px; margin-bottom: 14px; line-height: 1.8;
+}
+.outlook-group { margin: 14px 0 6px; font-weight: 700; color: var(--accent); }
+.gate { display: inline-block; width: 20px; height: 20px; line-height: 20px; text-align: center;
+  border-radius: 5px; font-size: 11px; margin: 0 1px; background: var(--bg2); color: var(--muted); }
+.gate.on { background: #8b1a1a; color: #ffb3b3; }
+
 .offline-banner {
   background: rgba(255,169,64,.12); border: 1px solid rgba(255,169,64,.4); color: var(--warn);
   border-radius: 8px; padding: 8px 14px; margin-bottom: 12px; font-size: 13px;

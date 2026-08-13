@@ -45,6 +45,25 @@ async function loadDashboard() {
     renderWatchlist(d.watchlist);
     $("#lastRefresh").textContent = "更新 " + new Date().toLocaleTimeString("zh-CN");
   } catch (err) { console.warn(err); }
+  loadMarketSentiment();
+}
+
+async function loadMarketSentiment() {
+  try {
+    const s = await api("/api/sentiment/market");
+    if (s.temp === null) {
+      $("#marketSentiment").innerHTML = `<div class="empty">${esc(s.desc)}</div>`;
+      return;
+    }
+    $("#marketSentiment").innerHTML = `
+      <div class="thermo">
+        <span class="temp ${s.temp >= 55 ? "up" : s.temp < 45 ? "down" : "flat"}">${s.temp}</span>
+        <span class="badge ${s.temp >= 70 ? "level-4" : s.temp >= 45 ? "level-2" : "level-1"}">${esc(s.level)}</span>
+        <div class="thermo-bar"><div class="pin" style="left:${s.temp}%"></div></div>
+        <div class="scale"><span>恐慌</span><span>平静</span><span>亢奋</span></div>
+        <div class="muted" style="margin-top:6px">${esc(s.desc)} · 今日涨停 ${s.limit_up} 家</div>
+      </div>`;
+  } catch (err) { console.warn(err); }
 }
 
 function renderIndices(list) {
@@ -227,6 +246,52 @@ function renderCandle(d) {
   }, true);
 }
 
+function gaugeHtml(label, value, levelText, extra = "") {
+  if (value === null || value === undefined) return "";
+  return `<div class="gauge">
+    <div class="g-head"><span class="muted">${label}</span>
+      <span><span class="g-num ${value >= 65 ? "up" : value < 40 ? "down" : "flat"}">${value}</span>
+      <span class="badge ${value >= 65 ? "level-4" : value >= 45 ? "level-2" : "level-1"}">${esc(levelText)}</span></span></div>
+    <div class="gauge-track"><div class="gauge-fill" style="width:${value}%"></div></div>
+    ${extra ? `<div class="muted" style="margin-top:3px;font-size:12px">${extra}</div>` : ""}
+  </div>`;
+}
+
+function metrics2Html(m, dark) {
+  let html = "";
+  if (m) {
+    html += gaugeHtml("购买指数", m.buy_index, `${m.buy_level} · ${m.buy_action}`,
+      `60日位置 ${m.pos60 !== null ? Math.round(m.pos60 * 100) + "%" : "-"} · 乖离 ${fmt(m.bias20, 1)}% · RSI ${fmt(m.rsi14, 0)}`);
+    html += gaugeHtml("情绪温度", m.sentiment, m.sent_level, esc(m.sent_desc));
+  }
+  if (dark && dark.power !== null && dark.power !== undefined) {
+    const of = dark.orderflow;
+    let flowBar = "";
+    if (of && of.outer !== null && of.inner !== null) {
+      const total = of.outer + of.inner || 1;
+      const op = Math.round(of.outer / total * 100);
+      flowBar = `<div class="flow-bar" title="外盘(主动买) vs 内盘(主动卖)">
+        <div class="fo" style="width:${op}%">外 ${fmt(of.outer, 0)}</div>
+        <div class="fi" style="width:${100 - op}%">内 ${fmt(of.inner, 0)}</div></div>
+        <div class="muted" style="font-size:12px">内外盘比 ${fmt(of.in_out_ratio)} · 委比 ${fmt(of.order_ratio)}%</div>`;
+    }
+    html += gaugeHtml("暗盘力量", dark.power, dark.level,
+      `${esc(dark.desc)}${dark.divergence && dark.divergence !== "无" ? " · <b>" + esc(dark.divergence) + "</b>" : ""}`) + flowBar +
+      `<div class="muted" style="font-size:11px;margin-top:2px">口径：${esc(dark.scope)}</div>`;
+  }
+  if (m && m.stabilize_score !== null && m.stabilize_score !== undefined) {
+    const gates = (m.gates || []).map((g, i) =>
+      `<span class="gate ${g ? "on" : ""}" title="闸门G${i + 1}">G${i + 1}</span>`).join("");
+    html += `<div class="kv"><span class="k">企稳状态</span>
+      <span><span class="badge level-4">企稳待涨 ${m.stabilize_score}</span> ${gates}</span></div>`;
+  } else if (m && m.gates) {
+    const gates = m.gates.map((g, i) =>
+      `<span class="gate ${g ? "on" : ""}" title="闸门G${i + 1}">G${i + 1}</span>`).join("");
+    html += `<div class="kv"><span class="k">企稳闸门</span><span>${gates} <span class="muted">未全部通过</span></span></div>`;
+  }
+  return html ? html + '<hr style="border-color:var(--border);margin:10px 0">' : "";
+}
+
 async function loadAnalysis() {
   const card = $("#scoreCard");
   card.innerHTML = '<div class="empty">评分计算中…</div>';
@@ -234,7 +299,7 @@ async function loadAnalysis() {
     const d = await api(`/api/analysis?code=${currentStock.code}`);
     const r = d.rating;
     if (r.score === null || r.score === undefined) {
-      card.innerHTML = `<div class="empty">${esc(r.message || "暂无评分数据")}</div>`;
+      card.innerHTML = `<div class="empty">${esc(r.message || "暂无评分数据")}</div>` + metrics2Html(d.metrics, d.dark);
       return;
     }
     const s = r.snapshot;
@@ -251,6 +316,7 @@ async function loadAnalysis() {
           <div class="track"><div class="fill" style="width:${v}%"></div></div>
           <span class="num">${v}</span></div>`).join("")}
       <hr style="border-color:var(--border);margin:10px 0">
+      ${metrics2Html(d.metrics, d.dark)}
       <div class="kv"><span class="k">主力净流入</span><span class="num ${cls(s.main_net_in)}">${fmt((s.main_net_in || 0) / 10000)} 亿</span></div>
       <div class="kv"><span class="k">5日主力净流入</span><span class="num ${cls(s.main_net_in_d5)}">${fmt((s.main_net_in_d5 || 0) / 10000)} 亿</span></div>
       <div class="kv"><span class="k">5日/20日/60日涨幅</span><span class="num">${pct(s.pct_d5)} / ${pct(s.pct_d20)} / ${pct(s.pct_d60)}</span></div>
@@ -277,9 +343,44 @@ $("#macroTabs").addEventListener("click", (e) => {
   loadMacro();
 });
 
+let outlookHorizon = "week";
 async function loadMacro() {
   const box = $("#macroContent");
   try {
+    if (macroSub === "outlook") {
+      const d = await api(`/api/macro/outlook?horizon=${outlookHorizon}`);
+      box.innerHTML = `
+        <div class="btn-group" style="margin-bottom:12px" id="horizonBtns">
+          ${[["week", "未来一周"], ["month", "未来一月"], ["quarter", "未来三月"], ["half", "未来半年"]].map(([k, v]) =>
+            `<button class="opt ${k === outlookHorizon ? "active" : ""}" data-h="${k}">${v}</button>`).join("")}
+        </div>
+        <div class="outlook-summary">📋 <b>${esc(d.label)}展望综述</b><br>${esc(d.summary)}</div>
+        ${d.groups.map((g) => `
+          <div class="outlook-group">${esc(g.name)}</div>
+          ${g.events.map((ev) => `
+            <div class="cal-item">
+              <span class="cal-date">${ev.date.slice(5)}</span>
+              <span class="badge level-${ev.impact_level}">${ev.impact_desc}</span>
+              <span class="flag">${esc(ev.region)}</span>
+              <span style="flex:1">${esc(ev.title)}${ev.custom ? ` <button class="btn small danger" onclick="delCustomEvent(${ev.id.replace("custom_", "")})">删</button>` : ""}</span>
+              <span class="muted">${esc(ev.category)}</span>
+            </div>`).join("")}`).join("")}
+        <div class="inline-form" style="margin-top:14px">
+          <input id="ceDate" placeholder="YYYY-MM-DD" style="width:120px">
+          <input id="ceTitle" placeholder="自定义事件标题" style="width:240px">
+          <select id="ceLevel" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:6px">
+            <option value="3">中等</option><option value="4">重大</option><option value="5">极重大</option>
+          </select>
+          <button class="btn" onclick="addCustomEvent()">添加事件</button>
+        </div>`;
+      $("#horizonBtns").addEventListener("click", (e) => {
+        const btn = e.target.closest(".opt");
+        if (!btn) return;
+        outlookHorizon = btn.dataset.h;
+        loadMacro();
+      });
+      return;
+    }
     if (macroSub === "calendar") {
       const rows = await api("/api/macro/calendar?months=3");
       box.innerHTML = rows.length ? rows.map((ev) => `
@@ -310,6 +411,189 @@ async function loadMacro() {
       </div>`).join("") : '<div class="empty">暂无数据</div>');
   } catch (err) { box.innerHTML = '<div class="empty">加载失败，稍后自动重试</div>'; console.warn(err); }
 }
+
+window.addCustomEvent = async () => {
+  const res = await api("/api/macro/custom-event", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ date: $("#ceDate").value.trim(), title: $("#ceTitle").value.trim(),
+                           impact_level: Number($("#ceLevel").value) }),
+  });
+  if (!res.ok) { alert(res.error); return; }
+  loadMacro();
+};
+window.delCustomEvent = async (id) => { await post(`/api/macro/custom-event/delete?event_id=${id}`); loadMacro(); };
+
+/* ---------------- 个股筛选器（FR2-01） ---------------- */
+let screenerMeta = null;
+const screenerState = { boards: [], industries: [], mv: [], pct_today: [], pct_d5: [], pct_d20: [],
+  turnover: [], volume_ratio: [], main_flow: [], main_flow_d5: [], pe: [], pb: [], tech: [],
+  price_min: "", price_max: "", exclude_st: true, order_by: "buy_index" };
+const GROUP_LABELS = { mv: "流通市值", pct_today: "今日涨跌", pct_d5: "5日涨跌", pct_d20: "20日涨跌",
+  turnover: "换手率", volume_ratio: "量能", main_flow: "主力资金", main_flow_d5: "5日资金",
+  pe: "PE(TTM)", pb: "PB", tech: "技术形态" };
+
+async function initScreener() {
+  if (screenerMeta) { renderScreenerConditions(); return; }
+  try {
+    screenerMeta = await api("/api/screener/meta");
+    $("#presetBtns").innerHTML = screenerMeta.presets.map((p, i) =>
+      `<button class="opt" onclick="applyPreset(${i})">${esc(p.name)}</button>`).join("");
+    renderScreenerConditions();
+    runScreener();
+    loadPlans();
+  } catch (err) { console.warn(err); }
+}
+
+function renderScreenerConditions() {
+  const m = screenerMeta;
+  let html = '<div class="chips" id="condChips"></div>';
+  html += `<div class="cond-group"><div class="g-label">所属板块</div><div class="btn-group multi" data-group="boards">
+    ${m.boards.map((b) => `<button class="opt ${screenerState.boards.includes(b) ? "active" : ""}" data-val="${b}">${b}</button>`).join("")}</div></div>`;
+  if (m.industries.length) {
+    html += `<div class="cond-group"><div class="g-label">所属行业</div><div class="btn-group multi" data-group="industries">
+      ${m.industries.map((b) => `<button class="opt ${screenerState.industries.includes(b) ? "active" : ""}" data-val="${b}">${b}</button>`).join("")}</div></div>`;
+  }
+  for (const [group, buckets] of Object.entries(m.buckets)) {
+    html += `<div class="cond-group"><div class="g-label">${GROUP_LABELS[group] || group}</div><div class="btn-group multi" data-group="${group}">
+      ${Object.entries(buckets).map(([k, label]) =>
+        `<button class="opt ${(screenerState[group] || []).includes(k) ? "active" : ""}" data-val="${k}">${esc(label)}</button>`).join("")}</div></div>`;
+  }
+  html += `<div class="cond-inline" style="margin-top:8px">
+    <span><span class="g-label muted">股价区间</span>
+      <input id="priceMin" placeholder="最低" value="${screenerState.price_min}">
+      ~ <input id="priceMax" placeholder="最高" value="${screenerState.price_max}"></span>
+    <label style="color:var(--muted);font-size:13px">
+      <input type="checkbox" id="excludeSt" ${screenerState.exclude_st ? "checked" : ""}> 剔除 ST/退市
+    </label></div>`;
+  $("#screenerConditions").innerHTML = html;
+  renderChips();
+
+  $("#screenerConditions").querySelectorAll(".btn-group.multi").forEach((grp) => {
+    grp.addEventListener("click", (e) => {
+      const btn = e.target.closest(".opt");
+      if (!btn) return;
+      const group = grp.dataset.group, val = btn.dataset.val;
+      const arr = screenerState[group];
+      const idx = arr.indexOf(val);
+      if (idx >= 0) arr.splice(idx, 1); else arr.push(val);
+      btn.classList.toggle("active");
+      renderChips();
+      runScreenerDebounced();
+    });
+  });
+  $("#priceMin").addEventListener("input", (e) => { screenerState.price_min = e.target.value; runScreenerDebounced(); });
+  $("#priceMax").addEventListener("input", (e) => { screenerState.price_max = e.target.value; runScreenerDebounced(); });
+  $("#excludeSt").addEventListener("change", (e) => { screenerState.exclude_st = e.target.checked; runScreenerDebounced(); });
+}
+
+function renderChips() {
+  const chips = [];
+  for (const [group, arr] of Object.entries(screenerState)) {
+    if (!Array.isArray(arr) || !arr.length) continue;
+    for (const v of arr) {
+      const label = group === "boards" || group === "industries" ? v
+        : (screenerMeta.buckets[group] || {})[v] || v;
+      chips.push(`<span class="chip" onclick="removeCond('${group}','${v}')">${GROUP_LABELS[group] || ""}${GROUP_LABELS[group] ? ":" : ""}${esc(label)} ✕</span>`);
+    }
+  }
+  $("#condChips").innerHTML = chips.join("") || '<span class="muted" style="font-size:12px">未设置条件（默认展示全市场按购买指数排序）</span>';
+}
+
+window.removeCond = (group, val) => {
+  const arr = screenerState[group];
+  const idx = arr.indexOf(val);
+  if (idx >= 0) arr.splice(idx, 1);
+  renderScreenerConditions();
+  runScreenerDebounced();
+};
+
+window.applyPreset = (i) => {
+  const preset = screenerMeta.presets[i];
+  clearScreener(false);
+  Object.assign(screenerState, JSON.parse(JSON.stringify(preset.conditions)));
+  for (const g of Object.keys(GROUP_LABELS)) screenerState[g] ||= [];
+  screenerState.boards ||= []; screenerState.industries ||= [];
+  renderScreenerConditions();
+  runScreener();
+};
+
+window.clearScreener = (rerun = true) => {
+  for (const k of Object.keys(screenerState)) {
+    if (Array.isArray(screenerState[k])) screenerState[k] = [];
+  }
+  screenerState.price_min = ""; screenerState.price_max = ""; screenerState.exclude_st = true;
+  renderScreenerConditions();
+  if (rerun) runScreener();
+};
+
+const runScreenerDebounced = debounce(() => runScreener(), 350);
+
+async function runScreener() {
+  $("#screenerCount").textContent = "筛选中…";
+  try {
+    const d = await api("/api/screener/run", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(screenerState),
+    });
+    $("#screenerCount").textContent = `命中 ${d.total} 只（最多显示100）`;
+    $("#screenerResult").innerHTML = d.items.length ? `<table><thead><tr>
+      <th>#</th><th>名称</th><th>行业</th><th>最新价</th><th>涨跌幅</th><th>购买指数</th>
+      <th>情绪</th><th>暗盘力量</th><th>主力净流入(万)</th><th>PE</th><th>量比</th><th>企稳</th>
+    </tr></thead><tbody>${d.items.map((r, i) => `
+      <tr onclick="openStock('${r.code}','${esc(r.name)}')">
+        <td>${i + 1}</td><td>${esc(r.name)} <span class="muted">${r.code}</span></td>
+        <td>${esc(r.industry || "-")}</td>
+        <td class="num ${cls(r.pct)}">${fmt(r.price)}</td>
+        <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
+        <td class="num">${r.buy_index !== null ? `<b>${fmt(r.buy_index, 0)}</b> <span class="muted">${esc(r.buy_level || "")}</span>` : "-"}</td>
+        <td>${r.sent_level ? esc(r.sent_level) : "-"}</td>
+        <td class="num">${fmt(r.dark_power, 0)}${r.divergence && r.divergence !== "无" ? ` <span class="badge sector-tag" style="font-size:10px">${esc(r.divergence)}</span>` : ""}</td>
+        <td class="num ${cls(r.main_net_in)}">${fmt(r.main_net_in, 0)}</td>
+        <td class="num">${fmt(r.pe_ttm, 1)}</td>
+        <td class="num">${fmt(r.volume_ratio)}</td>
+        <td>${r.stabilize_score !== null ? `<span class="badge level-4" style="font-size:11px">${fmt(r.stabilize_score, 0)}</span>` : "-"}</td>
+      </tr>`).join("")}</tbody></table>
+      <div class="muted" style="margin-top:8px;font-size:12px">指标为量化参考，不构成投资建议。指标每日盘后重算，可在设置页手动重建。</div>`
+      : '<div class="empty">无符合条件的个股，可放宽条件</div>';
+  } catch (err) {
+    $("#screenerCount").textContent = "筛选失败";
+    console.warn(err);
+  }
+}
+
+$("#screenerOrder").addEventListener("click", (e) => {
+  const btn = e.target.closest(".opt");
+  if (!btn) return;
+  screenerState.order_by = btn.dataset.order;
+  $$("#screenerOrder .opt").forEach((b) => b.classList.toggle("active", b === btn));
+  runScreener();
+});
+
+window.savePlan = async () => {
+  const name = prompt("方案名称：");
+  if (!name) return;
+  await api("/api/screener/plans", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, conditions: screenerState }),
+  });
+  loadPlans();
+};
+
+async function loadPlans() {
+  const plans = await api("/api/screener/plans");
+  $("#planList").style.display = plans.length ? "" : "none";
+  $("#planItems").innerHTML = plans.map((p) => `
+    <div class="src-row"><span>${esc(p.name)} <span class="muted">${p.created_at.slice(0, 10)}</span></span>
+      <span><button class="btn small" onclick='applyPlan(${JSON.stringify(JSON.stringify(p.conditions))})'>套用</button>
+      <button class="btn small danger" onclick="deletePlan(${p.plan_id})">删除</button></span></div>`).join("");
+}
+window.applyPlan = (condJson) => {
+  clearScreener(false);
+  Object.assign(screenerState, JSON.parse(condJson));
+  renderScreenerConditions();
+  runScreener();
+};
+window.deletePlan = async (id) => { await post(`/api/screener/plans/delete?plan_id=${id}`); loadPlans(); };
 
 /* ---------------- 大宗商品 ---------------- */
 let commodityCats = [];
@@ -399,22 +683,34 @@ async function loadRecommend() {
       $("#recommendBoards").innerHTML = Object.entries(d.boards).map(([k, v]) =>
         `<button class="opt ${k === recommendBoard ? "active" : ""}" data-board="${k}">${v}</button>`).join("");
     }
-    box.innerHTML = d.items.length ? `<table><thead><tr>
+    const statsHtml = d.stats && d.stats.n ? `
+      <div class="offline-banner" style="border-color:rgba(74,158,255,.4);color:var(--accent);background:rgba(74,158,255,.08)">
+        历史入选 ${d.stats.n} 次 · 5日胜率 ${fmt(d.stats.win5, 0)}%（均值 ${fmt(d.stats.avg5, 1)}%） ·
+        10日胜率 ${fmt(d.stats.win10, 0)}%（均值 ${fmt(d.stats.avg10, 1)}%） ·
+        20日胜率 ${fmt(d.stats.win20, 0)}%（均值 ${fmt(d.stats.avg20, 1)}%）
+      </div>` : "";
+    const isStab = recommendBoard === "stabilize";
+    box.innerHTML = d.items.length ? statsHtml + `<table><thead><tr>
       <th>#</th><th>名称</th><th>最新价</th><th>涨跌幅</th><th>${esc(d.items[0].metric_name)}</th>
-      <th>量比</th><th>量能</th><th>评分</th><th>等级</th><th>提示</th>
+      ${isStab ? "<th>闸门</th><th>星级</th>" : ""}<th>购买指数</th><th>情绪</th>
+      <th>量能</th><th>评分</th><th>提示</th><th>入选理由</th>
     </tr></thead><tbody>${d.items.map((r, i) => `
       <tr onclick="openStock('${r.code}','${esc(r.name)}')">
         <td>${i + 1}</td><td>${esc(r.name)} <span class="muted">${r.code}</span></td>
         <td class="num ${cls(r.pct)}">${fmt(r.price)}</td>
         <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
         <td class="num">${fmt(r.metric_value)}</td>
-        <td class="num">${fmt(r.volume_ratio)}</td>
+        ${isStab ? `<td>${(r.gates || []).map((g, gi) => `<span class="gate ${g ? "on" : ""}">G${gi + 1}</span>`).join("")}</td>
+        <td class="up">${r.stars || ""}</td>` : ""}
+        <td class="num">${r.buy_index !== null && r.buy_index !== undefined ? `<b>${fmt(r.buy_index, 0)}</b>` : "-"}</td>
+        <td>${r.sent_level ? esc(r.sent_level) : "-"}</td>
         <td>${esc(r.volume_desc)}</td>
         <td class="num">${fmt(r.score, 1)}</td>
-        <td>${esc(r.grade)}</td>
         <td><span class="badge ${r.advice === "增持" ? "advice-buy" : r.advice === "减持" ? "advice-sell" : "advice-hold"}" style="font-size:12px;padding:2px 8px">${r.advice}</span></td>
-      </tr>`).join("")}</tbody></table>`
-      : '<div class="empty">榜单暂无数据，请先在设置页执行全量同步</div>';
+        <td class="muted" style="font-size:12px;white-space:normal;min-width:180px">${esc(r.reason || "")}</td>
+      </tr>`).join("")}</tbody></table>
+      <div class="muted" style="margin-top:8px;font-size:12px">榜单为量化参考，不构成投资建议。</div>`
+      : '<div class="empty">榜单暂无数据：企稳/指标类榜单需先在设置页执行「重建指标」</div>';
   } catch (err) { box.innerHTML = '<div class="empty">加载失败</div>'; console.warn(err); }
 }
 $("#recommendBoards").addEventListener("click", (e) => {
@@ -446,6 +742,7 @@ async function loadSettings() {
       <div class="kv"><span class="k">上次同步</span><span>${esc(sync.last_sync)}</span></div>
       <div class="kv"><span class="k">状态</span><span>${esc(sync.message)}</span></div>
       ${sync.running ? '<div class="progress"><div class="p" style="width:60%"></div></div>' : ""}`;
+    loadMetricsState();
     $("#jobTable").innerHTML = `<table><thead><tr>
       <th>任务</th><th>上次执行</th><th>状态</th><th>下次执行</th>
     </tr></thead><tbody>${d.jobs.map((j) => `
@@ -457,6 +754,29 @@ async function loadSettings() {
     $("#healthDot").className = "dot " + (anyCircuit ? "bad" : anyFail ? "warn" : "ok");
   } catch (err) { console.warn(err); }
 }
+async function loadMetricsState() {
+  try {
+    const m = await api("/api/system/metrics-state");
+    $("#metricsState").innerHTML = `
+      <div class="kv"><span class="k">已计算指标股票数</span><span class="num">${m.metrics_count}</span></div>
+      <div class="kv"><span class="k">已入库K线股票数</span><span class="num">${m.kline_codes}</span></div>
+      <div class="kv"><span class="k">K线上次同步</span><span>${esc(m.kline_last_sync)}</span></div>
+      <div class="kv"><span class="k">指标上次计算</span><span>${esc(m.metrics_last_compute)}</span></div>
+      <div class="kv"><span class="k">行业映射</span><span>${esc(m.industry_last_sync)}</span></div>
+      <div class="kv"><span class="k">状态</span><span>${m.running ? `${esc(m.stage)} ${m.progress}/${m.total}` : esc(m.stage)}</span></div>
+      ${m.running ? `<div class="progress"><div class="p" style="width:${m.total ? m.progress / m.total * 100 : 30}%"></div></div>` : ""}`;
+  } catch (err) { console.warn(err); }
+}
+
+window.rebuildMetrics = async () => {
+  await post("/api/system/rebuild-metrics");
+  const poll = setInterval(async () => {
+    const m = await api("/api/system/metrics-state");
+    loadMetricsState();
+    if (!m.running) clearInterval(poll);
+  }, 3000);
+};
+
 window.toggleSource = async (name) => { await post(`/api/system/source-toggle?name=${encodeURIComponent(name)}`); loadSettings(); };
 window.clearCache = async () => { await post("/api/system/clear-cache"); loadSettings(); };
 window.fullSync = async () => {
@@ -477,6 +797,7 @@ function debounce(fn, ms) {
 
 loaders.dashboard = loadDashboard;
 loaders.stock = () => { if (currentStock) { loadKline(); } };
+loaders.screener = initScreener;
 loaders.macro = loadMacro;
 loaders.commodity = loadCommodities;
 loaders.global = loadGlobal;

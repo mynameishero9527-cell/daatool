@@ -13,6 +13,7 @@
   <nav class="main-tabs" id="mainTabs">
     <button class="tab active" data-tab="dashboard">行情看板</button>
     <button class="tab" data-tab="stock">个股分析</button>
+    <button class="tab" data-tab="screener">个股筛选</button>
     <button class="tab" data-tab="macro">宏观情报</button>
     <button class="tab" data-tab="commodity">大宗商品</button>
     <button class="tab" data-tab="global">全球指数</button>
@@ -29,10 +30,14 @@
   <!-- 行情看板 -->
   <section class="page active" id="page-dashboard">
     <div class="index-strip" id="indexStrip"></div>
-    <div class="grid-2">
+    <div class="grid-3">
       <div class="card">
         <div class="card-title">市场统计 <span class="muted" id="statsTime"></span></div>
         <div id="marketStats" class="stats-row"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">市场情绪温度计</div>
+        <div id="marketSentiment"><div class="empty">计算中…</div></div>
       </div>
       <div class="card">
         <div class="card-title">领涨 / 领跌</div>
@@ -76,10 +81,40 @@
     </div>
   </section>
 
+  <!-- 个股筛选 -->
+  <section class="page" id="page-screener">
+    <div class="card">
+      <div class="card-title">筛选条件
+        <span class="inline-form">
+          <span class="btn-group" id="presetBtns"></span>
+          <button class="btn ghost" onclick="clearScreener()">清空条件</button>
+          <button class="btn" onclick="savePlan()">保存方案</button>
+        </span>
+      </div>
+      <div id="screenerConditions"><div class="empty">加载中…</div></div>
+    </div>
+    <div class="card">
+      <div class="card-title"><span>筛选结果 <span class="muted" id="screenerCount"></span></span>
+        <span class="btn-group" id="screenerOrder">
+          <button class="opt active" data-order="buy_index">按购买指数</button>
+          <button class="opt" data-order="main_flow">按主力净流入</button>
+          <button class="opt" data-order="dark">按暗盘力量</button>
+          <button class="opt" data-order="pct">按涨幅</button>
+        </span>
+      </div>
+      <div id="screenerResult"><div class="empty">设置条件后自动筛选</div></div>
+    </div>
+    <div class="card" id="planList" style="display:none">
+      <div class="card-title">已保存方案</div>
+      <div id="planItems"></div>
+    </div>
+  </section>
+
   <!-- 宏观情报 -->
   <section class="page" id="page-macro">
     <div class="btn-group sub-tabs" id="macroTabs">
       <button class="opt active" data-sub="news">实时快讯</button>
+      <button class="opt" data-sub="outlook">事件展望</button>
       <button class="opt" data-sub="calendar">事件日历</button>
       <button class="opt" data-sub="policy">政策追踪</button>
       <button class="opt" data-sub="major">影响评估</button>
@@ -124,6 +159,10 @@
           <button class="btn" onclick="fullSync()">立即同步</button>
         </div>
         <div id="syncState"></div>
+        <div class="card-title" style="margin-top:14px">指标重建（K线+企稳/购买指数/情绪/暗盘）
+          <button class="btn" onclick="rebuildMetrics()">重建指标</button>
+        </div>
+        <div id="metricsState"></div>
       </div>
     </div>
     <div class="card">

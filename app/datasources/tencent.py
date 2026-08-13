@@ -12,6 +12,14 @@ _RANK_URL = (
     "https://proxy.finance.qq.com/cgi/cgi-bin/rank/hs/getBoardRankList"
     "?board_code=aStock&sort_type={sort}&direct={direct}&offset={offset}&count={count}"
 )
+_INDUSTRY_URL = (
+    "https://proxy.finance.qq.com/cgi/cgi-bin/rank/pt/getRank"
+    "?board_type=hy&sort_type=price&direct=down&offset=0&count=100"
+)
+_BOARD_STOCKS_URL = (
+    "https://proxy.finance.qq.com/cgi/cgi-bin/rank/hs/getBoardRankList"
+    "?board_code={board}&sort_type=price&direct=down&offset={offset}&count={count}"
+)
 
 
 def _f(value: str) -> float | None:
@@ -84,6 +92,65 @@ def fetch_minute(code: str) -> dict:
     qt = data.get("qt", {}).get(code, [])
     prev_close = float(qt[4]) if len(qt) > 4 and qt[4] else None
     return {"date": minute.get("date", ""), "prev_close": prev_close, "points": points}
+
+
+def fetch_orderbook(code: str) -> dict | None:
+    """盘口：外盘/内盘 + 五档委托（委比）。"""
+    resp = tracked_get(SOURCE, _QT_URL.format(codes=code))
+    text = resp.content.decode("gbk", errors="replace")
+    m = re.search(r'v_(\w+)="([^"]*)"', text)
+    if not m:
+        return None
+    p = m.group(2).split("~")
+    if len(p) < 29:
+        return None
+    bids = [( _f(p[9 + i * 2]), _f(p[10 + i * 2]) ) for i in range(5)]
+    asks = [( _f(p[19 + i * 2]), _f(p[20 + i * 2]) ) for i in range(5)]
+    bid_vol = sum(v or 0 for _, v in bids)
+    ask_vol = sum(v or 0 for _, v in asks)
+    total = bid_vol + ask_vol
+    outer, inner = _f(p[7]), _f(p[8])
+    of_total = (outer or 0) + (inner or 0)
+    return {
+        "code": m.group(1), "name": p[1], "price": _f(p[3]),
+        "outer": outer, "inner": inner,
+        "outer_ratio": round((outer or 0) / of_total, 4) if of_total else None,
+        "in_out_ratio": round((outer or 0) / inner, 2) if inner else None,
+        "bids": bids, "asks": asks,
+        "bid_vol": bid_vol, "ask_vol": ask_vol,
+        "order_ratio": round((bid_vol - ask_vol) / total * 100, 2) if total else None,  # 委比%
+        "time": p[30],
+    }
+
+
+def fetch_industries() -> list[dict]:
+    """申万一级行业板块列表（含板块涨跌幅与领涨股）。"""
+    resp = tracked_get(SOURCE, _INDUSTRY_URL)
+    payload = resp.json()
+    if payload.get("code") != 0:
+        raise RuntimeError(f"industry api code={payload.get('code')}")
+    out = []
+    for r in payload.get("data", {}).get("rank_list", []) or []:
+        lzg = r.get("lzg") or {}
+        out.append({
+            "board_code": r.get("code", ""),
+            "name": r.get("name", ""),
+            "pct": _f(r.get("zdf")),
+            "turnover_rate": _f(r.get("hsl")),
+            "leader_code": lzg.get("code", ""),
+            "leader_name": lzg.get("name", ""),
+            "leader_pct": _f(lzg.get("zdf")),
+        })
+    return out
+
+
+def fetch_board_stocks(board_code: str, offset: int = 0, count: int = 200) -> list[str]:
+    """板块成分股代码列表。"""
+    resp = tracked_get(SOURCE, _BOARD_STOCKS_URL.format(board=board_code, offset=offset, count=count))
+    payload = resp.json()
+    if payload.get("code") != 0:
+        raise RuntimeError(f"board stocks api code={payload.get('code')}")
+    return [r.get("code", "") for r in payload.get("data", {}).get("rank_list", []) or []]
 
 
 def fetch_rank_page(sort: str = "price", direct: str = "down", offset: int = 0, count: int = 200) -> list[dict]:

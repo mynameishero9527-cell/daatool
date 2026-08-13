@@ -8,6 +8,7 @@ from .cache import cache
 from .config import INTERVAL_MEDIUM, INTERVAL_NEWS, INTERVAL_REALTIME, INTERVAL_SNAPSHOT
 from .database import set_meta
 from .services import commodity, global_index, macro, market, stocklist
+from .services import metrics as metrics_svc
 
 log = logging.getLogger("scheduler")
 _scheduler: BackgroundScheduler | None = None
@@ -75,6 +76,17 @@ def _job_daily_maintain():
     set_meta("last_daily_maintain", datetime.now().isoformat(timespec="seconds"))
 
 
+def _job_metrics_rebuild():
+    """盘后：全市场K线同步 + 行业映射 + 指标重算（企稳/购买指数/情绪/暗盘力量）。"""
+    stocklist.full_sync()
+    metrics_svc.rebuild_all(include_kline=True)
+
+
+def _job_metrics_recompute():
+    """盘中：仅基于最新快照重算指标（不重拉K线，轻量）。"""
+    metrics_svc.compute_all_metrics()
+
+
 def start() -> None:
     global _scheduler
     if _scheduler:
@@ -92,6 +104,10 @@ def start() -> None:
                   day_of_week="mon-fri", hour=9, minute=0, id="premarket")
     sched.add_job(_run("盘后同步", _job_snapshot_sync), "cron",
                   day_of_week="mon-fri", hour=15, minute=30, id="postmarket")
+    sched.add_job(_run("盘后指标重建(K线+四大指标)", _job_metrics_rebuild), "cron",
+                  day_of_week="mon-fri", hour=15, minute=40, id="metrics_rebuild")
+    sched.add_job(_run("盘中指标轻量重算", _job_metrics_recompute, only_trading=True),
+                  "interval", minutes=10, id="metrics_recompute")
     sched.add_job(_run("每日维护", _job_daily_maintain), "cron", hour=2, minute=0, id="maintain")
     sched.start()
     _scheduler = sched
@@ -104,7 +120,9 @@ def status() -> list[dict]:
         for job in _scheduler.get_jobs():
             name = {"realtime": "盘中高频行情", "medium": "盘中中频(商品/全球)", "news": "快讯轮询",
                     "snapshot": "全市场快照刷新", "premarket": "盘前准备",
-                    "postmarket": "盘后同步", "maintain": "每日维护"}.get(job.id, job.id)
+                    "postmarket": "盘后同步", "maintain": "每日维护",
+                    "metrics_rebuild": "盘后指标重建(K线+四大指标)",
+                    "metrics_recompute": "盘中指标轻量重算"}.get(job.id, job.id)
             st = JOB_STATUS.get(name, {})
             jobs.append({
                 "id": job.id, "name": name,

@@ -9,8 +9,9 @@ from fastapi.staticfiles import StaticFiles
 from . import scheduler
 from .api import router
 from .config import STATIC_DIR
-from .database import init_db
+from .database import init_db, query
 from .services import market, stocklist
+from .services import metrics as metrics_svc
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("main")
@@ -26,10 +27,15 @@ def startup() -> None:
     log.info("数据库初始化完成")
     # 2) 默认自选股
     market.ensure_default_watchlist()
-    # 3) 股票列表为空则后台执行首次全量同步（不阻塞启动）
-    if stocklist.snapshot_count() == 0:
-        log.info("本地无股票数据，后台启动首次全量同步…")
-        threading.Thread(target=stocklist.full_sync, daemon=True).start()
+    # 3) 首次启动链路：快照同步 → K线/行业/指标重建（均在后台，不阻塞启动）
+    def bootstrap():
+        if stocklist.snapshot_count() == 0:
+            log.info("本地无股票数据，执行首次全量同步…")
+            stocklist.full_sync()
+        if query("SELECT COUNT(*) AS n FROM stock_metrics")[0]["n"] == 0:
+            log.info("指标表为空，后台执行K线同步与指标重建…")
+            metrics_svc.rebuild_all(include_kline=True)
+    threading.Thread(target=bootstrap, daemon=True).start()
     # 4) 启动定时任务
     scheduler.start()
     log.info("启动自检完成")

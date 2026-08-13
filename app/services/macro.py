@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta
 
 from ..cache import cached
 from ..config import TTL_NEWS
-from ..database import executemany, query
+from ..database import execute, executemany, query
 from ..datasources import sina
 
 # ---------------- 影响程度关键词规则（详见产品文档 §5.3） ----------------
@@ -133,14 +133,15 @@ def _third_wednesday(year: int, month: int) -> date:
     return d + timedelta(days=offset + 14)
 
 
-def get_calendar(months: int = 3) -> list[dict]:
-    """未来 1-3 个月重大事件日历（按常规日程预估）。"""
-    months = max(1, min(months, 3))
+def _generate_events(days: int) -> list[dict]:
+    """未来 days 天内的重大事件（常规日程预估 + 年度周期事件 + 用户自定义）。"""
     today = date.today()
+    end = today + timedelta(days=days)
+    months_span = days // 28 + 2
     events: list[dict] = []
 
     def add(day: date, title: str, category: str, region: str, level: int, note: str = ""):
-        if today <= day <= today + timedelta(days=months * 31):
+        if today <= day <= end:
             events.append({
                 "id": hashlib.md5(f"{day}{title}".encode()).hexdigest()[:12],
                 "date": day.isoformat(), "title": title, "category": category,
@@ -148,7 +149,7 @@ def get_calendar(months: int = 3) -> list[dict]:
                 "impact_desc": _LEVEL_DESC[level], "note": note or "日程为常规发布时间预估",
             })
 
-    for i in range(months + 1):
+    for i in range(months_span):
         m = (today.month - 1 + i) % 12 + 1
         y = today.year + (today.month - 1 + i) // 12
         try:
@@ -162,21 +163,120 @@ def get_calendar(months: int = 3) -> list[dict]:
             add(first_friday, "美国非农就业报告", "经济数据", "美国", 4)
         except ValueError:
             continue
-
-    # FOMC 会议（一年 8 次，取近似月份的第三个周三）
-    for i in range(months + 1):
-        m = (today.month - 1 + i) % 12 + 1
-        y = today.year + (today.month - 1 + i) // 12
+        # FOMC 会议（一年 8 次，取会议月第三个周三）
         if m in (1, 3, 4, 6, 7, 9, 10, 12):
             add(_third_wednesday(y, m), "美联储 FOMC 议息会议", "货币政策", "美国", 5)
+        # 政治局会议（季度末月常规研究经济工作）
+        if m in (4, 7, 10, 12):
+            add(date(y, m, 28), "中央政治局会议（研究经济工作）", "财政政策", "中国", 5)
+        # 财报季
+        for (fm, title) in ((4, "A股年报/一季报密集披露期"), (8, "A股中报密集披露期"),
+                            (10, "A股三季报密集披露期"), (1, "A股年报业绩预告密集期")):
+            if m == fm:
+                add(date(y, m, 25 if fm != 1 else 20), title, "公司事件", "中国", 3)
+        # OPEC+ 部长级会议（月度初）
+        add(date(y, m, 4), "OPEC+ 产量政策会议窗口", "地缘政治", "全球", 3)
 
-    # 财报季提示
-    for (m, title) in ((4, "A股年报/一季报密集披露期"), (8, "A股中报密集披露期"), (10, "A股三季报密集披露期")):
-        for i in range(months + 1):
-            mm = (today.month - 1 + i) % 12 + 1
-            yy = today.year + (today.month - 1 + i) // 12
-            if mm == m:
-                add(date(yy, mm, 25), title, "公司事件", "中国", 3)
+    # 固定年度大事
+    for y in (today.year, today.year + 1):
+        add(date(y, 3, 5), "全国两会开幕（政府工作报告）", "财政政策", "中国", 5)
+        add(date(y, 12, 11), "中央经济工作会议（定调次年）", "财政政策", "中国", 5)
 
-    events.sort(key=lambda e: e["date"])
-    return events
+    # 用户自定义事件
+    for r in query("SELECT * FROM custom_event WHERE date>=? AND date<=? ", (today.isoformat(), end.isoformat())):
+        events.append({
+            "id": f"custom_{r['event_id']}", "date": r["date"], "title": r["title"],
+            "category": r["category"], "region": r["region"],
+            "impact_level": r["impact_level"], "impact_desc": _LEVEL_DESC.get(r["impact_level"], "中等"),
+            "note": r["note"] or "用户自定义事件", "custom": True,
+        })
+
+    # 去重（同日同标题）并排序
+    seen, out = set(), []
+    for e in sorted(events, key=lambda x: (x["date"], -x["impact_level"])):
+        key = (e["date"], e["title"])
+        if key not in seen:
+            seen.add(key)
+            out.append(e)
+    return out
+
+
+def get_calendar(months: int = 3) -> list[dict]:
+    """未来 1-3 个月重大事件日历（兼容 1.0 接口）。"""
+    return _generate_events(max(1, min(months, 3)) * 31)
+
+
+# ---------------- 多时间跨度展望（FR2-05） ----------------
+
+HORIZONS = {
+    "week": (7, "未来一周"), "month": (31, "未来一月"),
+    "quarter": (92, "未来三月"), "half": (183, "未来半年"),
+}
+
+_SECTOR_HINTS = {
+    "货币政策": ["贵金属", "券商", "银行"], "财政政策": ["基建", "大消费"],
+    "经济数据": ["指数权重", "周期"], "地缘政治": ["能源", "军工", "黄金股"],
+    "公司事件": ["业绩主线"], "行业监管": ["受监管行业"],
+}
+
+
+def get_outlook(horizon: str = "week") -> dict:
+    days, label = HORIZONS.get(horizon, HORIZONS["week"])
+    events = _generate_events(days)
+    critical = [e for e in events if e["impact_level"] >= 5]
+    top3 = sorted(events, key=lambda e: (-e["impact_level"], e["date"]))[:3]
+    sectors: list[str] = []
+    for e in top3:
+        for s in _SECTOR_HINTS.get(e["category"], []):
+            if s not in sectors:
+                sectors.append(s)
+
+    # 叙事综述
+    if events:
+        top_txt = "；".join(
+            f"{e['date'][5:]} {e['title']}（{e['impact_desc']}·{e['region']}）" for e in top3)
+        summary = (
+            f"{label}共 {len(events)} 个重点事件，其中极重大 {len(critical)} 个。"
+            f"影响最大的事件：{top_txt}。"
+            f"建议重点关注板块：{('、'.join(sectors[:5])) if sectors else '暂无明确主线'}。"
+            f"风险提示：事件密集窗口波动可能加大，留意议息与政策会议的预期差。"
+        )
+    else:
+        summary = f"{label}暂无收录的重大事件。"
+
+    # 分组：周档按日，月档按周，季/半年按月
+    groups: dict[str, list[dict]] = {}
+    for e in events:
+        d = date.fromisoformat(e["date"])
+        if horizon == "week":
+            key = f"{e['date'][5:]}（{'周一周二周三周四周五周六周日'[d.weekday()*2:d.weekday()*2+2]}）"
+        elif horizon == "month":
+            week_no = (d - date.today()).days // 7 + 1
+            key = f"第{week_no}周"
+        else:
+            key = f"{d.year}年{d.month}月"
+        groups.setdefault(key, []).append(e)
+
+    return {
+        "horizon": horizon, "label": label, "days": days,
+        "summary": summary, "total": len(events), "critical": len(critical),
+        "focus_sectors": sectors[:5],
+        "groups": [{"name": k, "events": v} for k, v in groups.items()],
+    }
+
+
+def add_custom_event(day: str, title: str, level: int = 3, note: str = "") -> dict:
+    try:
+        date.fromisoformat(day)
+    except ValueError:
+        return {"ok": False, "error": "日期格式应为 YYYY-MM-DD"}
+    if not title.strip():
+        return {"ok": False, "error": "标题不能为空"}
+    execute("INSERT INTO custom_event(date,title,impact_level,note) VALUES(?,?,?,?)",
+            (day, title.strip(), max(1, min(5, level)), note))
+    return {"ok": True}
+
+
+def delete_custom_event(event_id: int) -> dict:
+    execute("DELETE FROM custom_event WHERE event_id=?", (event_id,))
+    return {"ok": True}

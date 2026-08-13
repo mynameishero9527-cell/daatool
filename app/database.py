@@ -70,7 +70,66 @@ CREATE TABLE IF NOT EXISTS kv_meta (
     k TEXT PRIMARY KEY,
     v TEXT
 );
+
+-- 2.0 指标表：全市场K线衍生指标 + 企稳/购买指数/情绪/暗盘力量
+CREATE TABLE IF NOT EXISTS stock_metrics (
+    code            TEXT PRIMARY KEY,
+    ma5 REAL, ma10 REAL, ma20 REAL, ma60 REAL,
+    rsi14           REAL,
+    macd_bar        REAL,
+    macd_gold       INTEGER,          -- 近3日MACD金叉
+    ma_bull         INTEGER,          -- 均线多头排列
+    above_ma20      INTEGER,
+    break20_high    INTEGER,          -- 突破20日新高
+    pullback_shrink INTEGER,          -- 缩量回调
+    pos60           REAL,             -- 60日区间位置 0-1
+    drawdown60      REAL,             -- 60日最大回撤 %
+    bias20          REAL,             -- 20日乖离率 %
+    stab_g1 INTEGER, stab_g2 INTEGER, stab_g3 INTEGER, stab_g4 INTEGER,
+    stabilize_score REAL,             -- 企稳强度 0-100（未过闸门为 NULL）
+    buy_index       REAL,             -- 购买指数 0-100
+    sentiment       REAL,             -- 情绪温度 0-100
+    dark_power      REAL,             -- 暗盘力量 0-100
+    divergence      TEXT,             -- 暗中吸筹/暗中派发/无
+    updated_at      TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS screener_plan (
+    plan_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL,
+    conditions  TEXT NOT NULL,        -- JSON
+    created_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS stabilize_record (
+    code        TEXT NOT NULL,
+    select_date TEXT NOT NULL,
+    score       REAL,
+    price       REAL,
+    pct_after_5d REAL, pct_after_10d REAL, pct_after_20d REAL,
+    PRIMARY KEY (code, select_date)
+);
+
+CREATE TABLE IF NOT EXISTS custom_event (
+    event_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    date        TEXT NOT NULL,
+    title       TEXT NOT NULL,
+    category    TEXT DEFAULT '自定义',
+    region      TEXT DEFAULT '中国',
+    impact_level INTEGER DEFAULT 3,
+    note        TEXT DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS sentiment_history (
+    date        TEXT PRIMARY KEY,
+    market_temp REAL
+);
 """
+
+# 已有表的增量列迁移（幂等）
+MIGRATIONS = [
+    "ALTER TABLE stock_list ADD COLUMN industry TEXT DEFAULT ''",
+]
 
 
 def _conn() -> sqlite3.Connection:
@@ -87,6 +146,11 @@ def _conn() -> sqlite3.Connection:
 def init_db() -> None:
     conn = _conn()
     conn.executescript(SCHEMA)
+    for sql in MIGRATIONS:
+        try:
+            conn.execute(sql)
+        except sqlite3.OperationalError:
+            pass  # 列已存在
     conn.commit()
 
 
