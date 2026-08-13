@@ -16,6 +16,10 @@ _INDUSTRY_URL = (
     "https://proxy.finance.qq.com/cgi/cgi-bin/rank/pt/getRank"
     "?board_type=hy&sort_type=price&direct=down&offset=0&count=100"
 )
+_CONCEPT_URL = (
+    "https://proxy.finance.qq.com/cgi/cgi-bin/rank/pt/getRank"
+    "?board_type=gn&sort_type=turnover&direct=down&offset={offset}&count={count}"
+)
 _BOARD_STOCKS_URL = (
     "https://proxy.finance.qq.com/cgi/cgi-bin/rank/hs/getBoardRankList"
     "?board_code={board}&sort_type=price&direct=down&offset={offset}&count={count}"
@@ -140,6 +144,23 @@ def fetch_industries() -> list[dict]:
             "leader_code": lzg.get("code", ""),
             "leader_name": lzg.get("name", ""),
             "leader_pct": _f(lzg.get("zdf")),
+        })
+    return out
+
+
+def fetch_concept_boards(offset: int = 0, count: int = 100) -> list[dict]:
+    """概念板块列表（按成交额排序）。"""
+    resp = tracked_get(SOURCE, _CONCEPT_URL.format(offset=offset, count=count))
+    payload = resp.json()
+    if payload.get("code") != 0:
+        raise RuntimeError(f"concept api code={payload.get('code')}")
+    out = []
+    for r in payload.get("data", {}).get("rank_list", []) or []:
+        out.append({
+            "board_code": r.get("code", ""),
+            "name": r.get("name", ""),
+            "pct": _f(r.get("zdf")),
+            "turnover": _f(r.get("turnover")),
         })
     return out
 

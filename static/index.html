@@ -14,6 +14,7 @@
     <button class="tab active" data-tab="dashboard">行情看板</button>
     <button class="tab" data-tab="stock">个股分析</button>
     <button class="tab" data-tab="screener">个股筛选</button>
+    <button class="tab" data-tab="sector">板块资金</button>
     <button class="tab" data-tab="macro">宏观情报</button>
     <button class="tab" data-tab="commodity">大宗商品</button>
     <button class="tab" data-tab="global">全球指数</button>
@@ -36,8 +37,9 @@
         <div id="marketStats" class="stats-row"></div>
       </div>
       <div class="card">
-        <div class="card-title">市场情绪温度计</div>
+        <div class="card-title">市场情绪与大周期</div>
         <div id="marketSentiment"><div class="empty">计算中…</div></div>
+        <div id="marketCycle"></div>
       </div>
       <div class="card">
         <div class="card-title">领涨 / 领跌</div>
@@ -65,6 +67,7 @@
     </div>
     <div class="grid-stock">
       <div class="card">
+        <div id="stockProfile"></div>
         <div class="card-title"><span id="klineTitle">K线走势</span>
           <span class="btn-group" id="periodBtns">
             <button class="opt active" data-period="minute">分时</button>
@@ -107,6 +110,31 @@
     <div class="card" id="planList" style="display:none">
       <div class="card-title">已保存方案</div>
       <div id="planItems"></div>
+    </div>
+  </section>
+
+  <!-- 板块资金 -->
+  <section class="page" id="page-sector">
+    <div class="card">
+      <div class="card-title">板块资金全景 <span class="muted" id="sectorTime"></span>
+        <span class="btn-group">
+          <span id="sectorDim">
+            <button class="opt active" data-dim="industry">行业板块</button>
+            <button class="opt" data-dim="concept">题材概念</button>
+          </span>
+          <span id="sectorView" style="margin-left:10px">
+            <button class="opt active" data-view="map">热力图</button>
+            <button class="opt" data-view="list">列表</button>
+          </span>
+        </span>
+      </div>
+      <div class="muted" style="margin-bottom:8px">方块大小 = 成交额；颜色 = 主力净流入（红入绿出）。点击方块查看成分股。</div>
+      <div id="sectorMap" class="chart-lg"></div>
+      <div id="sectorList" style="display:none"></div>
+    </div>
+    <div class="card" id="sectorDrill" style="display:none">
+      <div class="card-title" id="sectorDrillTitle">成分股</div>
+      <div id="sectorDrillTable"></div>
     </div>
   </section>
 

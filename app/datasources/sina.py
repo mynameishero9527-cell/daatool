@@ -7,6 +7,10 @@ SOURCE = "新浪财经"
 
 _HQ_URL = "https://hq.sinajs.cn/list={codes}"
 _NEWS_URL = "https://zhibo.sina.com.cn/api/zhibo/feed?page={page}&page_size={size}&zhibo_id=152"
+_FINANCE_URL = (
+    "https://quotes.sina.cn/cn/api/openapi.php/CompanyFinanceService.getFinanceReport2022"
+    "?paperCode={code}&source=gjzb&type=0&page=1&num={num}"
+)
 _HQ_HEADERS = {"Referer": "https://finance.sina.com.cn"}
 
 
@@ -96,6 +100,37 @@ def fetch_commodities(symbols: list[str]) -> dict[str, dict]:
             "time": f"{p[12]} {p[6]}",
         }
     return result
+
+
+def fetch_finance_reports(code: str, num: int = 6) -> list[dict]:
+    """财务报告关键指标（真实披露数据）。code 为 6 位数字代码。
+
+    返回按报告期倒序：[{report_date, report_name, revenue, revenue_yoy,
+                       net_profit, net_profit_yoy, parent_profit, parent_profit_yoy}]
+    """
+    resp = tracked_get(SOURCE, _FINANCE_URL.format(code=code, num=num), headers=_HQ_HEADERS)
+    data = resp.json().get("result", {}).get("data") or {}
+    dates = data.get("report_date") or []
+    reports = data.get("report_list") or {}
+    field_map = {"BIZTOTINCO": "revenue", "NETPROFIT": "net_profit", "PARENETP": "parent_profit"}
+    out = []
+    for d in dates:
+        key = d.get("date_value", "")
+        rep = reports.get(key) or {}
+        row = {"report_date": key, "report_name": d.get("date_description", "")}
+        for item in rep.get("data", []):
+            field = field_map.get(item.get("item_field"))
+            if not field:
+                continue
+            try:
+                row[field] = float(item.get("item_value"))
+            except (TypeError, ValueError):
+                row[field] = None
+            tongbi = item.get("item_tongbi")
+            row[f"{field}_yoy"] = round(tongbi * 100, 2) if isinstance(tongbi, (int, float)) else None
+        if "revenue" in row or "net_profit" in row:
+            out.append(row)
+    return out
 
 
 def fetch_news(page: int = 1, size: int = 50) -> list[dict]:

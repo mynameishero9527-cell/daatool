@@ -46,6 +46,7 @@ async function loadDashboard() {
     $("#lastRefresh").textContent = "更新 " + new Date().toLocaleTimeString("zh-CN");
   } catch (err) { console.warn(err); }
   loadMarketSentiment();
+  loadMarketCycle();
 }
 
 async function loadMarketSentiment() {
@@ -68,11 +69,27 @@ async function loadMarketSentiment() {
 
 function renderIndices(list) {
   $("#indexStrip").innerHTML = list.map((q) => `
-    <div class="index-card">
-      <div class="name">${esc(q.name)}</div>
+    <div class="index-card" style="cursor:pointer" title="点击查看K线"
+         onclick="openStock('${q.code}','${esc(q.name)}')">
+      <div class="name">${esc(q.name)} <span class="muted" style="font-size:10px">K线 ›</span></div>
       <div class="price ${cls(q.pct)}">${fmt(q.price)}</div>
       <div class="chg ${cls(q.pct)}">${sign(q.change)}${fmt(q.change)}&nbsp;&nbsp;${pct(q.pct)}</div>
     </div>`).join("") || '<div class="empty">暂无指数数据</div>';
+}
+
+const isIndexCode = (code) => /^(sh000|sz399|bj899|sh880)/.test(code);
+
+async function loadMarketCycle() {
+  try {
+    const c = await api("/api/market/cycle");
+    if (!c.stage || c.stage === "未知") { $("#marketCycle").innerHTML = ""; return; }
+    $("#marketCycle").innerHTML = `
+      <hr style="border-color:var(--border);margin:8px 0">
+      <div class="kv"><span class="k">大周期阶段</span>
+        <span><span class="badge ${c.stage_css}">${esc(c.stage)}</span></span></div>
+      <div class="kv"><span class="k">大盘量能</span><span>${esc(c.vol_desc)}（5日/20日均量比 ${fmt(c.vol_ratio)}）</span></div>
+      <div class="muted" style="font-size:12px">${esc(c.stage_desc)} · 市场宽度 ${fmt(c.breadth, 0)}%</div>`;
+  } catch (err) { console.warn(err); }
 }
 
 function renderStats(s) {
@@ -166,7 +183,59 @@ window.openStock = (code, name) => {
   activeTab = "stock";
   $("#klineTitle").textContent = `${name} (${code})`;
   loadKline();
-  loadAnalysis();
+  if (isIndexCode(code)) {
+    $("#stockProfile").innerHTML = "";
+    loadIndexPanel();
+  } else {
+    loadProfile();
+    loadAnalysis();
+  }
+};
+
+async function loadProfile() {
+  const box = $("#stockProfile");
+  box.innerHTML = "";
+  try {
+    const p = await api(`/api/profile?code=${currentStock.code}`);
+    if (!p.industry && !p.concepts.length) { box.innerHTML = ""; return; }
+    box.innerHTML = `
+      <div style="margin-bottom:10px">
+        ${p.industry ? `<span class="badge level-3" style="cursor:pointer" onclick="drillFromProfile('industry','${esc(p.industry)}')">${esc(p.industry)}</span>` : ""}
+        ${p.concepts.map((c) => `<span class="badge sector-tag" style="cursor:pointer" onclick="drillFromProfile('concept','${esc(c)}')">${esc(c)}</span>`).join("")}
+        <div class="muted" style="margin-top:6px;font-size:12px">${esc(p.desc)}</div>
+      </div>`;
+  } catch (err) { console.warn(err); }
+}
+
+async function loadIndexPanel() {
+  const card = $("#scoreCard");
+  card.innerHTML = '<div class="empty">周期研判计算中…</div>';
+  try {
+    const c = await api("/api/market/cycle");
+    card.innerHTML = `
+      <div class="score-head">
+        <span class="badge ${c.stage_css}" style="font-size:16px;padding:6px 18px">${esc(c.stage)}</span>
+        <div class="muted" style="margin-top:8px">${esc(c.stage_desc)}</div>
+      </div>
+      <div class="kv"><span class="k">上证指数</span><span class="num">${fmt(c.index_price)}</span></div>
+      <div class="kv"><span class="k">大盘量能</span><span>${esc(c.vol_desc)}（${fmt(c.vol_ratio)}）</span></div>
+      <div class="kv"><span class="k">市场宽度</span><span class="num">${fmt(c.breadth, 0)}% 上涨</span></div>
+      <hr style="border-color:var(--border);margin:10px 0">
+      <div class="card-title" style="font-size:13px">研判信号</div>
+      ${c.signals.map((s) => `<div class="kv">
+        <span class="k">${s.ok ? "🟢" : "🔴"} ${esc(s.name)}</span></div>
+        <div class="muted" style="font-size:12px;margin:-4px 0 6px">${esc(s.text)}</div>`).join("")}
+      <div class="muted" style="font-size:11px;margin-top:8px">周期研判为量化参考，不构成投资建议。</div>`;
+  } catch (err) { card.innerHTML = '<div class="empty">周期研判加载失败</div>'; }
+}
+
+window.drillFromProfile = (dim, name) => {
+  $$("#mainTabs .tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === "sector"));
+  $$(".page").forEach((p) => p.classList.toggle("active", p.id === "page-sector"));
+  activeTab = "sector";
+  sectorDim = dim;
+  $$("#sectorDim .opt").forEach((b) => b.classList.toggle("active", b.dataset.dim === dim));
+  loadSector().then(() => drillSector(name));
 };
 
 async function loadKline() {
@@ -329,8 +398,37 @@ async function loadAnalysis() {
       <div style="max-height:180px;overflow-y:auto;margin-top:6px">
         ${br.items.map((it) => `<div class="kv"><span class="k">${esc(it.broker)} <span class="muted">${esc(it.type)}</span></span>
           <span>${it.rating} <span class="num muted">${fmt(it.target_price)}</span> <span class="muted">${it.date.slice(5)}</span></span></div>`).join("")}
-      </div>`;
+      </div>
+      <div id="financeSec"><div class="muted" style="margin-top:10px">财务数据加载中…</div></div>`;
+    loadFinance();
   } catch (err) { card.innerHTML = '<div class="empty">评分加载失败</div>'; console.warn(err); }
+}
+
+async function loadFinance() {
+  const box = $("#financeSec");
+  if (!box) return;
+  try {
+    const f = await api(`/api/finance?code=${currentStock.code}`);
+    if (!f.reports.length) { box.innerHTML = ""; return; }
+    box.innerHTML = `
+      <hr style="border-color:var(--border);margin:10px 0">
+      <div class="card-title" style="font-size:13px">财务分析
+        <span>${f.grade ? `<span class="badge ${f.grade === "A" ? "level-4" : f.grade === "B" ? "level-3" : f.grade === "C" ? "level-2" : "level-1"}">评级 ${f.grade}</span>` : ""}</span>
+      </div>
+      <div class="muted" style="font-size:12px;margin-bottom:6px">${esc(f.summary)}</div>
+      <table style="font-size:12px"><thead><tr>
+        <th>报告期</th><th>营收(亿)</th><th>同比</th><th>归母净利(亿)</th><th>同比</th><th>净利率</th>
+      </tr></thead><tbody>${f.reports.map((r) => `
+        <tr style="cursor:default">
+          <td>${esc(r.name)}</td>
+          <td class="num">${fmt(r.revenue_yi, 1)}</td>
+          <td class="num ${cls(r.revenue_yoy)}">${r.revenue_yoy !== null ? sign(r.revenue_yoy) + fmt(r.revenue_yoy, 1) + "%" : "-"}</td>
+          <td class="num">${fmt(r.profit_yi, 2)}</td>
+          <td class="num ${cls(r.profit_yoy)}">${r.profit_yoy !== null ? sign(r.profit_yoy) + fmt(r.profit_yoy, 1) + "%" : "-"}</td>
+          <td class="num">${r.margin !== null ? fmt(r.margin, 1) + "%" : "-"}</td>
+        </tr>`).join("")}</tbody></table>
+      <div class="muted" style="font-size:11px;margin-top:4px">数据来源：${esc(f.source || "")}</div>`;
+  } catch (err) { box.innerHTML = ""; console.warn(err); }
 }
 
 /* ---------------- 宏观情报 ---------------- */
@@ -343,7 +441,10 @@ $("#macroTabs").addEventListener("click", (e) => {
   loadMacro();
 });
 
+const stars = (lv) => `<span class="${lv >= 4 ? "up" : "flat"}" style="letter-spacing:1px">${"★".repeat(lv)}${"☆".repeat(5 - lv)}</span>`;
 let outlookHorizon = "week";
+let calRange = 0;      // 0=全部, 1=今天, 3, 7, 31 天
+let calMinLevel = 0;   // 0=全部, 4, 5
 async function loadMacro() {
   const box = $("#macroContent");
   try {
@@ -360,6 +461,7 @@ async function loadMacro() {
           ${g.events.map((ev) => `
             <div class="cal-item">
               <span class="cal-date">${ev.date.slice(5)}</span>
+              ${stars(ev.impact_level)}
               <span class="badge level-${ev.impact_level}">${ev.impact_desc}</span>
               <span class="flag">${esc(ev.region)}</span>
               <span style="flex:1">${esc(ev.title)}${ev.custom ? ` <button class="btn small danger" onclick="delCustomEvent(${ev.id.replace("custom_", "")})">删</button>` : ""}</span>
@@ -383,14 +485,40 @@ async function loadMacro() {
     }
     if (macroSub === "calendar") {
       const rows = await api("/api/macro/calendar?months=3");
-      box.innerHTML = rows.length ? rows.map((ev) => `
+      const today = new Date().toISOString().slice(0, 10);
+      const rangeEnd = calRange ? new Date(Date.now() + calRange * 86400000).toISOString().slice(0, 10) : "9999";
+      const filtered = rows.filter((ev) =>
+        ev.date >= today && ev.date <= rangeEnd && ev.impact_level >= calMinLevel);
+      box.innerHTML = `
+        <div class="btn-group" style="margin-bottom:6px" id="calRangeBtns">
+          ${[[0, "全部"], [1, "今天"], [3, "3天内"], [7, "一周内"], [31, "一月内"]].map(([v, t]) =>
+            `<button class="opt ${v === calRange ? "active" : ""}" data-range="${v}">${t}</button>`).join("")}
+        </div>
+        <div class="btn-group" style="margin-bottom:12px" id="calLevelBtns">
+          ${[[0, "全部星级"], [4, "★★★★+"], [5, "★★★★★"]].map(([v, t]) =>
+            `<button class="opt ${v === calMinLevel ? "active" : ""}" data-level="${v}">${t}</button>`).join("")}
+        </div>
+        ${filtered.length ? filtered.map((ev) => `
         <div class="cal-item">
           <span class="cal-date">${ev.date.slice(5)}</span>
+          ${stars(ev.impact_level)}
           <span class="badge level-${ev.impact_level}">${ev.impact_desc}</span>
           <span class="flag">${esc(ev.region)}</span>
           <span style="flex:1">${esc(ev.title)}</span>
           <span class="muted">${esc(ev.category)}</span>
-        </div>`).join("") : '<div class="empty">近期无日程</div>';
+        </div>`).join("") : '<div class="empty">该筛选条件下无事件</div>'}`;
+      $("#calRangeBtns").addEventListener("click", (e) => {
+        const btn = e.target.closest(".opt");
+        if (!btn) return;
+        calRange = Number(btn.dataset.range);
+        loadMacro();
+      });
+      $("#calLevelBtns").addEventListener("click", (e) => {
+        const btn = e.target.closest(".opt");
+        if (!btn) return;
+        calMinLevel = Number(btn.dataset.level);
+        loadMacro();
+      });
       return;
     }
     const path = macroSub === "policy" ? "/api/macro/policies" : macroSub === "major" ? "/api/macro/major" : "/api/macro/news";
@@ -595,6 +723,124 @@ window.applyPlan = (condJson) => {
 };
 window.deletePlan = async (id) => { await post(`/api/screener/plans/delete?plan_id=${id}`); loadPlans(); };
 
+/* ---------------- 板块资金（FR3-01） ---------------- */
+let sectorDim = "industry";
+let sectorView = "map";
+let sectorChart = null;
+
+$("#sectorDim").addEventListener("click", (e) => {
+  const btn = e.target.closest(".opt");
+  if (!btn) return;
+  sectorDim = btn.dataset.dim;
+  $$("#sectorDim .opt").forEach((b) => b.classList.toggle("active", b === btn));
+  loadSector();
+});
+$("#sectorView").addEventListener("click", (e) => {
+  const btn = e.target.closest(".opt");
+  if (!btn) return;
+  sectorView = btn.dataset.view;
+  $$("#sectorView .opt").forEach((b) => b.classList.toggle("active", b === btn));
+  $("#sectorMap").style.display = sectorView === "map" ? "" : "none";
+  $("#sectorList").style.display = sectorView === "list" ? "" : "none";
+  if (sectorView === "map") sectorChart?.resize();
+});
+
+async function loadSector() {
+  try {
+    const d = await api(`/api/sector/flow?dim=${sectorDim}`);
+    $("#sectorTime").textContent = `更新于 ${d.updated_at}`;
+    renderSectorMap(d.items);
+    renderSectorList(d.items);
+  } catch (err) { console.warn(err); }
+}
+
+function flowColor(ratio) {
+  // 净流入率 % → 红入绿出
+  const r = Math.max(-6, Math.min(6, ratio || 0)) / 6;
+  if (r >= 0) {
+    const t = r;
+    return `rgb(${Math.round(90 + 165 * t)},${Math.round(60 - 30 * t)},${Math.round(70 - 30 * t)})`;
+  }
+  const t = -r;
+  return `rgb(${Math.round(50 - 20 * t)},${Math.round(110 + 84 * t)},${Math.round(95 + 34 * t)})`;
+}
+
+function renderSectorMap(items) {
+  sectorChart ||= echarts.init($("#sectorMap"), "dark");
+  const data = items.map((it) => ({
+    name: it.name,
+    value: it.amount_yi || 0,
+    itemStyle: { color: flowColor(it.net_in_ratio) },
+    _meta: it,
+  }));
+  sectorChart.setOption({
+    backgroundColor: "transparent",
+    tooltip: {
+      backgroundColor: "#1a2230", borderColor: "#2a3548", textStyle: { color: "#dbe4f0", fontSize: 12 },
+      formatter: (p) => {
+        const m = p.data._meta || {};
+        return `<b>${p.name}</b><br>成交额 ${m.amount_yi} 亿<br>主力净流入 <b>${m.net_in_yi} 亿</b>（${m.net_in_ratio}%）<br>` +
+          `涨跌幅 ${m.pct}% · 上涨${m.up}/下跌${m.down}家` +
+          (m.leader ? `<br>领涨：${m.leader.name} +${m.leader.pct}%` : "");
+      },
+    },
+    series: [{
+      type: "treemap", roam: false, nodeClick: false, breadcrumb: { show: false },
+      width: "100%", height: "100%",
+      label: {
+        show: true, fontSize: 12,
+        formatter: (p) => {
+          const m = p.data._meta || {};
+          return `${p.name}\n${m.pct > 0 ? "+" : ""}${m.pct}%  ${m.net_in_yi > 0 ? "流入" : "流出"}${Math.abs(m.net_in_yi)}亿`;
+        },
+      },
+      itemStyle: { borderColor: "#0d1117", borderWidth: 2, gapWidth: 2 },
+      data,
+    }],
+  }, true);
+  sectorChart.off("click");
+  sectorChart.on("click", (p) => { if (p.name) drillSector(p.name); });
+}
+
+function renderSectorList(items) {
+  $("#sectorList").innerHTML = `<table><thead><tr>
+    <th>板块</th><th>涨跌幅</th><th>主力净流入(亿)</th><th>净流入率</th><th>成交额(亿)</th><th>上涨/下跌</th><th>领涨股</th>
+  </tr></thead><tbody>${items.map((it) => `
+    <tr onclick="drillSector('${esc(it.name)}')">
+      <td>${esc(it.name)}</td>
+      <td class="num ${cls(it.pct)}">${pct(it.pct)}</td>
+      <td class="num ${cls(it.net_in_yi)}">${fmt(it.net_in_yi)}</td>
+      <td class="num ${cls(it.net_in_ratio)}">${fmt(it.net_in_ratio)}%</td>
+      <td class="num">${fmt(it.amount_yi, 0)}</td>
+      <td><span class="up">${it.up}</span>/<span class="down">${it.down}</span></td>
+      <td>${it.leader ? `${esc(it.leader.name)} <span class="up">+${fmt(it.leader.pct)}%</span>` : "-"}</td>
+    </tr>`).join("")}</tbody></table>`;
+}
+
+window.drillSector = async (name) => {
+  const box = $("#sectorDrill");
+  box.style.display = "";
+  $("#sectorDrillTitle").textContent = `「${name}」成分股（按主力净流入排序）`;
+  $("#sectorDrillTable").innerHTML = '<div class="empty">加载中…</div>';
+  try {
+    const rows = await api(`/api/sector/stocks?dim=${sectorDim}&name=${encodeURIComponent(name)}`);
+    $("#sectorDrillTable").innerHTML = rows.length ? `<table><thead><tr>
+      <th>名称</th><th>最新价</th><th>涨跌幅</th><th>主力净流入(万)</th><th>量比</th><th>购买指数</th><th>情绪</th><th>暗盘力量</th>
+    </tr></thead><tbody>${rows.map((r) => `
+      <tr onclick="openStock('${r.code}','${esc(r.name)}')">
+        <td>${esc(r.name)} <span class="muted">${r.code}</span></td>
+        <td class="num ${cls(r.pct)}">${fmt(r.price)}</td>
+        <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
+        <td class="num ${cls(r.main_net_in)}">${fmt(r.main_net_in, 0)}</td>
+        <td class="num">${fmt(r.volume_ratio)}</td>
+        <td class="num">${r.buy_index !== null ? `<b>${fmt(r.buy_index, 0)}</b>` : "-"}</td>
+        <td>${r.sent_level ? esc(r.sent_level) : "-"}</td>
+        <td class="num">${fmt(r.dark_power, 0)}</td>
+      </tr>`).join("")}</tbody></table>` : '<div class="empty">暂无成分股数据</div>';
+    box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  } catch (err) { $("#sectorDrillTable").innerHTML = '<div class="empty">加载失败</div>'; }
+};
+
 /* ---------------- 大宗商品 ---------------- */
 let commodityCats = [];
 async function initCommodityCats() {
@@ -798,6 +1044,7 @@ function debounce(fn, ms) {
 loaders.dashboard = loadDashboard;
 loaders.stock = () => { if (currentStock) { loadKline(); } };
 loaders.screener = initScreener;
+loaders.sector = loadSector;
 loaders.macro = loadMacro;
 loaders.commodity = loadCommodities;
 loaders.global = loadGlobal;
@@ -807,7 +1054,8 @@ loaders.settings = loadSettings;
 /* 自动刷新（仅刷新当前页，避免无谓请求） */
 schedule("dashboard", loadDashboard, 10000);
 schedule("stock", () => { if (currentStock && currentPeriod === "minute") loadKline(); }, 30000);
-schedule("macro", () => { if (macroSub !== "calendar") loadMacro(); }, 60000);
+schedule("macro", () => { if (macroSub !== "calendar" && macroSub !== "outlook") loadMacro(); }, 60000);
+schedule("sector", loadSector, 60000);
 schedule("commodity", loadCommodities, 60000);
 schedule("global", loadGlobal, 60000);
 schedule("settings", loadSettings, 10000);
@@ -820,7 +1068,7 @@ async function loadSettingsHealthOnly() {
   } catch { $("#healthDot").className = "dot bad"; }
 }
 
-window.addEventListener("resize", () => klineChart?.resize());
+window.addEventListener("resize", () => { klineChart?.resize(); sectorChart?.resize(); });
 
 /* 首屏 */
 loadDashboard();

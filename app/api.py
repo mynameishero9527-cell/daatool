@@ -6,8 +6,8 @@ from .cache import cache
 from .database import get_meta
 from .datasources.base import HEALTH
 from .services import (
-    commodity, darkpool, global_index, kline, macro, market, rating, recommend,
-    screener, stocklist,
+    commodity, cycle, darkpool, finance, global_index, kline, macro, market,
+    rating, recommend, screener, sector, stocklist,
 )
 from .services import metrics as metrics_svc
 from .database import query as db_query
@@ -149,6 +149,35 @@ def etfs():
 @router.get("/recommend")
 def recommend_board(board: str = "composite", limit: int = Query(50, le=100)):
     return {"boards": recommend.BOARDS, **recommend.get_board(board, limit)}
+
+
+# ---------------- 板块资金 / 画像 / 财务 / 周期（3.0） ----------------
+
+@router.get("/sector/flow")
+def sector_flow(dim: str = "industry"):
+    return sector.get_flow(dim)
+
+
+@router.get("/sector/stocks")
+def sector_stocks(dim: str, name: str, limit: int = Query(30, le=100)):
+    return sector.get_sector_stocks(dim, name, limit)
+
+
+@router.get("/profile")
+def profile(code: str):
+    norm = market.normalize_code(code) or code
+    return sector.get_profile(norm)
+
+
+@router.get("/finance")
+def finance_report(code: str):
+    norm = market.normalize_code(code) or code
+    return finance.get_finance(norm)
+
+
+@router.get("/market/cycle")
+def market_cycle():
+    return cycle.get_cycle()
 
 
 # ---------------- 个股筛选器（FR2-01） ----------------

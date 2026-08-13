@@ -35,6 +35,13 @@ def startup() -> None:
         if query("SELECT COUNT(*) AS n FROM stock_metrics")[0]["n"] == 0:
             log.info("指标表为空，后台执行K线同步与指标重建…")
             metrics_svc.rebuild_all(include_kline=True)
+        elif query("SELECT COUNT(*) AS n FROM concept_map")[0]["n"] == 0:
+            log.info("概念映射为空，后台同步题材概念…")
+            from .services import sector
+            try:
+                sector.sync_concepts()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("概念映射同步失败: %s", exc)
     threading.Thread(target=bootstrap, daemon=True).start()
     # 4) 启动定时任务
     scheduler.start()

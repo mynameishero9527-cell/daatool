@@ -411,6 +411,12 @@ def rebuild_all(include_kline: bool = True) -> dict:
                 sync_industries()
             except Exception as exc:  # noqa: BLE001
                 log.warning("行业映射失败: %s", exc)
+            try:
+                from . import sector
+                STATE.update(stage="概念题材映射")
+                sector.sync_concepts()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("概念映射失败: %s", exc)
         n = compute_all_metrics()
         STATE.update(running=False, stage=f"完成，共 {n} 只")
         return state()

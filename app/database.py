@@ -124,6 +124,32 @@ CREATE TABLE IF NOT EXISTS sentiment_history (
     date        TEXT PRIMARY KEY,
     market_temp REAL
 );
+
+-- 3.0：概念题材映射与板块快照、财务报告缓存
+CREATE TABLE IF NOT EXISTS concept_map (
+    concept TEXT NOT NULL,
+    code    TEXT NOT NULL,
+    PRIMARY KEY (concept, code)
+);
+CREATE INDEX IF NOT EXISTS idx_concept_code ON concept_map(code);
+
+CREATE TABLE IF NOT EXISTS concept_board (
+    concept     TEXT PRIMARY KEY,
+    pct         REAL,
+    turnover    REAL,
+    updated_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS finance_report (
+    code        TEXT NOT NULL,
+    report_date TEXT NOT NULL,
+    report_name TEXT,
+    revenue REAL, revenue_yoy REAL,
+    net_profit REAL, net_profit_yoy REAL,
+    parent_profit REAL, parent_profit_yoy REAL,
+    fetched_at  TEXT NOT NULL,
+    PRIMARY KEY (code, report_date)
+);
 """
 
 # 已有表的增量列迁移（幂等）
