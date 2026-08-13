@@ -48,9 +48,37 @@ def get_cycle() -> dict:
         vol_ratio = vol5 / vol20 if vol20 else None
         conv10 = (max(closes[-10:]) - min(closes[-10:])) / price if price else 1
 
-        rows = query("SELECT SUM(CASE WHEN pct>0 THEN 1 ELSE 0 END) AS up, COUNT(*) AS n "
-                     "FROM stock_snapshot WHERE pct IS NOT NULL")
+        rows = query(
+            "SELECT SUM(CASE WHEN pct>0 THEN 1 ELSE 0 END) AS up, COUNT(*) AS n, "
+            "SUM(CASE WHEN pct<=-9.8 THEN 1 ELSE 0 END) AS ld, "
+            "SUM(CASE WHEN pct>=9.8 THEN 1 ELSE 0 END) AS lu "
+            "FROM stock_snapshot WHERE pct IS NOT NULL")
         breadth = (rows[0]["up"] or 0) / rows[0]["n"] * 100 if rows and rows[0]["n"] else 50
+
+        # ---- 恐慌指数与攻守姿态（FR6-01） ----
+        rets = [(closes[i] / closes[i - 1] - 1) for i in range(-19, 0)]
+        vol20 = (sum(r * r for r in rets) / len(rets)) ** 0.5 * (250 ** 0.5) * 100  # 年化波动%
+        panic = 0.0
+        panic += min(35.0, max(0.0, (vol20 - 12) / 28 * 35))          # 波动率 12%~40% 映射
+        panic += (100 - breadth) / 100 * 25                            # 下跌家数占比
+        lu, ld = (rows[0]["lu"] or 0), (rows[0]["ld"] or 0)
+        if lu + ld > 0:
+            panic += ld / (lu + ld) * 20                               # 涨跌停失衡
+        drop3 = (closes[-1] / closes[-4] - 1) * 100 if len(closes) >= 4 else 0
+        if drop3 < -2 and (vol_ratio or 1) < 0.9:
+            panic += 20                                                # 缩量急跌
+        elif drop3 < -1:
+            panic += 10
+        panic = round(min(100.0, panic), 1)
+        if panic >= 60:
+            stance, stance_css = "防守", "level-0"
+            stance_desc = "恐慌偏高：控制仓位，回避高位股，以防守反击为主"
+        elif panic >= 40:
+            stance, stance_css = "均衡", "level-2"
+            stance_desc = "多空拉锯：结构性参与，严格止损"
+        else:
+            stance, stance_css = "进攻", "level-4"
+            stance_desc = "情绪平稳：可顺势积极做多强势主线"
 
         # 阶段判定（自上而下匹配）
         if price > ma20 > ma60 > ma120 and pos60 > 0.7 and breadth > 55:
@@ -83,6 +111,18 @@ def get_cycle() -> dict:
             "index_price": round(price, 2), "pos60": round(pos60, 2),
             "breadth": round(breadth, 1),
             "vol_desc": _vol_desc(vol_ratio), "vol_ratio": round(vol_ratio, 2) if vol_ratio else None,
+            "panic_index": panic, "volatility20": round(vol20, 1),
+            "stance": stance, "stance_css": stance_css, "stance_desc": stance_desc,
             "signals": signals,
         }
     return cached("market:cycle", 300, loader)
+
+
+def get_stance() -> dict:
+    """轻量获取攻守姿态（供个股描述接入）。"""
+    try:
+        c = get_cycle()
+        return {"stance": c.get("stance", "均衡"), "panic": c.get("panic_index"),
+                "desc": c.get("stance_desc", "")}
+    except Exception:  # noqa: BLE001
+        return {"stance": "均衡", "panic": None, "desc": ""}

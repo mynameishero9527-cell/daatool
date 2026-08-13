@@ -34,20 +34,58 @@ GLOBAL_CATALOG: dict[str, list[tuple[str, str, str, str]]] = {
 
 # 国内主要 ETF：(带前缀代码, 分类, 跟踪标的)
 ETF_CATALOG: list[tuple[str, str, str]] = [
+    # 宽基
+    ("sh510050", "宽基", "上证50"),
     ("sh510300", "宽基", "沪深300"),
     ("sh510500", "宽基", "中证500"),
+    ("sh512100", "宽基", "中证1000"),
     ("sh588000", "宽基", "科创50"),
     ("sz159915", "宽基", "创业板指"),
+    ("sz159949", "宽基", "创业板50"),
+    # 金融
     ("sh512880", "行业", "证券公司"),
+    ("sh512000", "行业", "券商"),
+    ("sh512800", "行业", "银行"),
+    ("sh512200", "行业", "房地产"),
+    # 科技
     ("sh512480", "行业", "半导体"),
+    ("sz159995", "行业", "芯片"),
+    ("sh515000", "行业", "科技龙头"),
+    ("sh515050", "行业", "5G通信"),
+    ("sh515880", "行业", "通信设备"),
+    ("sz159869", "行业", "游戏"),
+    ("sh512980", "行业", "传媒"),
+    # 医药消费
     ("sh512010", "行业", "医药卫生"),
-    ("sh515030", "行业", "新能源车"),
-    ("sh512660", "行业", "军工"),
+    ("sh512170", "行业", "医疗器械"),
     ("sh512690", "行业", "白酒"),
+    ("sh515170", "行业", "食品饮料"),
+    ("sz159928", "行业", "中证消费"),
+    ("sz159996", "行业", "家电"),
+    ("sz159766", "行业", "旅游"),
+    # 制造周期
+    ("sh515030", "行业", "新能源车"),
+    ("sh515790", "行业", "光伏产业"),
+    ("sz159875", "行业", "新能源"),
+    ("sh512660", "行业", "军工"),
+    ("sh512710", "行业", "军工龙头"),
+    ("sh515220", "行业", "煤炭"),
+    ("sh512400", "行业", "有色金属"),
+    ("sh515210", "行业", "钢铁"),
+    ("sh516220", "行业", "化工"),
+    ("sh512580", "行业", "环保"),
+    ("sz159865", "行业", "养殖"),
+    # 跨境
     ("sh513100", "跨境", "纳斯达克100"),
+    ("sh513500", "跨境", "标普500"),
     ("sh513180", "跨境", "恒生科技"),
+    ("sh513050", "跨境", "中概互联"),
+    ("sz159920", "跨境", "恒生指数"),
+    # 商品
     ("sh518880", "商品", "黄金"),
+    ("sz159934", "商品", "黄金(华安)"),
     ("sz159985", "商品", "豆粕"),
+    ("sz159981", "商品", "能源化工"),
 ]
 
 
@@ -107,7 +145,8 @@ _ETF_HOLDING_RULES: dict[str, tuple | None] = {
 }
 
 _HOLDING_SELECT = """
-    SELECT s.code, s.name, s.price, s.pct, s.float_mv, l.industry,
+    SELECT s.code, s.name, s.price, s.pct, s.pct_d5, s.pct_d20, s.pct_d60,
+           s.float_mv, s.main_net_in, s.volume_ratio, l.industry,
            m.buy_index, m.sentiment, m.dark_power
     FROM stock_snapshot s
     JOIN stock_list l ON l.code = s.code
@@ -116,13 +155,60 @@ _HOLDING_SELECT = """
       AND s.name NOT LIKE '%ST%' """
 
 
+# 跟踪标的关键词 → (概念候选, 行业候选)，用于扩容 ETF 的持仓推算
+_TRACK_KEYWORD_RULES: list[tuple[tuple, tuple]] = [
+    (("证券", "券商"), ("证券", "非银金融")),
+    (("银行",), ("银行", "银行")),
+    (("房地产", "地产"), ("房地产", "房地产")),
+    (("半导体", "芯片"), ("半导体", "电子")),
+    (("科技",), ("人工智能", "计算机")),
+    (("5G", "通信"), ("5G", "通信")),
+    (("游戏",), ("游戏", "传媒")),
+    (("传媒",), ("传媒", "传媒")),
+    (("医药", "医疗"), ("创新药", "医药生物")),
+    (("白酒", "食品", "消费"), ("白酒", "食品饮料")),
+    (("家电",), ("家电", "家用电器")),
+    (("旅游",), ("旅游", "社会服务")),
+    (("新能源车",), ("新能源车", "汽车")),
+    (("光伏",), ("光伏", "电力设备")),
+    (("新能源", "能源化工"), ("新能源", "电力设备")),
+    (("军工",), ("军工", "国防军工")),
+    (("煤炭",), ("煤炭", "煤炭")),
+    (("有色", "黄金"), ("黄金", "有色金属")),
+    (("钢铁",), ("钢铁", "钢铁")),
+    (("化工",), ("化工", "基础化工")),
+    (("环保",), ("环保", "环保")),
+    (("养殖", "豆粕"), ("养殖", "农林牧渔")),
+]
+_QDII_KEYWORDS = ("纳斯达克", "标普", "恒生", "中概")
+
+
+def _rule_for(code: str, track: str):
+    if code in _ETF_HOLDING_RULES:
+        return _ETF_HOLDING_RULES[code]
+    if any(k in track for k in _QDII_KEYWORDS):
+        return None
+    for keywords, pair in _TRACK_KEYWORD_RULES:
+        if any(k in track for k in keywords):
+            return ("sector", pair)
+    if "中证1000" in track:
+        return ("mv_range", (800, 1000))
+    if "中证500" in track:
+        return ("mv_range", (300, 500))
+    if "创业板" in track:
+        return ("board", "创业板")
+    if "科创" in track:
+        return ("board", "科创板")
+    return ("mv_top", None)
+
+
 def get_etf_holdings(code: str, limit: int = 20) -> dict:
-    """ETF 近似持仓（FR5-06-3）：按跟踪标的从本地数据推算权重，附指标列。"""
+    """ETF 近似持仓（FR5-06-3 / FR6-04-4）：按跟踪标的从本地数据推算权重，附指标列。"""
     from . import metrics as metrics_svc
     from . import rating as rating_svc
 
-    rule = _ETF_HOLDING_RULES.get(code, ("mv_top", None))
     track = next((t for c, _cat, t in ETF_CATALOG if c == code), "")
+    rule = _rule_for(code, track)
     if rule is None:
         return {"code": code, "track": track, "holdings": [],
                 "note": "QDII 跨境 ETF，持仓为境外资产，无A股持仓数据"}
@@ -152,31 +238,36 @@ def get_etf_holdings(code: str, limit: int = 20) -> dict:
             r["sent_level"] = metrics_svc.sentiment_level(r["sentiment"])[0]
         if r["buy_index"] is not None:
             r["buy_level"] = metrics_svc.buy_index_level(r["buy_index"])[0]
-        score = _quick_grade(r)
-        r["advice"] = score
+        r["score"], r["advice"] = rating_svc.quick_score(r)
+        r["volume_desc"] = rating_svc.volume_desc(r["volume_ratio"])
     return {"code": code, "track": track, "holdings": rows,
             "note": "近似持仓：按跟踪标的从本地市值/板块数据推算，非基金实际披露持仓"}
 
 
-def _quick_grade(r: dict) -> str:
-    bi = r.get("buy_index")
-    if bi is None:
-        return "-"
-    return "增持" if bi >= 70 else "减持" if bi <= 35 else "保持不变"
-
-
-def get_etfs() -> list[dict]:
+def get_etfs(filter_: str = "all", page: int = 1, page_size: int = 20) -> dict:
+    """ETF 全景（FR6-04）：全部（分页）/ 上涨TOP20 / 下跌TOP20。"""
     codes = [c for c, *_ in ETF_CATALOG]
     quotes = market.get_quotes(codes)
     names = {r["code"]: r["name"] for r in query(
         f"SELECT code,name FROM stock_list WHERE code IN ({','.join('?' * len(codes))})", tuple(codes))}
-    out = []
+    items = []
     for code, category, track in ETF_CATALOG:
         q = quotes.get(code) or {}
-        out.append({
+        items.append({
             "code": code, "category": category, "track": track,
             "name": q.get("name") or names.get(code) or code,
             "price": q.get("price"), "pct": q.get("pct"),
             "amount": q.get("amount"), "source": q.get("source"),
         })
-    return out
+    if filter_ == "top_up":
+        items = sorted([i for i in items if i["pct"] is not None], key=lambda x: -x["pct"])[:20]
+        return {"items": items, "total": len(items), "page": 1, "pages": 1, "filter": filter_}
+    if filter_ == "top_down":
+        items = sorted([i for i in items if i["pct"] is not None], key=lambda x: x["pct"])[:20]
+        return {"items": items, "total": len(items), "page": 1, "pages": 1, "filter": filter_}
+    total = len(items)
+    page_size = page_size if page_size in (20, 50) else 20
+    pages = max(1, (total + page_size - 1) // page_size)
+    page = max(1, min(page, pages))
+    return {"items": items[(page - 1) * page_size: page * page_size],
+            "total": total, "page": page, "pages": pages, "page_size": page_size, "filter": "all"}

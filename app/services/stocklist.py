@@ -62,7 +62,8 @@ def full_sync() -> dict:
                     code, r["name"], r["price"], r["pct"], r["turnover_rate"], r["volume_ratio"],
                     r["pe_ttm"], r["pb"], r["float_mv"], r["total_mv"],
                     r["main_net_in"], r["main_in"], r["main_out"], main_net_d5,
-                    r["pct_d5"], r["pct_d10"], r["pct_d20"], r["pct_d60"], r["amount"], now,
+                    r["pct_d5"], r["pct_d10"], r["pct_d20"], r["pct_d60"], r["amount"],
+                    r.get("amplitude"), now,
                 ))
             executemany(
                 "INSERT INTO stock_list(code,name,market,board,updated_at) VALUES(?,?,?,?,?) "
@@ -72,7 +73,8 @@ def full_sync() -> dict:
             executemany(
                 "INSERT OR REPLACE INTO stock_snapshot(code,name,price,pct,turnover_rate,volume_ratio,"
                 "pe_ttm,pb,float_mv,total_mv,main_net_in,main_in,main_out,main_net_in_d5,"
-                "pct_d5,pct_d10,pct_d20,pct_d60,amount,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "pct_d5,pct_d10,pct_d20,pct_d60,amount,amplitude,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 snap_rows,
             )
             total += len(rows)

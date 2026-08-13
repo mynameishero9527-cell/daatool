@@ -219,5 +219,6 @@ def fetch_rank_page(sort: str = "price", direct: str = "down", offset: int = 0, 
             "pct_d20": _f(r.get("zdf_d20")),
             "pct_d60": _f(r.get("zdf_d60")),
             "amount": _f(r.get("turnover")),
+            "amplitude": _f(r.get("zf")),
         })
     return out

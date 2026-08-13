@@ -142,10 +142,14 @@ async function loadMarketCycle() {
     if (!c.stage || c.stage === "未知") { $("#marketCycle").innerHTML = ""; return; }
     $("#marketCycle").innerHTML = `
       <hr style="border-color:var(--border);margin:8px 0">
+      <div class="kv"><span class="k">攻守姿态</span>
+        <span><span class="badge ${c.stance_css}" style="font-size:13px;padding:3px 12px">${esc(c.stance)}</span>
+        <span class="muted">恐慌指数 ${fmt(c.panic_index, 0)}</span></span></div>
+      <div class="muted" style="font-size:12px;margin-bottom:4px">${esc(c.stance_desc)}</div>
       <div class="kv"><span class="k">大周期阶段</span>
         <span><span class="badge ${c.stage_css}">${esc(c.stage)}</span></span></div>
       <div class="kv"><span class="k">大盘量能</span><span>${esc(c.vol_desc)}（5日/20日均量比 ${fmt(c.vol_ratio)}）</span></div>
-      <div class="muted" style="font-size:12px">${esc(c.stage_desc)} · 市场宽度 ${fmt(c.breadth, 0)}%</div>`;
+      <div class="muted" style="font-size:12px">${esc(c.stage_desc)} · 市场宽度 ${fmt(c.breadth, 0)}% · 年化波动 ${fmt(c.volatility20, 0)}%</div>`;
   } catch (err) { console.warn(err); }
 }
 
@@ -272,8 +276,10 @@ async function loadIndexPanel() {
     card.innerHTML = `
       <div class="score-head">
         <span class="badge ${c.stage_css}" style="font-size:16px;padding:6px 18px">${esc(c.stage)}</span>
-        <div class="muted" style="margin-top:8px">${esc(c.stage_desc)}</div>
+        <span class="badge ${c.stance_css}" style="font-size:16px;padding:6px 18px">${esc(c.stance)}姿态</span>
+        <div class="muted" style="margin-top:8px">${esc(c.stage_desc)} · ${esc(c.stance_desc)}</div>
       </div>
+      <div class="kv"><span class="k">恐慌指数</span><span class="num"><b>${fmt(c.panic_index, 0)}</b> / 100（年化波动 ${fmt(c.volatility20, 0)}%）</span></div>
       <div class="kv"><span class="k">上证指数</span><span class="num">${fmt(c.index_price)}</span></div>
       <div class="kv"><span class="k">大盘量能</span><span>${esc(c.vol_desc)}（${fmt(c.vol_ratio)}）</span></div>
       <div class="kv"><span class="k">市场宽度</span><span class="num">${fmt(c.breadth, 0)}% 上涨</span></div>
@@ -383,6 +389,23 @@ function gaugeHtml(label, value, levelText, extra = "") {
   </div>`;
 }
 
+function pullSmashHtml(ps) {
+  if (!ps || !ps.available) return "";
+  const patternBadge = ps.pattern_score
+    ? `<span class="badge ${ps.pattern.includes("地天") ? "level-4" : "level-0"}" style="font-size:12px">${esc(ps.pattern)} · 形态分${ps.pattern_score}</span>`
+    : `<span class="muted" style="font-size:12px">${esc(ps.pattern)}</span>`;
+  return `
+    <div class="kv" style="margin-top:4px"><span class="k">盘口行为</span><span>${patternBadge}</span></div>
+    <div class="comp-bar"><span class="label">拉升</span>
+      <div class="track"><div class="fill" style="width:${ps.pull_score}%;background:var(--up)"></div></div>
+      <span class="num">${fmt(ps.pull_score, 0)}</span></div>
+    <div class="comp-bar"><span class="label">砸盘</span>
+      <div class="track"><div class="fill" style="width:${ps.smash_score}%;background:var(--down)"></div></div>
+      <span class="num">${fmt(ps.smash_score, 0)}</span></div>
+    <div class="muted" style="font-size:12px">${esc(ps.desc)}</div>
+    <hr style="border-color:var(--border);margin:10px 0">`;
+}
+
 function metrics2Html(m, dark) {
   let html = "";
   if (m) {
@@ -449,6 +472,7 @@ async function loadAnalysis() {
           <div class="track"><div class="fill" style="width:${v}%"></div></div>
           <span class="num">${v}</span></div>`).join("")}
       <hr style="border-color:var(--border);margin:10px 0">
+      ${pullSmashHtml(d.pull_smash)}
       ${metrics2Html(d.metrics, d.dark)}
       <div class="kv"><span class="k">主力净流入</span><span class="num ${cls(s.main_net_in)}">${fmt((s.main_net_in || 0) / 10000)} 亿</span></div>
       <div class="kv"><span class="k">5日主力净流入</span><span class="num ${cls(s.main_net_in_d5)}">${fmt((s.main_net_in_d5 || 0) / 10000)} 亿</span></div>
@@ -550,9 +574,37 @@ function applyNewsFilter(rows) {
   });
 }
 
+async function almanacCard() {
+  try {
+    const a = await api("/api/macro/almanac");
+    return `
+      <div class="outlook-summary" style="border-color:rgba(232,196,107,.4);background:rgba(232,196,107,.06)">
+        <b>📅 今日黄历</b> <span class="muted">${esc(a.note)}</span><br>
+        ${esc(a.date)}（${esc(a.weekday)}）｜ ${esc(a.year_ganzhi)}【${esc(a.zodiac)}年】 ${esc(a.month_ganzhi)} ${esc(a.day_ganzhi)}
+        ${a.solar_term ? `｜ <span class="badge level-3">今日${esc(a.solar_term)}</span>` : ""}<br>
+        <span class="muted">五行：${esc(a.wuxing)} ｜ 财神方位：${esc(a.caishen)}（民俗参考）</span><br>
+        <span class="muted" style="font-size:12px">时辰方位：${a.shichen.map((s) => `${esc(s.name.split(" ")[0])}${esc(s.direction)}`).join(" · ")}</span>
+      </div>`;
+  } catch { return ""; }
+}
+
 async function loadMacro() {
   const box = $("#macroContent");
   try {
+    if (macroSub === "sectorEvents") {
+      const rows = await api("/api/macro/sector-events");
+      box.innerHTML = (await almanacCard()) + '<div id="eventDetailBox"></div>' +
+        '<div class="muted" style="margin-bottom:8px">板块周期大事件（未来12个月）：点击查看影响板块与相关个股</div>' +
+        (rows.length ? rows.map((ev) => `
+        <div class="cal-item" style="cursor:pointer" onclick="showEventDetail('${esc(ev.title)}','${esc(ev.sectors)}')">
+          <span class="cal-date">${ev.date.slice(5)}</span>
+          ${stars(ev.impact_level)}
+          <span class="flag">${esc(ev.city)}</span>
+          <span style="flex:1">${esc(ev.title)} <span class="badge sector-tag" style="font-size:11px">${esc(ev.sectors)}</span></span>
+          <span class="muted">${esc(ev.cycle_desc)}</span>
+        </div>`).join("") : '<div class="empty">暂无板块事件</div>');
+      return;
+    }
     if (macroSub === "outlook") {
       const d = await api(`/api/macro/outlook?horizon=${outlookHorizon}`);
       box.innerHTML = `
@@ -560,11 +612,12 @@ async function loadMacro() {
           ${[["week", "未来一周"], ["month", "未来一月"], ["quarter", "未来三月"], ["half", "未来半年"]].map(([k, v]) =>
             `<button class="opt ${k === outlookHorizon ? "active" : ""}" data-h="${k}">${v}</button>`).join("")}
         </div>
+        ${await almanacCard()}
         <div class="outlook-summary">📋 <b>${esc(d.label)}展望综述</b><br>${esc(d.summary)}</div>
         <div id="eventDetailBox"></div>
         ${d.groups.map((g) => {
           const evHtml = (ev) => `
-            <div class="cal-item" style="cursor:pointer" onclick="showEventDetail('${esc(ev.title)}')" title="点击查看影响板块与相关个股">
+            <div class="cal-item" style="cursor:pointer" onclick="showEventDetail('${esc(ev.title)}','${esc(ev.sectors || "")}')" title="点击查看影响板块与相关个股">
               <span class="cal-date">${ev.date.slice(5)}</span>
               ${stars(ev.impact_level)}
               <span class="badge level-${ev.impact_level}">${ev.impact_desc}</span>
@@ -606,6 +659,7 @@ async function loadMacro() {
       const filtered = rows.filter((ev) =>
         ev.date >= today && ev.date <= rangeEnd && ev.impact_level >= calMinLevel);
       box.innerHTML = `
+        ${await almanacCard()}
         <div class="btn-group" style="margin-bottom:6px" id="calRangeBtns">
           ${[[0, "全部"], [1, "今天"], [3, "3天内"], [7, "一周内"], [31, "一月内"]].map(([v, t]) =>
             `<button class="opt ${v === calRange ? "active" : ""}" data-range="${v}">${t}</button>`).join("")}
@@ -616,7 +670,7 @@ async function loadMacro() {
         </div>
         <div id="eventDetailBox"></div>
         ${filtered.length ? filtered.map((ev) => `
-        <div class="cal-item" style="cursor:pointer" onclick="showEventDetail('${esc(ev.title)}')" title="点击查看影响板块与相关个股">
+        <div class="cal-item" style="cursor:pointer" onclick="showEventDetail('${esc(ev.title)}','${esc(ev.sectors || "")}')" title="点击查看影响板块与相关个股">
           <span class="cal-date">${ev.date.slice(5)}</span>
           ${stars(ev.impact_level)}
           <span class="badge level-${ev.impact_level}">${ev.impact_desc}</span>
@@ -661,12 +715,12 @@ async function loadMacro() {
   } catch (err) { box.innerHTML = '<div class="empty">加载失败，稍后自动重试</div>'; console.warn(err); }
 }
 
-window.showEventDetail = async (title) => {
+window.showEventDetail = async (title, sectors = "") => {
   const box = $("#eventDetailBox");
   if (!box) return;
   box.innerHTML = '<div class="empty">分析中…</div>';
   try {
-    const d = await api(`/api/macro/event-detail?title=${encodeURIComponent(title)}`);
+    const d = await api(`/api/macro/event-detail?title=${encodeURIComponent(title)}&bull=${encodeURIComponent(sectors)}`);
     box.innerHTML = `
       <div class="outlook-summary" style="border-color:rgba(255,169,64,.4)">
         <b>📌 ${esc(d.title)} — 影响分析</b>
@@ -1071,19 +1125,22 @@ async function loadCommodityRelated() {
     const d = await api(`/api/commodities/related?symbol=${ckState.symbol}&page=${ckRelPage}&page_size=20`);
     $("#ckRelatedSector").textContent = d.sector ? `关联板块：${d.sector} · 共 ${d.total} 只` : "";
     box.innerHTML = d.items.length ? `<table><thead><tr>
-      <th>名称</th><th>所属板块</th><th>现价</th><th>涨跌幅</th><th>主力净流入(万)</th><th>量比</th><th>购买指数</th><th>情绪</th><th>暗盘力量</th>
+      <th>名称</th><th>所属板块</th><th>现价</th><th>涨跌幅</th><th>主力净流入(万)</th><th>量能</th><th>购买指数</th><th>评分</th><th>情绪</th><th>暗盘力量</th><th>提示</th>
     </tr></thead><tbody>${d.items.map((r) => `
-      <tr onclick="openStock('${r.code}','${esc(r.name)}')">
+      <tr class="${scoreRowClass(r.score)}" onclick="openStock('${r.code}','${esc(r.name)}')">
         <td>${esc(r.name)} <span class="muted">${r.code}</span></td>
         <td>${esc(r.industry || "-")}</td>
         <td class="num ${cls(r.pct)}">${fmt(r.price)}</td>
         <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
         <td class="num ${cls(r.main_net_in)}">${fmt(r.main_net_in, 0)}</td>
-        <td class="num">${fmt(r.volume_ratio)}</td>
+        <td>${esc(r.volume_desc || "-")}</td>
         <td class="num">${r.buy_index !== null ? `<b>${fmt(r.buy_index, 0)}</b>` : "-"}</td>
+        <td class="num"><b>${fmt(r.score, 1)}</b></td>
         <td>${r.sent_level ? esc(r.sent_level) : "-"}</td>
         <td class="num">${fmt(r.dark_power, 0)}</td>
-      </tr>`).join("")}</tbody></table>` : '<div class="empty">暂无关联个股</div>';
+        <td><span class="badge ${r.advice === "增持" ? "advice-buy" : r.advice === "减持" ? "advice-sell" : "advice-hold"}" style="font-size:11px;padding:2px 7px">${esc(r.advice || "-")}</span></td>
+      </tr>`).join("")}</tbody></table>
+      <div class="muted" style="margin-top:6px;font-size:12px">行背景按评分五档着色。</div>` : '<div class="empty">暂无关联个股</div>';
     $("#ckRelatedPager").innerHTML = d.pages > 1 ? `
       <button class="btn small ghost" ${d.page <= 1 ? "disabled" : ""} onclick="ckRelGo(${d.page - 1})">‹ 上一页</button>
       <span class="info">第 ${d.page} / ${d.pages} 页</span>
@@ -1146,6 +1203,9 @@ async function loadCommodityKline() {
 
 /* ---------------- 全球指数 ---------------- */
 let globalSub = "indices";
+let etfFilter = "all";
+let etfPage = 1;
+window.etfGo = (p) => { etfPage = p; loadGlobal(); };
 $("#globalTabs").addEventListener("click", (e) => {
   const btn = e.target.closest(".opt");
   if (!btn) return;
@@ -1158,16 +1218,34 @@ async function loadGlobal() {
   const box = $("#globalContent");
   try {
     if (globalSub === "etf") {
-      const rows = await api("/api/etfs");
-      box.innerHTML = `<div class="card"><div class="muted" style="margin-bottom:6px">点击 ETF 行查看持仓详情与K线</div><table><thead><tr>
+      const d = await api(`/api/etfs?filter=${etfFilter}&page=${etfPage}&page_size=20`);
+      box.innerHTML = `<div class="card">
+        <div class="btn-group" style="margin-bottom:8px" id="etfFilterBtns">
+          ${[["all", "全部"], ["top_up", "上涨TOP20"], ["top_down", "下跌TOP20"]].map(([v, t]) =>
+            `<button class="opt ${v === etfFilter ? "active" : ""}" data-v="${v}">${t}</button>`).join("")}
+          <span class="muted" style="margin-left:10px">共 ${d.total} 只 · 点击行查看持仓详情与K线</span>
+        </div>
+        <table><thead><tr>
         <th>代码</th><th>名称</th><th>分类</th><th>跟踪标的</th><th>最新价</th><th>涨跌幅</th><th>成交额(万)</th>
-      </tr></thead><tbody>${rows.map((r) => `
+      </tr></thead><tbody>${d.items.map((r) => `
         <tr onclick="openEtfDetail('${r.code}','${esc(r.name)}')">
           <td>${r.code}</td><td>${esc(r.name)}</td><td>${esc(r.category)}</td><td>${esc(r.track)}</td>
           <td class="num ${cls(r.pct)}">${fmt(r.price, 3)}</td>
           <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
           <td class="num">${fmt(r.amount, 0)}</td>
-        </tr>`).join("")}</tbody></table></div>`;
+        </tr>`).join("")}</tbody></table>
+        ${d.pages > 1 ? `<div class="pager">
+          <button class="btn small ghost" ${d.page <= 1 ? "disabled" : ""} onclick="etfGo(${d.page - 1})">‹ 上一页</button>
+          <span class="info">第 ${d.page} / ${d.pages} 页</span>
+          <button class="btn small ghost" ${d.page >= d.pages ? "disabled" : ""} onclick="etfGo(${d.page + 1})">下一页 ›</button>
+        </div>` : ""}</div>`;
+      $("#etfFilterBtns").addEventListener("click", (e) => {
+        const btn = e.target.closest(".opt");
+        if (!btn) return;
+        etfFilter = btn.dataset.v;
+        etfPage = 1;
+        loadGlobal();
+      });
       return;
     }
     const d = await api("/api/global-indices");
@@ -1198,9 +1276,9 @@ window.openEtfDetail = async (code, name) => {
     $("#etfDetailNote").textContent = d.note || "";
     $("#etfHoldings").innerHTML = d.holdings.length ? `<table><thead><tr>
       <th>#</th><th>持仓个股</th><th>所属板块</th><th>近似权重</th><th>现价</th><th>涨跌幅</th>
-      <th>购买指数</th><th>情绪</th><th>暗盘力量</th><th>提示</th>
+      <th>购买指数</th><th>评分</th><th>量能</th><th>情绪</th><th>暗盘力量</th><th>提示</th>
     </tr></thead><tbody>${d.holdings.map((r, i) => `
-      <tr onclick="openStock('${r.code}','${esc(r.name)}')">
+      <tr class="${scoreRowClass(r.score)}" onclick="openStock('${r.code}','${esc(r.name)}')">
         <td>${i + 1}</td>
         <td>${esc(r.name)} <span class="muted">${r.code}</span></td>
         <td>${esc(r.industry || "-")}</td>
@@ -1208,10 +1286,13 @@ window.openEtfDetail = async (code, name) => {
         <td class="num ${cls(r.pct)}">${fmt(r.price)}</td>
         <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
         <td class="num">${r.buy_index !== null ? `<b>${fmt(r.buy_index, 0)}</b> <span class="muted">${esc(r.buy_level || "")}</span>` : "-"}</td>
+        <td class="num"><b>${fmt(r.score, 1)}</b></td>
+        <td>${esc(r.volume_desc || "-")}</td>
         <td>${r.sent_level ? esc(r.sent_level) : "-"}</td>
         <td class="num">${fmt(r.dark_power, 0)}</td>
         <td><span class="badge ${r.advice === "增持" ? "advice-buy" : r.advice === "减持" ? "advice-sell" : "advice-hold"}" style="font-size:11px;padding:2px 7px">${esc(r.advice)}</span></td>
-      </tr>`).join("")}</tbody></table>` : `<div class="empty">${esc(d.note || "暂无持仓数据")}</div>`;
+      </tr>`).join("")}</tbody></table>
+      <div class="muted" style="margin-top:6px;font-size:12px">行背景按评分五档着色（≥55 起）。</div>` : `<div class="empty">${esc(d.note || "暂无持仓数据")}</div>`;
     box.scrollIntoView({ behavior: "smooth", block: "nearest" });
   } catch (err) { $("#etfHoldings").innerHTML = '<div class="empty">加载失败</div>'; }
 };
@@ -1263,7 +1344,10 @@ async function loadRecommend() {
         20日胜率 ${fmt(d.stats.win20, 0)}%（均值 ${fmt(d.stats.avg20, 1)}%）
       </div>` : "";
     const isStab = recommendBoard === "stabilize";
-    box.innerHTML = d.items.length ? statsHtml + `<table><thead><tr>
+    const demonBanner = recommendBoard === "demon"
+      ? '<div class="offline-banner" style="border-color:rgba(255,82,82,.5);color:var(--up);background:rgba(255,82,82,.08)">⚠️ 妖股波动剧烈，随时可能天地板，本榜仅作市场现象研究，严禁跟风追高</div>'
+      : "";
+    box.innerHTML = d.items.length ? demonBanner + statsHtml + `<table><thead><tr>
       <th>#</th><th>名称</th><th>所属板块</th><th>现价</th><th>涨跌幅</th><th>${esc(d.items[0].metric_name)}</th>
       ${isStab ? "<th>闸门</th><th>星级</th>" : ""}<th>购买指数</th><th>情绪</th>
       <th>量能</th><th>评分</th><th>提示</th><th>入选理由</th>

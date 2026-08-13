@@ -191,6 +191,16 @@ def _generate_events(days: int) -> list[dict]:
         add(date(y, 3, 5), "全国两会开幕（政府工作报告）", "财政政策", "中国", 5)
         add(date(y, 12, 11), "中央经济工作会议（定调次年）", "财政政策", "中国", 5)
 
+    # 节气与节日（FR6-05）
+    from . import almanac
+    for ev in almanac.get_festival_events(today, end):
+        events.append({
+            "id": hashlib.md5(f"{ev['date']}{ev['title']}".encode()).hexdigest()[:12],
+            **{k: ev[k] for k in ("date", "title", "category", "region", "impact_level", "note")},
+            "impact_desc": _LEVEL_DESC.get(ev["impact_level"], "较小"),
+            "sectors": ev.get("sectors", ""),
+        })
+
     # 用户自定义事件
     for r in query("SELECT * FROM custom_event WHERE date>=? AND date<=? ", (today.isoformat(), end.isoformat())):
         events.append({
@@ -334,13 +344,22 @@ def _stocks_for_sectors(sectors: list[str], limit: int = 30) -> list[dict]:
     return out[:max(20, min(limit, 50))]
 
 
-def get_event_detail(title: str) -> dict:
-    """预期事件详情：利好/利空板块、利好概率、相关个股（20-50 只）。"""
+def get_event_detail(title: str, bull_override: str = "", bear_override: str = "") -> dict:
+    """预期事件详情：利好/利空板块、利好概率、相关个股（20-50 只）。
+
+    bull_override/bear_override：逗号分隔板块名，用于节气/节日/板块事件直接传参。
+    """
     bull, bear, base_prob = ["指数权重"], ["无明显利空"], 50
-    for keywords, b1, b2, prob in _EVENT_IMPACT_MAP:
-        if any(k in title for k in keywords):
-            bull, bear, base_prob = b1, b2, prob
-            break
+    if bull_override:
+        bull = [s.strip() for s in bull_override.replace("、", ",").split(",") if s.strip()]
+        bear = ([s.strip() for s in bear_override.replace("、", ",").split(",") if s.strip()]
+                or ["无明显利空"])
+        base_prob = 55
+    else:
+        for keywords, b1, b2, prob in _EVENT_IMPACT_MAP:
+            if any(k in title for k in keywords):
+                bull, bear, base_prob = b1, b2, prob
+                break
 
     # 周期阶段修正
     prob = base_prob

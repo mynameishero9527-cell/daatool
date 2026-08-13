@@ -111,6 +111,7 @@ def analysis(code: str):
         "rating": rating.score_stock(norm),
         "metrics": metrics2,
         "dark": darkpool.get_dark_power(norm),
+        "pull_smash": darkpool.get_pull_smash(norm),
     }
 
 
@@ -160,8 +161,20 @@ def etf_holdings(code: str, limit: int = Query(20, le=50)):
 
 
 @router.get("/macro/event-detail")
-def macro_event_detail(title: str):
-    return macro.get_event_detail(title)
+def macro_event_detail(title: str, bull: str = "", bear: str = ""):
+    return macro.get_event_detail(title, bull, bear)
+
+
+@router.get("/macro/almanac")
+def macro_almanac():
+    from .services import almanac
+    return almanac.get_almanac()
+
+
+@router.get("/macro/sector-events")
+def macro_sector_events(months: int = Query(12, le=12)):
+    from .services import almanac
+    return almanac.get_sector_events(months)
 
 
 @router.post("/commodities/watch")
@@ -175,8 +188,8 @@ def global_indices():
 
 
 @router.get("/etfs")
-def etfs():
-    return global_index.get_etfs()
+def etfs(filter: str = "all", page: int = 1, page_size: int = Query(20, le=50)):
+    return global_index.get_etfs(filter, page, page_size)
 
 
 # ---------------- 个股推荐 ----------------

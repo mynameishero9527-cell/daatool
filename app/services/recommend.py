@@ -14,6 +14,7 @@ BOARDS = {
     "composite": "综合推荐",
     "hot_turnover": "活跃成交",
     "sector_leader": "板块最强股",
+    "demon": "妖股潜力",
 }
 
 _BASE_FILTER = "s.price IS NOT NULL AND s.pct IS NOT NULL AND s.name NOT LIKE '%ST%' AND s.name NOT LIKE '%退%'"
@@ -121,6 +122,18 @@ def _build(board: str, limit: int) -> list[dict]:
             "ORDER BY s.amount DESC", limit=limit)
         metric = ("成交额(亿)", lambda r: _yi(r["amount"]))
         reason = lambda r: f"成交额 {_yi(r['amount'])} 亿，市场焦点股"
+    elif board == "demon":
+        # 妖股潜力（FR6-02）：小市值+高换手+高振幅+量比放大+强动量
+        rows = _rows(
+            f"""{_SELECT} WHERE {_BASE_FILTER}
+                AND s.float_mv IS NOT NULL AND s.float_mv < 150
+                AND s.turnover_rate >= 10 AND s.amplitude >= 6
+                AND s.volume_ratio >= 1.5
+                AND (s.pct_d5 >= 15 OR s.pct >= 9.8)
+                ORDER BY (s.turnover_rate * 0.25 + COALESCE(s.pct_d5,0) * 0.3
+                          + (s.volume_ratio - 1) * 8 + s.amplitude * 0.5) DESC""", limit=limit)
+        metric = ("妖股潜力分", lambda r: _demon_score(r))
+        reason = lambda r: _demon_reason(r)
     elif board == "sector_leader":
         # 板块最强股（FR5-05-2）：每个申万一级行业当日最强个股
         rows = _rows(
@@ -176,6 +189,31 @@ def _yi(wan: float | None) -> float | None:
     return round(wan / 10000, 2) if wan is not None else None
 
 
+def _demon_score(r: dict) -> float:
+    """妖股潜力分 0-100：换手25% + 动量30% + 量能20% + 小市值15% + 暗盘10%。"""
+    heat = min(100, (r["turnover_rate"] or 0) / 30 * 100)
+    momentum = min(100, max(0, (r["pct_d5"] or 0)) / 40 * 100 + (25 if (r["pct"] or 0) >= 9.8 else 0))
+    burst = min(100, ((r["volume_ratio"] or 1) - 1) / 3 * 70 + (r["amplitude"] or 0) * 3)
+    small = min(100, max(0, 150 - (r["float_mv"] or 150)) / 150 * 100)
+    dark = r.get("dark_power") or 50
+    return round(min(100, heat * 0.25 + momentum * 0.3 + burst * 0.2 + small * 0.15 + dark * 0.1), 1)
+
+
+def _demon_reason(r: dict) -> str:
+    tags = []
+    if (r["pct"] or 0) >= 9.8:
+        tags.append("今日涨停")
+    d5 = r["pct_d5"] or 0
+    if d5 >= 33:
+        tags.append("5日强动量(疑似连板)")
+    elif d5 >= 15:
+        tags.append(f"5日{d5:+.0f}%强势")
+    tags.append(f"换手{r['turnover_rate']:.0f}%高热度")
+    tags.append(f"振幅{r['amplitude']:.1f}%")
+    risk = "极高" if d5 >= 40 or (r["turnover_rate"] or 0) >= 25 else "高"
+    return "、".join(tags) + f"；风险等级：{risk}，谨防天地板"
+
+
 _industry_pct_cache: dict = {}
 
 
@@ -212,19 +250,5 @@ def _rich_reason(core: str, r: dict) -> str:
 
 
 def _quick_score(r: dict) -> tuple[float, str]:
-    """榜单用轻量评分（不含消息面回路，避免逐股全量计算）。"""
-    tech = 50.0
-    for pct, w in ((r["pct"], 2.0), (r["pct_d5"], 1.5), (r["pct_d20"], 1.0), (r["pct_d60"], 0.5)):
-        if pct is not None:
-            tech += pct * w
-    tech = max(0, min(100, tech))
-    fund = 50.0
-    if r["main_net_in"] is not None and r["float_mv"]:
-        fund += max(-30, min(30, r["main_net_in"] / (r["float_mv"] * 10000) * 100 * 400))
-    if r["volume_ratio"] is not None:
-        fund += max(-15, min(15, (r["volume_ratio"] - 1) * 10))
-    fund = max(0, min(100, fund))
-    score = round(tech * 0.55 + fund * 0.45, 1)
-    main_in = r["main_net_in"] or 0
-    advice = "增持" if score >= 70 and main_in > 0 else "减持" if score <= 44 else "保持不变"
-    return score, advice
+    """榜单用轻量评分（复用 rating.quick_score）。"""
+    return rating.quick_score(r)

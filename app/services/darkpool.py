@@ -19,6 +19,74 @@ def get_orderflow(code: str) -> dict | None:
     return cached(f"orderflow:{code}", 10, loader)
 
 
+def get_pull_smash(code: str) -> dict:
+    """盘口拉砸分析（FR6-03）：主力拉升/砸盘力度 + 地天/天地板识别。"""
+    from . import kline as kline_svc
+    from . import market as market_svc
+
+    try:
+        minute = kline_svc.get_minute(code)
+        points = minute.get("points") or []
+        prev_close = minute.get("prev_close")
+    except Exception:  # noqa: BLE001
+        points, prev_close = [], None
+    quote = (market_svc.get_quotes([code]) or {}).get(code) or {}
+    prev_close = prev_close or quote.get("prev_close")
+    if len(points) < 30 or not prev_close:
+        return {"available": False, "desc": "分时数据不足，暂无法分析盘口拉砸"}
+
+    prices = [p[1] for p in points]
+    window = 30
+    max_rise, rise_at, max_drop, drop_at = 0.0, "", 0.0, ""
+    for i in range(window, len(prices)):
+        base = prices[i - window]
+        if not base:
+            continue
+        chg = (prices[i] / base - 1) * 100
+        if chg > max_rise:
+            max_rise, rise_at = chg, points[i][0]
+        if chg < max_drop:
+            max_drop, drop_at = chg, points[i][0]
+
+    pull_score = round(min(100.0, max_rise / 5 * 100), 0)
+    smash_score = round(min(100.0, -max_drop / 5 * 100), 0)
+
+    # 涨跌停价（按板块幅度）
+    limit = 0.20 if code[2:].startswith(("30", "68")) else 0.30 if code.startswith("bj") else 0.10
+    up_limit = round(prev_close * (1 + limit), 2)
+    down_limit = round(prev_close * (1 - limit), 2)
+    high = quote.get("high") or max(prices)
+    low = quote.get("low") or min(prices)
+    price = quote.get("price") or prices[-1]
+
+    touched_up = high >= up_limit * 0.998
+    touched_down = low <= down_limit * 1.002
+    pattern, pattern_score = "无地天/天地形态", None
+    if touched_down and touched_up:
+        pattern, pattern_score = ("地天板（跌停翻涨停）" if price >= prev_close else "巨幅震荡（双向触板）"), 100
+    elif touched_up and price <= prev_close * (1 - limit * 0.8):
+        pattern, pattern_score = "天地板（涨停砸跌停）", 100
+    elif touched_up and price < high * 0.95:
+        pattern, pattern_score = "炸板回落", 70
+    elif touched_down and price > low * 1.05:
+        pattern, pattern_score = "跌停撬板", 70
+
+    fmt_t = lambda t: f"{t[:2]}:{t[2:]}" if len(t) == 4 else t
+    desc = (f"主力拉升力度 {pull_score:.0f}"
+            + (f"（{fmt_t(rise_at)} 快速拉升 +{max_rise:.1f}%）" if max_rise > 0.5 else "")
+            + f"，砸盘力度 {smash_score:.0f}"
+            + (f"（{fmt_t(drop_at)} 快速下砸 {max_drop:.1f}%）" if max_drop < -0.5 else "")
+            + f"；{pattern}")
+    return {
+        "available": True,
+        "pull_score": pull_score, "pull_at": fmt_t(rise_at), "pull_pct": round(max_rise, 2),
+        "smash_score": smash_score, "smash_at": fmt_t(drop_at), "smash_pct": round(max_drop, 2),
+        "pattern": pattern, "pattern_score": pattern_score,
+        "up_limit": up_limit, "down_limit": down_limit,
+        "desc": desc,
+    }
+
+
 def get_dark_power(code: str) -> dict:
     """暗盘力量综合：批量两档口径(65%) + 实时主动买卖盘(35%)。"""
     rows = query("SELECT dark_power, divergence FROM stock_metrics WHERE code=?", (code,))

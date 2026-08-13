@@ -165,6 +165,7 @@ CREATE TABLE IF NOT EXISTS finance_report (
 # 已有表的增量列迁移（幂等）
 MIGRATIONS = [
     "ALTER TABLE stock_list ADD COLUMN industry TEXT DEFAULT ''",
+    "ALTER TABLE stock_snapshot ADD COLUMN amplitude REAL",
 ]
 
 

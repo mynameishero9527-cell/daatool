@@ -119,10 +119,22 @@ def score_stock(code: str) -> dict:
         advice, advice_css = "保持不变", "advice-hold"
         reason = f"综合评分 {score}，多空信号均衡，{vol_desc}"
 
+    # 攻守语境（FR6-01-4）
+    from . import cycle as cycle_svc
+    stance_info = cycle_svc.get_stance()
+    stance = stance_info["stance"]
+    if stance == "防守":
+        reason += f"；当前市场处于防守姿态（恐慌指数 {stance_info['panic']}），建议降低仓位预期"
+    elif stance == "进攻":
+        reason += f"；当前市场处于进攻姿态（恐慌指数 {stance_info['panic']}），可顺势积极操作"
+    else:
+        reason += "；市场攻守均衡，结构性参与为主"
+
     return {
         "code": code, "name": s["name"], "score": score,
         "grade": grade["name"], "grade_css": grade["css"],
         "volume_desc": vol_desc,
+        "stance": stance, "stance_desc": stance_info["desc"],
         "advice": advice, "advice_css": advice_css, "advice_reason": reason,
         "components": {
             "技术面": round(tech, 1), "资金面": round(fund, 1),
@@ -138,6 +150,26 @@ def score_stock(code: str) -> dict:
         },
         "broker_ratings": broker_ratings(code, score),
     }
+
+
+def quick_score(r: dict) -> tuple[float, str]:
+    """轻量评分（榜单/持仓列表通用）：技术55% + 资金45%。"""
+    tech = 50.0
+    for pct_v, w in ((r.get("pct"), 2.0), (r.get("pct_d5"), 1.5),
+                     (r.get("pct_d20"), 1.0), (r.get("pct_d60"), 0.5)):
+        if pct_v is not None:
+            tech += pct_v * w
+    tech = _clamp(tech)
+    fund = 50.0
+    if r.get("main_net_in") is not None and r.get("float_mv"):
+        fund += _clamp(r["main_net_in"] / (r["float_mv"] * 10000) * 100 * 400, -30, 30)
+    if r.get("volume_ratio") is not None:
+        fund += _clamp((r["volume_ratio"] - 1) * 10, -15, 15)
+    fund = _clamp(fund)
+    score = round(tech * 0.55 + fund * 0.45, 1)
+    main_in = r.get("main_net_in") or 0
+    advice = "增持" if score >= 70 and main_in > 0 else "减持" if score <= 44 else "保持不变"
+    return score, advice
 
 
 _BROKERS = [

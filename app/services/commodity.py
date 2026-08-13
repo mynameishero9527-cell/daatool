@@ -176,7 +176,8 @@ def get_related_stocks(symbol: str, page: int = 1, page_size: int = 20) -> dict:
     from . import rating as rating_svc
 
     rows = query(
-        """SELECT s.code, s.name, s.price, s.pct, s.main_net_in, s.volume_ratio,
+        """SELECT s.code, s.name, s.price, s.pct, s.pct_d5, s.pct_d20, s.pct_d60,
+                  s.main_net_in, s.volume_ratio, s.float_mv,
                   l.industry, m.buy_index, m.sentiment, m.dark_power
            FROM stock_snapshot s
            JOIN stock_list l ON l.code = s.code
@@ -189,6 +190,7 @@ def get_related_stocks(symbol: str, page: int = 1, page_size: int = 20) -> dict:
         if r["sentiment"] is not None:
             r["sent_level"] = metrics_svc.sentiment_level(r["sentiment"])[0]
         r["volume_desc"] = rating_svc.volume_desc(r["volume_ratio"])
+        r["score"], r["advice"] = rating_svc.quick_score(r)
     total = len(rows)
     page_size = page_size if page_size in (10, 20, 50) else 20
     pages = max(1, (total + page_size - 1) // page_size)
