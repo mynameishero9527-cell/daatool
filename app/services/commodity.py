@@ -155,6 +155,49 @@ def get_kline(symbol: str, period: str = "day") -> dict:
     }
 
 
+# 商品关联板块 → (概念候选, 行业候选)
+_RELATED_LOOKUP = {
+    "石油石化": ("石油", "石油石化"), "燃气": ("天然气", "公用事业"),
+    "黄金股": ("黄金", "有色金属"), "贵金属": ("黄金", "有色金属"),
+    "有色金属": ("有色", "有色金属"), "钢铁": ("钢铁", "钢铁"), "煤炭": ("煤炭", "煤炭"),
+    "化工": ("化工", "基础化工"), "农业": ("农业", "农林牧渔"),
+    "纺织": ("纺织", "纺织服饰"), "饲料": ("饲料", "农林牧渔"), "食品": ("食糖", "食品饮料"),
+}
+
+
+def get_related_stocks(symbol: str, page: int = 1, page_size: int = 20) -> dict:
+    """商品关联的大A个股列表（FR5-04），分页，含购买指数/情绪/评分。"""
+    meta = _META.get(symbol)
+    if not meta:
+        return {"items": [], "total": 0, "page": 1, "pages": 1, "sector": ""}
+    sector = meta[2]
+    concept, industry = _RELATED_LOOKUP.get(sector, (sector, sector))
+    from . import metrics as metrics_svc
+    from . import rating as rating_svc
+
+    rows = query(
+        """SELECT s.code, s.name, s.price, s.pct, s.main_net_in, s.volume_ratio,
+                  l.industry, m.buy_index, m.sentiment, m.dark_power
+           FROM stock_snapshot s
+           JOIN stock_list l ON l.code = s.code
+           LEFT JOIN stock_metrics m ON m.code = s.code
+           WHERE s.price IS NOT NULL AND (l.industry = ? OR s.code IN
+               (SELECT code FROM concept_map WHERE concept LIKE ?))
+           ORDER BY s.float_mv DESC LIMIT 100""",
+        (industry, f"%{concept}%"))
+    for r in rows:
+        if r["sentiment"] is not None:
+            r["sent_level"] = metrics_svc.sentiment_level(r["sentiment"])[0]
+        r["volume_desc"] = rating_svc.volume_desc(r["volume_ratio"])
+    total = len(rows)
+    page_size = page_size if page_size in (10, 20, 50) else 20
+    pages = max(1, (total + page_size - 1) // page_size)
+    page = max(1, min(page, pages))
+    return {"items": rows[(page - 1) * page_size: page * page_size],
+            "total": total, "page": page, "pages": pages, "page_size": page_size,
+            "sector": sector}
+
+
 def toggle_watch(symbol: str) -> dict:
     if symbol not in _META:
         return {"ok": False, "error": "未知品种"}

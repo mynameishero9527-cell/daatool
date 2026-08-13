@@ -430,7 +430,14 @@ async function loadAnalysis() {
     }
     const s = r.snapshot;
     const br = r.broker_ratings;
-    card.innerHTML = `
+    const q = d.quote || {};
+    const priceHead = q.price !== undefined && q.price !== null ? `
+      <div style="text-align:center;padding-bottom:6px;border-bottom:1px solid var(--border);margin-bottom:8px">
+        <span style="font-size:30px;font-weight:800" class="${cls(q.pct)}">${fmt(q.price)}</span>
+        <span class="${cls(q.pct)}" style="font-size:15px;font-weight:600;margin-left:8px">${sign(q.change)}${fmt(q.change)} (${pct(q.pct)})</span>
+        <div class="muted" style="font-size:11px">现价 · ${esc(String(q.time || "").replace(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})$/, "$2-$3 $4:$5:$6"))} · ${esc(q.source || "")}</div>
+      </div>` : "";
+    card.innerHTML = `${priceHead}
       <div class="score-head">
         <div class="score-num ${r.score >= 55 ? "up" : r.score < 45 ? "down" : "flat"}">${r.score}</div>
         <span class="badge ${r.grade_css}">${r.grade} · ${r.volume_desc}</span><br>
@@ -502,6 +509,47 @@ const stars = (lv) => `<span class="${lv >= 4 ? "up" : "flat"}" style="letter-sp
 let outlookHorizon = "week";
 let calRange = 0;      // 0=全部, 1=今天, 3, 7, 31 天
 let calMinLevel = 0;   // 0=全部, 4, 5
+const newsFilter = { level: 0, direction: "", region: "" };  // FR5-01-1 二级筛选
+
+function newsFilterBar() {
+  return `
+    <div class="btn-group" style="margin-bottom:6px" id="nfLevel">
+      ${[[0, "全部等级"], [2, "较小+"], [3, "中等+"], [4, "重大+"], [5, "极重大"]].map(([v, t]) =>
+        `<button class="opt ${v === newsFilter.level ? "active" : ""}" data-v="${v}">${t}</button>`).join("")}
+    </div>
+    <div class="btn-group" style="margin-bottom:6px" id="nfDir">
+      ${[["", "全部方向"], ["利好", "利好"], ["利空", "利空"], ["中性", "中性"]].map(([v, t]) =>
+        `<button class="opt ${v === newsFilter.direction ? "active" : ""}" data-v="${v}">${t}</button>`).join("")}
+    </div>
+    <div class="btn-group" style="margin-bottom:12px" id="nfRegion">
+      ${[["", "全部区域"], ["国内", "国内"], ["国外", "国外"]].map(([v, t]) =>
+        `<button class="opt ${v === newsFilter.region ? "active" : ""}" data-v="${v}">${t}</button>`).join("")}
+    </div>`;
+}
+
+function bindNewsFilters() {
+  for (const [id, key, isNum] of [["nfLevel", "level", true], ["nfDir", "direction", false], ["nfRegion", "region", false]]) {
+    const el = $(`#${id}`);
+    if (!el) continue;
+    el.addEventListener("click", (e) => {
+      const btn = e.target.closest(".opt");
+      if (!btn) return;
+      newsFilter[key] = isNum ? Number(btn.dataset.v) : btn.dataset.v;
+      loadMacro();
+    });
+  }
+}
+
+function applyNewsFilter(rows) {
+  return rows.filter((n) => {
+    if (newsFilter.level && (n.impact_level || 1) < newsFilter.level) return false;
+    if (newsFilter.direction && n.impact_direction !== newsFilter.direction) return false;
+    if (newsFilter.region === "国内" && n.region !== "中国") return false;
+    if (newsFilter.region === "国外" && n.region === "中国") return false;
+    return true;
+  });
+}
+
 async function loadMacro() {
   const box = $("#macroContent");
   try {
@@ -513,17 +561,28 @@ async function loadMacro() {
             `<button class="opt ${k === outlookHorizon ? "active" : ""}" data-h="${k}">${v}</button>`).join("")}
         </div>
         <div class="outlook-summary">📋 <b>${esc(d.label)}展望综述</b><br>${esc(d.summary)}</div>
-        ${d.groups.map((g) => `
-          <div class="outlook-group">${esc(g.name)}</div>
-          ${g.events.map((ev) => `
-            <div class="cal-item">
+        <div id="eventDetailBox"></div>
+        ${d.groups.map((g) => {
+          const evHtml = (ev) => `
+            <div class="cal-item" style="cursor:pointer" onclick="showEventDetail('${esc(ev.title)}')" title="点击查看影响板块与相关个股">
               <span class="cal-date">${ev.date.slice(5)}</span>
               ${stars(ev.impact_level)}
               <span class="badge level-${ev.impact_level}">${ev.impact_desc}</span>
               <span class="flag">${esc(ev.region)}</span>
-              <span style="flex:1">${esc(ev.title)}${ev.custom ? ` <button class="btn small danger" onclick="delCustomEvent(${ev.id.replace("custom_", "")})">删</button>` : ""}</span>
+              <span style="flex:1">${esc(ev.title)}${ev.custom ? ` <button class="btn small danger" onclick="event.stopPropagation();delCustomEvent(${ev.id.replace("custom_", "")})">删</button>` : ""}</span>
               <span class="muted">${esc(ev.category)}</span>
-            </div>`).join("")}`).join("")}
+            </div>`;
+          if (outlookHorizon === "week") {
+            const cn = g.events.filter((ev) => ev.region === "中国");
+            const intl = g.events.filter((ev) => ev.region !== "中国");
+            return `<div class="outlook-group">${esc(g.name)}</div>
+              <div class="grid-2">
+                <div><div class="muted" style="margin-bottom:4px">🇨🇳 国内</div>${cn.map(evHtml).join("") || '<div class="muted" style="padding:6px 0">无</div>'}</div>
+                <div><div class="muted" style="margin-bottom:4px">🌍 国外</div>${intl.map(evHtml).join("") || '<div class="muted" style="padding:6px 0">无</div>'}</div>
+              </div>`;
+          }
+          return `<div class="outlook-group">${esc(g.name)}</div>` + g.events.map(evHtml).join("");
+        }).join("")}
         <div class="inline-form" style="margin-top:14px">
           <input id="ceDate" placeholder="YYYY-MM-DD" style="width:120px">
           <input id="ceTitle" placeholder="自定义事件标题" style="width:240px">
@@ -555,8 +614,9 @@ async function loadMacro() {
           ${[[0, "全部星级"], [4, "★★★★+"], [5, "★★★★★"]].map(([v, t]) =>
             `<button class="opt ${v === calMinLevel ? "active" : ""}" data-level="${v}">${t}</button>`).join("")}
         </div>
+        <div id="eventDetailBox"></div>
         ${filtered.length ? filtered.map((ev) => `
-        <div class="cal-item">
+        <div class="cal-item" style="cursor:pointer" onclick="showEventDetail('${esc(ev.title)}')" title="点击查看影响板块与相关个股">
           <span class="cal-date">${ev.date.slice(5)}</span>
           ${stars(ev.impact_level)}
           <span class="badge level-${ev.impact_level}">${ev.impact_desc}</span>
@@ -579,23 +639,52 @@ async function loadMacro() {
       return;
     }
     const path = macroSub === "policy" ? "/api/macro/policies" : macroSub === "major" ? "/api/macro/major" : "/api/macro/news";
-    const rows = await api(path);
+    const rows = applyNewsFilter(await api(path));
     const offline = rows.length && rows[0].offline;
-    box.innerHTML = (offline ? '<div class="offline-banner">当前展示本地缓存数据（离线）</div>' : "") +
+    box.innerHTML = newsFilterBar() +
+      (offline ? '<div class="offline-banner">当前展示本地缓存数据（离线）</div>' : "") +
       (rows.length ? rows.map((n) => `
       <div class="news-item">
         <span class="time">${esc((n.time || "").slice(5, 16))}</span>
         <div class="body">${esc(n.text)}
           <div class="meta">
+            ${n.score !== undefined ? `<span class="badge ${n.score >= 70 ? "level-4" : n.score >= 50 ? "level-3" : "level-2"}">关注度 ${fmt(n.score, 0)}</span>` : ""}
             <span class="badge level-${n.impact_level}">${n.impact_desc || ""}</span>
             <span class="badge dir-${n.impact_direction}">${n.impact_direction}</span>
             ${n.is_policy ? '<span class="badge sector-tag">政策</span>' : ""}
             ${(n.affected_sectors || []).map((s) => `<span class="badge sector-tag">${esc(s)}</span>`).join("")}
           </div>
+          ${n.brief ? `<div class="muted" style="font-size:12px;margin-top:3px">💡 ${esc(n.brief)}</div>` : ""}
         </div>
-      </div>`).join("") : '<div class="empty">暂无数据</div>');
+      </div>`).join("") : '<div class="empty">该筛选条件下暂无数据</div>');
+    bindNewsFilters();
   } catch (err) { box.innerHTML = '<div class="empty">加载失败，稍后自动重试</div>'; console.warn(err); }
 }
+
+window.showEventDetail = async (title) => {
+  const box = $("#eventDetailBox");
+  if (!box) return;
+  box.innerHTML = '<div class="empty">分析中…</div>';
+  try {
+    const d = await api(`/api/macro/event-detail?title=${encodeURIComponent(title)}`);
+    box.innerHTML = `
+      <div class="outlook-summary" style="border-color:rgba(255,169,64,.4)">
+        <b>📌 ${esc(d.title)} — 影响分析</b>
+        <button class="btn small ghost" style="float:right" onclick="this.closest('.outlook-summary').remove()">收起</button>
+        <div class="kv"><span class="k">利好板块</span><span>${d.bull_sectors.map((s) => `<span class="badge dir-利好">${esc(s)}</span>`).join("")}</span></div>
+        <div class="kv"><span class="k">利空板块</span><span>${d.bear_sectors.map((s) => `<span class="badge dir-利空">${esc(s)}</span>`).join("")}</span></div>
+        <div class="kv"><span class="k">利好概率</span><span><b class="${d.bull_prob >= 55 ? "up" : d.bull_prob <= 45 ? "down" : "flat"}">${d.bull_prob}%</b> <span class="muted">${esc(d.prob_note)}</span></span></div>
+        ${d.stocks.length ? `
+        <div class="muted" style="margin:6px 0 4px">相关题材个股（${d.stocks.length} 只，点击进入个股分析）：</div>
+        <div>${d.stocks.map((s) => `
+          <span class="chip" style="cursor:pointer" onclick="openStock('${s.code}','${esc(s.name)}')">
+            ${esc(s.name)} ${s.code} <span class="${cls(s.pct)}">${pct(s.pct)}</span>${s.buy_index !== null ? ` · 购${fmt(s.buy_index, 0)}` : ""}
+          </span>`).join("")}</div>` : '<div class="muted">未匹配到相关个股</div>'}
+        <div class="muted" style="font-size:11px;margin-top:6px">${esc(d.disclaimer)}</div>
+      </div>`;
+    box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  } catch (err) { box.innerHTML = '<div class="empty">分析加载失败</div>'; }
+};
 
 window.addCustomEvent = async () => {
   const res = await api("/api/macro/custom-event", {
@@ -966,10 +1055,42 @@ let ckState = { symbol: null, name: "", period: "day" };
 
 window.openCommodityKline = (symbol, name) => {
   ckState = { ...ckState, symbol, name };
+  ckRelPage = 1;
   $("#commodityKlineCard").style.display = "";
   loadCommodityKline();
+  loadCommodityRelated();
   $("#commodityKlineCard").scrollIntoView({ behavior: "smooth", block: "nearest" });
 };
+
+let ckRelPage = 1;
+async function loadCommodityRelated() {
+  if (!ckState.symbol) return;
+  const box = $("#ckRelatedTable");
+  box.innerHTML = '<div class="empty">加载中…</div>';
+  try {
+    const d = await api(`/api/commodities/related?symbol=${ckState.symbol}&page=${ckRelPage}&page_size=20`);
+    $("#ckRelatedSector").textContent = d.sector ? `关联板块：${d.sector} · 共 ${d.total} 只` : "";
+    box.innerHTML = d.items.length ? `<table><thead><tr>
+      <th>名称</th><th>所属板块</th><th>现价</th><th>涨跌幅</th><th>主力净流入(万)</th><th>量比</th><th>购买指数</th><th>情绪</th><th>暗盘力量</th>
+    </tr></thead><tbody>${d.items.map((r) => `
+      <tr onclick="openStock('${r.code}','${esc(r.name)}')">
+        <td>${esc(r.name)} <span class="muted">${r.code}</span></td>
+        <td>${esc(r.industry || "-")}</td>
+        <td class="num ${cls(r.pct)}">${fmt(r.price)}</td>
+        <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
+        <td class="num ${cls(r.main_net_in)}">${fmt(r.main_net_in, 0)}</td>
+        <td class="num">${fmt(r.volume_ratio)}</td>
+        <td class="num">${r.buy_index !== null ? `<b>${fmt(r.buy_index, 0)}</b>` : "-"}</td>
+        <td>${r.sent_level ? esc(r.sent_level) : "-"}</td>
+        <td class="num">${fmt(r.dark_power, 0)}</td>
+      </tr>`).join("")}</tbody></table>` : '<div class="empty">暂无关联个股</div>';
+    $("#ckRelatedPager").innerHTML = d.pages > 1 ? `
+      <button class="btn small ghost" ${d.page <= 1 ? "disabled" : ""} onclick="ckRelGo(${d.page - 1})">‹ 上一页</button>
+      <span class="info">第 ${d.page} / ${d.pages} 页</span>
+      <button class="btn small ghost" ${d.page >= d.pages ? "disabled" : ""} onclick="ckRelGo(${d.page + 1})">下一页 ›</button>` : "";
+  } catch (err) { box.innerHTML = '<div class="empty">加载失败</div>'; }
+}
+window.ckRelGo = (p) => { ckRelPage = p; loadCommodityRelated(); };
 window.closeCommodityKline = () => { $("#commodityKlineCard").style.display = "none"; };
 
 $("#ckPeriod").addEventListener("click", (e) => {
@@ -1038,10 +1159,10 @@ async function loadGlobal() {
   try {
     if (globalSub === "etf") {
       const rows = await api("/api/etfs");
-      box.innerHTML = `<div class="card"><table><thead><tr>
+      box.innerHTML = `<div class="card"><div class="muted" style="margin-bottom:6px">点击 ETF 行查看持仓详情与K线</div><table><thead><tr>
         <th>代码</th><th>名称</th><th>分类</th><th>跟踪标的</th><th>最新价</th><th>涨跌幅</th><th>成交额(万)</th>
       </tr></thead><tbody>${rows.map((r) => `
-        <tr onclick="openStock('${r.code}','${esc(r.name)}')">
+        <tr onclick="openEtfDetail('${r.code}','${esc(r.name)}')">
           <td>${r.code}</td><td>${esc(r.name)}</td><td>${esc(r.category)}</td><td>${esc(r.track)}</td>
           <td class="num ${cls(r.pct)}">${fmt(r.price, 3)}</td>
           <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
@@ -1053,15 +1174,47 @@ async function loadGlobal() {
     box.innerHTML = (d.offline ? '<div class="offline-banner">海外指数暂不可用，仅展示国内数据</div>' : "") +
       d.regions.map((rg) => `
       <div class="region-title">${esc(rg.region)}</div>
-      <div class="cards-grid">${rg.items.map((q) => `
-        <div class="q-card">
-          <div class="head"><div class="name">${esc(q.name)}</div><span class="flag">${esc(q.country)}</span></div>
+      <div class="cards-grid">${rg.items.map((q) => {
+        const clickable = rg.region === "中国大陆";
+        return `
+        <div class="q-card" ${clickable ? `style="cursor:pointer" onclick="openStock('${q.symbol}','${esc(q.name)}')" title="点击查看K线"` : ""}>
+          <div class="head"><div class="name">${esc(q.name)}${clickable ? ' <span class="muted" style="font-size:10px">K线 ›</span>' : ""}</div><span class="flag">${esc(q.country)}</span></div>
           <div class="price ${cls(q.pct)}">${fmt(q.price)}</div>
           <div class="chg ${cls(q.pct)}">${sign(q.change)}${fmt(q.change)}&nbsp;&nbsp;${pct(q.pct)}</div>
-          <div class="row2"><span>${esc(q.desc)}</span></div>
-        </div>`).join("")}</div>`).join("");
+          <div class="row2"><span>${esc(q.desc)}</span>${clickable ? "" : '<span class="muted">暂不支持K线</span>'}</div>
+        </div>`;
+      }).join("")}</div>`).join("");
   } catch (err) { box.innerHTML = '<div class="empty">加载失败</div>'; console.warn(err); }
 }
+
+window.openEtfDetail = async (code, name) => {
+  const box = $("#etfDetail");
+  box.style.display = "";
+  $("#etfDetailTitle").textContent = `${name}（${code}）近似持仓`;
+  $("#etfKlineBtn").onclick = () => openStock(code, name);
+  $("#etfHoldings").innerHTML = '<div class="empty">加载中…</div>';
+  try {
+    const d = await api(`/api/etf/holdings?code=${code}`);
+    $("#etfDetailNote").textContent = d.note || "";
+    $("#etfHoldings").innerHTML = d.holdings.length ? `<table><thead><tr>
+      <th>#</th><th>持仓个股</th><th>所属板块</th><th>近似权重</th><th>现价</th><th>涨跌幅</th>
+      <th>购买指数</th><th>情绪</th><th>暗盘力量</th><th>提示</th>
+    </tr></thead><tbody>${d.holdings.map((r, i) => `
+      <tr onclick="openStock('${r.code}','${esc(r.name)}')">
+        <td>${i + 1}</td>
+        <td>${esc(r.name)} <span class="muted">${r.code}</span></td>
+        <td>${esc(r.industry || "-")}</td>
+        <td class="num"><b>${fmt(r.weight)}%</b></td>
+        <td class="num ${cls(r.pct)}">${fmt(r.price)}</td>
+        <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
+        <td class="num">${r.buy_index !== null ? `<b>${fmt(r.buy_index, 0)}</b> <span class="muted">${esc(r.buy_level || "")}</span>` : "-"}</td>
+        <td>${r.sent_level ? esc(r.sent_level) : "-"}</td>
+        <td class="num">${fmt(r.dark_power, 0)}</td>
+        <td><span class="badge ${r.advice === "增持" ? "advice-buy" : r.advice === "减持" ? "advice-sell" : "advice-hold"}" style="font-size:11px;padding:2px 7px">${esc(r.advice)}</span></td>
+      </tr>`).join("")}</tbody></table>` : `<div class="empty">${esc(d.note || "暂无持仓数据")}</div>`;
+    box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  } catch (err) { $("#etfHoldings").innerHTML = '<div class="empty">加载失败</div>'; }
+};
 
 /* ---------------- 个股推荐 ---------------- */
 let recommendBoard = "composite";
@@ -1111,12 +1264,13 @@ async function loadRecommend() {
       </div>` : "";
     const isStab = recommendBoard === "stabilize";
     box.innerHTML = d.items.length ? statsHtml + `<table><thead><tr>
-      <th>#</th><th>名称</th><th>最新价</th><th>涨跌幅</th><th>${esc(d.items[0].metric_name)}</th>
+      <th>#</th><th>名称</th><th>所属板块</th><th>现价</th><th>涨跌幅</th><th>${esc(d.items[0].metric_name)}</th>
       ${isStab ? "<th>闸门</th><th>星级</th>" : ""}<th>购买指数</th><th>情绪</th>
       <th>量能</th><th>评分</th><th>提示</th><th>入选理由</th>
     </tr></thead><tbody>${d.items.map((r, i) => `
       <tr class="${scoreRowClass(r.score)}" onclick="openStock('${r.code}','${esc(r.name)}')">
         <td>${(d.page - 1) * d.page_size + i + 1}</td><td>${esc(r.name)} <span class="muted">${r.code}</span></td>
+        <td>${esc(r.industry || "-")}</td>
         <td class="num ${cls(r.pct)}">${fmt(r.price)}</td>
         <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
         <td class="num">${fmt(r.metric_value)}</td>
@@ -1189,6 +1343,21 @@ async function loadMetricsState() {
       ${m.running ? `<div class="progress"><div class="p" style="width:${m.total ? m.progress / m.total * 100 : 30}%"></div></div>` : ""}`;
   } catch (err) { console.warn(err); }
 }
+
+window.verifyKline = async () => {
+  $("#verifyResult").innerHTML = '<div class="muted">校验中…</div>';
+  try {
+    const d = await api("/api/system/verify-kline");
+    $("#verifyResult").innerHTML = `
+      <div class="kv"><span class="k">总体结果</span>
+        <span class="${d.passed ? "down" : "up"}">${d.passed ? "✅ 通过（日K末根与实时价一致）" : "⚠️ 存在偏差"}</span></div>
+      ${d.report.map((r) => `<div class="kv">
+        <span class="k">${esc(r.name || r.code)}</span>
+        <span>${r.ok !== undefined && r.kline_close !== undefined
+          ? `K线收 ${fmt(r.kline_close)} vs 实时 ${fmt(r.realtime)} · 偏差 ${fmt(r.diff_pct, 3)}% ${r.ok ? "✅" : "❌"}`
+          : esc(r.msg || "")}</span></div>`).join("")}`;
+  } catch (err) { $("#verifyResult").innerHTML = '<div class="empty">校验失败</div>'; }
+};
 
 window.rebuildMetrics = async () => {
   await post("/api/system/rebuild-metrics");

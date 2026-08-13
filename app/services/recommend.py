@@ -13,12 +13,14 @@ BOARDS = {
     "stabilize": "企稳待涨",
     "composite": "综合推荐",
     "hot_turnover": "活跃成交",
+    "sector_leader": "板块最强股",
 }
 
 _BASE_FILTER = "s.price IS NOT NULL AND s.pct IS NOT NULL AND s.name NOT LIKE '%ST%' AND s.name NOT LIKE '%退%'"
-_SELECT = ("SELECT s.*, m.buy_index, m.sentiment AS senti, m.dark_power, m.stabilize_score, "
+_SELECT = ("SELECT s.*, l.industry, m.buy_index, m.sentiment AS senti, m.dark_power, m.stabilize_score, "
            "m.stab_g1, m.stab_g2, m.stab_g3, m.stab_g4, m.divergence "
-           "FROM stock_snapshot s LEFT JOIN stock_metrics m ON m.code = s.code ")
+           "FROM stock_snapshot s LEFT JOIN stock_list l ON l.code = s.code "
+           "LEFT JOIN stock_metrics m ON m.code = s.code ")
 
 
 def _rows(sql: str, params: tuple = (), limit: int = 50) -> list[dict]:
@@ -119,6 +121,18 @@ def _build(board: str, limit: int) -> list[dict]:
             "ORDER BY s.amount DESC", limit=limit)
         metric = ("成交额(亿)", lambda r: _yi(r["amount"]))
         reason = lambda r: f"成交额 {_yi(r['amount'])} 亿，市场焦点股"
+    elif board == "sector_leader":
+        # 板块最强股（FR5-05-2）：每个申万一级行业当日最强个股
+        rows = _rows(
+            f"""{_SELECT}
+                WHERE {_BASE_FILTER} AND l.industry != '' AND s.pct = (
+                    SELECT MAX(s2.pct) FROM stock_snapshot s2
+                    JOIN stock_list l2 ON l2.code = s2.code
+                    WHERE l2.industry = l.industry AND s2.pct IS NOT NULL
+                      AND s2.name NOT LIKE '%ST%' AND s2.name NOT LIKE '%退%')
+                ORDER BY s.pct DESC""", limit=40)
+        metric = ("板块平均涨跌%", lambda r: _industry_avg_pct(r["industry"]))
+        reason = lambda r: f"「{r['industry']}」板块当日最强，涨幅 {r['pct']}%"
     else:  # composite
         rows = _rows(
             f"""{_SELECT} WHERE {_BASE_FILTER}
@@ -145,6 +159,7 @@ def _build(board: str, limit: int) -> list[dict]:
             "buy_index": r.get("buy_index"),
             "sentiment": r.get("senti"),
             "dark_power": r.get("dark_power"),
+            "industry": r.get("industry") or "",
             "reason": _rich_reason(reason(r), r),
         }
         if r.get("senti") is not None:
@@ -159,6 +174,19 @@ def _build(board: str, limit: int) -> list[dict]:
 
 def _yi(wan: float | None) -> float | None:
     return round(wan / 10000, 2) if wan is not None else None
+
+
+_industry_pct_cache: dict = {}
+
+
+def _industry_avg_pct(industry: str) -> float | None:
+    if industry not in _industry_pct_cache:
+        rows = query(
+            "SELECT ROUND(AVG(s.pct), 2) AS p FROM stock_snapshot s "
+            "JOIN stock_list l ON l.code = s.code WHERE l.industry = ?", (industry,))
+        _industry_pct_cache.clear() if len(_industry_pct_cache) > 100 else None
+        _industry_pct_cache[industry] = rows[0]["p"] if rows else None
+    return _industry_pct_cache[industry]
 
 
 def _rich_reason(core: str, r: dict) -> str:

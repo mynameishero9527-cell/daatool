@@ -8,6 +8,7 @@ SOURCE = "腾讯财经"
 _QT_URL = "https://qt.gtimg.cn/q={codes}"
 _KLINE_URL = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={code},{period},,,{count},qfq"
 _MINUTE_URL = "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/minute/query?code={code}"
+_M5_URL = "https://ifzq.gtimg.cn/appstock/app/kline/mkline?param={code},m5,,{count}"
 _RANK_URL = (
     "https://proxy.finance.qq.com/cgi/cgi-bin/rank/hs/getBoardRankList"
     "?board_code=aStock&sort_type={sort}&direct={direct}&offset={offset}&count={count}"
@@ -80,6 +81,20 @@ def fetch_kline(code: str, period: str = "day", count: int = 320) -> list[list]:
     for r in rows:
         if len(r) >= 6:
             out.append([r[0], float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5])])
+    return out
+
+
+def fetch_m5_kline(code: str, count: int = 240) -> list[list]:
+    """5分钟K线（近5个交易日约240根）。返回 [[hhmm标签, open, close, high, low, volume],...]"""
+    resp = tracked_get(SOURCE, _M5_URL.format(code=code, count=count))
+    data = resp.json()
+    rows = data.get("data", {}).get(code, {}).get("m5") or []
+    out = []
+    for r in rows:
+        if len(r) >= 6:
+            ts = str(r[0])  # 202608130935
+            label = f"{ts[4:6]}-{ts[6:8]} {ts[8:10]}:{ts[10:12]}" if len(ts) >= 12 else ts
+            out.append([label, float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5])])
     return out
 
 

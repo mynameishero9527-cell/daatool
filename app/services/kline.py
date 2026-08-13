@@ -5,7 +5,7 @@ from ..database import executemany, query
 from ..datasources import offline, tencent
 from ..datasources.base import with_failover
 
-PERIODS = {"day": "日K", "week": "周K", "month": "月K"}
+PERIODS = {"day": "日K", "week": "周K", "month": "月K", "5day": "5日"}
 
 
 def _persist_day(code: str, rows: list[list]) -> None:
@@ -29,9 +29,12 @@ def get_kline(code: str, period: str = "day", count: int = 320) -> dict:
 
     def loader():
         try:
-            rows = with_failover([
-                ("腾讯财经", lambda: tencent.fetch_kline(code, period, count)),
-            ], context=f"kline {code}")
+            if period == "5day":
+                rows = tencent.fetch_m5_kline(code, 240)
+            else:
+                rows = with_failover([
+                    ("腾讯财经", lambda: tencent.fetch_kline(code, period, count)),
+                ], context=f"kline {code}")
             if rows and period == "day":
                 _persist_day(code, rows)
             if rows:

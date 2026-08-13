@@ -149,6 +149,21 @@ def commodities_kline(symbol: str, period: str = "day"):
     return commodity.get_kline(symbol, period)
 
 
+@router.get("/commodities/related")
+def commodities_related(symbol: str, page: int = 1, page_size: int = Query(20, le=50)):
+    return commodity.get_related_stocks(symbol, page, page_size)
+
+
+@router.get("/etf/holdings")
+def etf_holdings(code: str, limit: int = Query(20, le=50)):
+    return global_index.get_etf_holdings(code, limit)
+
+
+@router.get("/macro/event-detail")
+def macro_event_detail(title: str):
+    return macro.get_event_detail(title)
+
+
 @router.post("/commodities/watch")
 def commodities_watch(symbol: str):
     return commodity.toggle_watch(symbol)
@@ -311,6 +326,32 @@ def system_rebuild_metrics(include_kline: bool = True):
 @router.get("/system/metrics-state")
 def system_metrics_state():
     return metrics_svc.state()
+
+
+@router.get("/system/verify-kline")
+def system_verify_kline():
+    """数据校验（FR5-03-2）：比对日K末根与实时行情。"""
+    report = []
+    codes = ["sh600519", "sz300432", "sh000001"]
+    quotes = market.get_quotes(codes)
+    for code in codes:
+        try:
+            k = kline.get_kline(code, "day", 5)
+            q = quotes.get(code) or {}
+            if not k["dates"] or q.get("price") is None:
+                report.append({"code": code, "ok": False, "msg": "数据不足"})
+                continue
+            last_close = k["kline"][-1][1]
+            diff = abs(last_close - q["price"]) / q["price"] * 100
+            report.append({
+                "code": code, "name": q.get("name"), "ok": diff < 0.5,
+                "kline_date": k["dates"][-1], "kline_close": last_close,
+                "realtime": q["price"], "diff_pct": round(diff, 3),
+                "kline_high": k["kline"][-1][2], "quote_high": q.get("high"),
+            })
+        except Exception as exc:  # noqa: BLE001
+            report.append({"code": code, "ok": False, "msg": str(exc)[:100]})
+    return {"report": report, "passed": all(r.get("ok") for r in report)}
 
 
 @router.post("/system/source-toggle")

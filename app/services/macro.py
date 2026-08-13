@@ -66,10 +66,22 @@ def assess_impact(text: str) -> dict:
             break
     is_policy = any(w in text for w in ("政策", "央行", "国务院", "证监会", "发改委", "财政部",
                                         "监管", "新规", "美联储", "关税", "降准", "降息", "加息"))
+    # 关注度评分（FR5-01-2）：等级50% + 方向强度20% + 板块覆盖15% + 政策属性15%
+    score = round(min(100.0,
+                      level * 10  # 10-50
+                      + min(abs(bull - bear), 4) * 5
+                      + min(len(sectors), 3) * 5
+                      + (15 if is_policy else 0) + 20), 0)
+    category = "政策" if is_policy else "快讯"
+    brief = (f"该消息属{category}类，影响程度{_LEVEL_DESC[level]}（关注度 {score:.0f}），"
+             f"方向{direction}"
+             + (f"，或将波及 {'、'.join(sectors[:4])} 等板块" if sectors else "，暂未识别到明确受影响板块")
+             + "。")
     return {
         "impact_level": level, "impact_desc": _LEVEL_DESC[level],
         "impact_direction": direction, "affected_sectors": sectors,
         "region": region, "is_policy": is_policy,
+        "score": score, "brief": brief,
     }
 
 
@@ -108,10 +120,7 @@ def _news_from_db(limit: int) -> list[dict]:
         (limit,))
     return [{
         "id": r["event_id"], "text": r["summary"], "time": r["event_time"],
-        "impact_level": r["impact_level"], "impact_desc": _LEVEL_DESC.get(r["impact_level"], "轻微"),
-        "impact_direction": r["impact_direction"],
-        "affected_sectors": json.loads(r["affected_sectors"] or "[]"),
-        "region": r["region"], "is_policy": r["category"] == "政策",
+        **assess_impact(r["summary"] or ""),
         "source": "本地数据库", "offline": True, "tags": [],
     } for r in rows]
 
@@ -262,6 +271,99 @@ def get_outlook(horizon: str = "week") -> dict:
         "summary": summary, "total": len(events), "critical": len(critical),
         "focus_sectors": sectors[:5],
         "groups": [{"name": k, "events": v} for k, v in groups.items()],
+    }
+
+
+# ---------------- 预期事件详情（FR5-02） ----------------
+
+# 事件关键词 → (利好板块, 利空板块, 利好基准概率%)
+_EVENT_IMPACT_MAP: list[tuple[tuple, list[str], list[str], int]] = [
+    (("LPR", "降息", "降准", "MLF"), ["券商", "银行", "房地产", "贵金属"], ["无明显利空"], 60),
+    (("FOMC", "议息", "美联储"), ["贵金属", "黄金"], ["半导体", "人工智能", "科技成长"], 48),
+    (("CPI", "PPI",), ["食品饮料", "农林牧渔", "大消费"], ["高估值成长"], 50),
+    (("PMI",), ["基建", "钢铁", "机械设备"], ["无明显利空"], 52),
+    (("非农",), ["出口链"], ["贵金属", "黄金"], 48),
+    (("两会", "政治局", "经济工作会议"), ["基建", "大消费", "券商", "科技自主"], ["无明显利空"], 62),
+    (("财报", "业绩", "年报", "季报"), ["绩优白马", "食品饮料"], ["业绩暴雷高风险股"], 50),
+    (("OPEC", "原油", "产量"), ["石油石化", "油气开采"], ["航空", "物流"], 55),
+    (("社零", "工业增加值"), ["大消费", "家用电器"], ["无明显利空"], 52),
+]
+
+# 板块词 → 本地可查询的（概念候选, 行业候选）
+_SECTOR_LOOKUP: dict[str, tuple[str, str]] = {
+    "券商": ("证券", "非银金融"), "银行": ("银行", "银行"), "房地产": ("房地产", "房地产"),
+    "贵金属": ("黄金", "有色金属"), "黄金": ("黄金", "有色金属"),
+    "半导体": ("半导体", "电子"), "人工智能": ("人工智能", "计算机"),
+    "科技成长": ("人工智能", "计算机"), "科技自主": ("国产替代", "计算机"),
+    "食品饮料": ("食品", "食品饮料"), "农林牧渔": ("农业", "农林牧渔"),
+    "大消费": ("消费", "食品饮料"), "家用电器": ("家电", "家用电器"),
+    "基建": ("基建", "建筑装饰"), "钢铁": ("钢铁", "钢铁"), "机械设备": ("机械", "机械设备"),
+    "出口链": ("跨境电商", "轻工制造"), "石油石化": ("石油", "石油石化"),
+    "油气开采": ("油气", "石油石化"), "航空": ("航空", "交通运输"), "物流": ("物流", "交通运输"),
+    "绩优白马": ("基金重仓", "食品饮料"), "高估值成长": ("人工智能", "计算机"),
+}
+
+
+def _stocks_for_sectors(sectors: list[str], limit: int = 30) -> list[dict]:
+    """由板块词反查本地个股（概念优先、行业兜底），按流通市值排序去重。"""
+    seen, out = set(), []
+    for sec in sectors:
+        concept, industry = _SECTOR_LOOKUP.get(sec, (sec, sec))
+        rows = query(
+            """SELECT s.code, s.name, s.price, s.pct, m.buy_index, s.float_mv
+               FROM stock_snapshot s
+               JOIN concept_map c ON c.code = s.code AND c.concept LIKE ?
+               LEFT JOIN stock_metrics m ON m.code = s.code
+               WHERE s.price IS NOT NULL ORDER BY s.float_mv DESC LIMIT 15""",
+            (f"%{concept}%",))
+        if not rows:
+            rows = query(
+                """SELECT s.code, s.name, s.price, s.pct, m.buy_index, s.float_mv
+                   FROM stock_snapshot s
+                   JOIN stock_list l ON l.code = s.code AND l.industry = ?
+                   LEFT JOIN stock_metrics m ON m.code = s.code
+                   WHERE s.price IS NOT NULL ORDER BY s.float_mv DESC LIMIT 15""",
+                (industry,))
+        for r in rows:
+            if r["code"] not in seen:
+                seen.add(r["code"])
+                r["sector"] = sec
+                out.append(r)
+        if len(out) >= limit:
+            break
+    return out[:max(20, min(limit, 50))]
+
+
+def get_event_detail(title: str) -> dict:
+    """预期事件详情：利好/利空板块、利好概率、相关个股（20-50 只）。"""
+    bull, bear, base_prob = ["指数权重"], ["无明显利空"], 50
+    for keywords, b1, b2, prob in _EVENT_IMPACT_MAP:
+        if any(k in title for k in keywords):
+            bull, bear, base_prob = b1, b2, prob
+            break
+
+    # 周期阶段修正
+    prob = base_prob
+    stage_note = ""
+    try:
+        from . import cycle as cycle_svc
+        stage = cycle_svc.get_cycle().get("stage", "")
+        adj = {"牛市主升": 6, "震荡上行": 3, "底部构筑": 1, "高位震荡": -2,
+               "调整下行": -4, "熊市寻底": -5}.get(stage, 0)
+        prob = max(20, min(80, prob + adj))
+        stage_note = f"当前处于「{stage}」阶段，概率修正 {adj:+d}%"
+    except Exception:  # noqa: BLE001
+        pass
+
+    bull_valid = [s for s in bull if s != "无明显利空"]
+    stocks = _stocks_for_sectors(bull_valid, limit=50)
+    return {
+        "title": title,
+        "bull_sectors": bull, "bear_sectors": bear,
+        "bull_prob": prob,
+        "prob_note": f"类别先验 {base_prob}%；{stage_note}" if stage_note else f"类别先验 {base_prob}%",
+        "stocks": stocks,
+        "disclaimer": "板块映射与概率为规则化预估，仅供参考，不构成投资建议",
     }
 
 

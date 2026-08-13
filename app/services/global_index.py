@@ -87,6 +87,84 @@ def get_global() -> dict:
     return {"regions": regions, "offline": fetched["offline"]}
 
 
+# ETF → 持仓推算规则：("mv_top",None) 全市场市值前N / ("mv_range",(a,b)) 市值排名区间
+#                      / ("board",板块) / ("sector",(概念,行业)) / None=QDII无A股持仓
+_ETF_HOLDING_RULES: dict[str, tuple | None] = {
+    "sh510300": ("mv_top", None),
+    "sh510500": ("mv_range", (300, 500)),
+    "sh588000": ("board", "科创板"),
+    "sz159915": ("board", "创业板"),
+    "sh512880": ("sector", ("证券", "非银金融")),
+    "sh512480": ("sector", ("半导体", "电子")),
+    "sh512010": ("sector", ("创新药", "医药生物")),
+    "sh515030": ("sector", ("新能源车", "电力设备")),
+    "sh512660": ("sector", ("军工", "国防军工")),
+    "sh512690": ("sector", ("白酒", "食品饮料")),
+    "sh513100": None,
+    "sh513180": None,
+    "sh518880": ("sector", ("黄金", "有色金属")),
+    "sz159985": ("sector", ("豆粕", "农林牧渔")),
+}
+
+_HOLDING_SELECT = """
+    SELECT s.code, s.name, s.price, s.pct, s.float_mv, l.industry,
+           m.buy_index, m.sentiment, m.dark_power
+    FROM stock_snapshot s
+    JOIN stock_list l ON l.code = s.code
+    LEFT JOIN stock_metrics m ON m.code = s.code
+    WHERE s.price IS NOT NULL AND s.float_mv IS NOT NULL
+      AND s.name NOT LIKE '%ST%' """
+
+
+def get_etf_holdings(code: str, limit: int = 20) -> dict:
+    """ETF 近似持仓（FR5-06-3）：按跟踪标的从本地数据推算权重，附指标列。"""
+    from . import metrics as metrics_svc
+    from . import rating as rating_svc
+
+    rule = _ETF_HOLDING_RULES.get(code, ("mv_top", None))
+    track = next((t for c, _cat, t in ETF_CATALOG if c == code), "")
+    if rule is None:
+        return {"code": code, "track": track, "holdings": [],
+                "note": "QDII 跨境 ETF，持仓为境外资产，无A股持仓数据"}
+
+    kind, arg = rule
+    if kind == "mv_top":
+        rows = query(_HOLDING_SELECT + "ORDER BY s.float_mv DESC LIMIT ?", (limit,))
+    elif kind == "mv_range":
+        lo, hi = arg
+        rows = query(_HOLDING_SELECT + "ORDER BY s.float_mv DESC LIMIT ? OFFSET ?",
+                     (limit, lo))
+    elif kind == "board":
+        rows = query(_HOLDING_SELECT + "AND l.board = ? ORDER BY s.float_mv DESC LIMIT ?",
+                     (arg, limit))
+    else:  # sector
+        concept, industry = arg
+        rows = query(
+            _HOLDING_SELECT + """AND (l.industry = ? OR s.code IN
+                (SELECT code FROM concept_map WHERE concept LIKE ?))
+                ORDER BY s.float_mv DESC LIMIT ?""",
+            (industry, f"%{concept}%", limit))
+
+    total_mv = sum(r["float_mv"] or 0 for r in rows) or 1
+    for r in rows:
+        r["weight"] = round((r["float_mv"] or 0) / total_mv * 100, 2)
+        if r["sentiment"] is not None:
+            r["sent_level"] = metrics_svc.sentiment_level(r["sentiment"])[0]
+        if r["buy_index"] is not None:
+            r["buy_level"] = metrics_svc.buy_index_level(r["buy_index"])[0]
+        score = _quick_grade(r)
+        r["advice"] = score
+    return {"code": code, "track": track, "holdings": rows,
+            "note": "近似持仓：按跟踪标的从本地市值/板块数据推算，非基金实际披露持仓"}
+
+
+def _quick_grade(r: dict) -> str:
+    bi = r.get("buy_index")
+    if bi is None:
+        return "-"
+    return "增持" if bi >= 70 else "减持" if bi <= 35 else "保持不变"
+
+
 def get_etfs() -> list[dict]:
     codes = [c for c, *_ in ETF_CATALOG]
     quotes = market.get_quotes(codes)
