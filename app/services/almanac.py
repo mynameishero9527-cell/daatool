@@ -145,6 +145,23 @@ def _day_summary(d: date) -> dict:
             "caishen": CAISHEN[dgz[0]]}
 
 
+# 建除十二神（黄道/黑道）：寅月青龙起子，每月顺移两位
+_SHEN = ["青龙", "明堂", "天刑", "朱雀", "金匮", "天德", "白虎", "玉堂", "天牢", "玄武", "司命", "勾陈"]
+_HUANGDAO = {"青龙", "明堂", "金匮", "天德", "玉堂", "司命"}
+
+
+def huangdao_of(d: date) -> dict:
+    mgz = month_ganzhi(d)
+    dgz = day_ganzhi(d)
+    month_zhi = ZHI.index(mgz[1])
+    day_zhi = ZHI.index(dgz[1])
+    start = ((month_zhi - 2) % 12) * 2 % 12  # 寅月(2)起子(0)
+    shen = _SHEN[(day_zhi - start) % 12]
+    is_huang = shen in _HUANGDAO
+    return {"shen": shen, "is_huangdao": is_huang,
+            "text": f"{shen}（{'黄道吉日' if is_huang else '黑道日'}）"}
+
+
 def get_almanac(d: date | None = None) -> dict:
     d = d or date.today()
     ygz, zodiac = year_ganzhi(d)
@@ -167,6 +184,7 @@ def get_almanac(d: date | None = None) -> dict:
         "wangxiang": wx,
         "wangxiang_text": f"{season}季：{wx['旺']}旺、{wx['相']}相、{wx['休']}休、{wx['囚']}囚、{wx['死']}死",
         "jiugong": [list(row) for row in JIUGONG],
+        "huangdao": huangdao_of(d),
         "tomorrow": _day_summary(d + timedelta(days=1)),
         "note": "干支按1949-10-01甲子日推算；节气/农历为通用近似日期；方位五行为民俗文化参考",
     }

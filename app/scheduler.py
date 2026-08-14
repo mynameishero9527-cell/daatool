@@ -87,6 +87,65 @@ def _job_metrics_recompute():
     metrics_svc.compute_all_metrics()
 
 
+from .database import get_meta_json, set_meta_json
+
+# 间隔型任务（可调频率，分钟）
+INTERVAL_JOBS = {"medium": 1, "news": 1, "snapshot": 5, "metrics_recompute": 10, "alerts": 10}
+ALLOWED_MINUTES = [1, 5, 10, 15, 30, 60, 120, 180]
+
+
+def _apply_overrides(sched) -> None:
+    overrides = get_meta_json("job_overrides", {}) or {}
+    for job_id, cfg in overrides.items():
+        job = sched.get_job(job_id)
+        if not job:
+            continue
+        minutes = cfg.get("minutes")
+        if minutes in ALLOWED_MINUTES and job_id in INTERVAL_JOBS:
+            job.reschedule("interval", minutes=minutes)
+        if cfg.get("paused"):
+            job.pause()
+
+
+def toggle_job(job_id: str) -> dict:
+    if not _scheduler:
+        return {"ok": False, "error": "调度器未启动"}
+    job = _scheduler.get_job(job_id)
+    if not job:
+        return {"ok": False, "error": "未知任务"}
+    overrides = get_meta_json("job_overrides", {}) or {}
+    cfg = overrides.get(job_id, {})
+    if job.next_run_time is None:
+        job.resume()
+        cfg["paused"] = False
+    else:
+        job.pause()
+        cfg["paused"] = True
+    overrides[job_id] = cfg
+    set_meta_json("job_overrides", overrides)
+    return {"ok": True, "paused": cfg["paused"]}
+
+
+def set_job_interval(job_id: str, minutes: int) -> dict:
+    if not _scheduler:
+        return {"ok": False, "error": "调度器未启动"}
+    if job_id not in INTERVAL_JOBS:
+        return {"ok": False, "error": "该任务不支持调整频率（定点任务）"}
+    if minutes not in ALLOWED_MINUTES:
+        return {"ok": False, "error": "频率仅支持 1/5/10/15/30/60/120/180 分钟"}
+    job = _scheduler.get_job(job_id)
+    if not job:
+        return {"ok": False, "error": "未知任务"}
+    was_paused = job.next_run_time is None
+    job.reschedule("interval", minutes=minutes)
+    if was_paused:
+        job.pause()
+    overrides = get_meta_json("job_overrides", {}) or {}
+    overrides.setdefault(job_id, {})["minutes"] = minutes
+    set_meta_json("job_overrides", overrides)
+    return {"ok": True, "minutes": minutes}
+
+
 def start() -> None:
     global _scheduler
     if _scheduler:
@@ -113,6 +172,7 @@ def start() -> None:
     sched.add_job(_run("每日维护", _job_daily_maintain), "cron", hour=2, minute=0, id="maintain")
     sched.start()
     _scheduler = sched
+    _apply_overrides(sched)
     log.info("调度器已启动，共 %d 个任务", len(sched.get_jobs()))
 
 
@@ -127,9 +187,14 @@ def status() -> list[dict]:
                     "metrics_recompute": "盘中指标轻量重算",
                     "alerts": "智能提醒扫描(10分钟)"}.get(job.id, job.id)
             st = JOB_STATUS.get(name, {})
+            overrides = get_meta_json("job_overrides", {}) or {}
+            minutes = (overrides.get(job.id, {}) or {}).get("minutes") or INTERVAL_JOBS.get(job.id)
             jobs.append({
                 "id": job.id, "name": name,
-                "next_run": job.next_run_time.strftime("%m-%d %H:%M:%S") if job.next_run_time else "-",
+                "next_run": job.next_run_time.strftime("%m-%d %H:%M:%S") if job.next_run_time else "已暂停",
+                "paused": job.next_run_time is None,
+                "interval_minutes": minutes,
+                "adjustable": job.id in INTERVAL_JOBS,
                 "last_run": st.get("last_run", "-"), "ok": st.get("ok"), "error": st.get("error", ""),
             })
     return jobs

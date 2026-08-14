@@ -15,16 +15,17 @@
     <button class="tab" data-tab="stock">个股分析</button>
     <button class="tab" data-tab="screener">个股筛选</button>
     <button class="tab" data-tab="sector">板块资金</button>
+    <button class="tab" data-tab="ranks">榜单</button>
     <button class="tab" data-tab="macro">宏观情报</button>
     <button class="tab" data-tab="commodity">大宗商品</button>
     <button class="tab" data-tab="global">全球指数</button>
     <button class="tab" data-tab="recommend">个股推荐</button>
-    <button class="tab" data-tab="announce">公司公告</button>
-    <button class="tab" data-tab="knowledge">股票常识</button>
+    <button class="tab" data-tab="aipick">AI选股</button>
     <button class="tab" data-tab="ai">AI分析</button>
     <button class="tab" data-tab="settings">设置</button>
   </nav>
   <div class="statusbar">
+    <span id="topAlmanac" class="top-almanac" title="加载中…">📅</span>
     <span class="dot" id="healthDot"></span>
     <span id="lastRefresh">-</span>
   </div>
@@ -34,57 +35,69 @@
   <!-- 行情看板 -->
   <section class="page active" id="page-dashboard">
     <div class="index-strip" id="indexStrip"></div>
-    <div class="grid-2" style="grid-template-columns: 1.5fr 1fr">
+    <div class="btn-group sub-tabs" id="dashTabs">
+      <button class="opt active" data-view="market">大盘行情</button>
+      <button class="opt" data-view="watch">自选</button>
+    </div>
+
+    <!-- 大盘行情视图 -->
+    <div id="dashMarket">
+      <div class="grid-3">
+        <div class="card">
+          <div class="card-title">市场统计 <span class="muted" id="statsTime"></span></div>
+          <div id="marketStats" class="stats-row"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">市场情绪与大周期</div>
+          <div id="marketSentiment"><div class="empty">计算中…</div></div>
+          <div id="marketCycle"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">明日预测概率 <span class="muted">启发式估计</span></div>
+          <div id="forecastBox"><div class="empty">计算中…</div></div>
+        </div>
+      </div>
+      <div class="grid-2" style="grid-template-columns: 1.5fr 1fr">
+        <div class="card">
+          <div class="card-title"><span id="miniMinuteName">上证指数</span> · 实时分时 <span class="muted" id="miniMinuteTime"></span>
+            <span class="btn-group" id="miniIndexBtns">
+              <button class="opt active" data-code="sh000001" data-name="上证指数">上证</button>
+              <button class="opt" data-code="sz399001" data-name="深证成指">深成</button>
+              <button class="opt" data-code="sz399006" data-name="创业板指">创业板</button>
+              <button class="opt" data-code="sh000688" data-name="科创50">科创50</button>
+              <button class="opt" data-code="sh000300" data-name="沪深300">沪深300</button>
+            </span>
+          </div>
+          <div id="miniMinute" style="height:190px"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">领涨 / 领跌 <span class="muted">各20条</span></div>
+          <div class="grid-2 movers movers-scroll" id="movers"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 自选视图 -->
+    <div id="dashWatch" style="display:none">
+      <div class="grid-2" style="grid-template-columns: 1.6fr 1fr">
+        <div class="card">
+          <div class="card-title">智能提醒 <span class="muted">每10分钟轮动刷新买卖点 · 量化参考不构成投资建议</span></div>
+          <div id="alertFeed" class="alert-feed"><div class="empty">暂无提醒</div></div>
+        </div>
+        <div class="card">
+          <div class="card-title">今日黄历 · 九宫方位 <span class="muted">民俗文化参考</span></div>
+          <div id="dashAlmanac"><div class="empty">加载中…</div></div>
+        </div>
+      </div>
       <div class="card">
-        <div class="card-title"><span id="miniMinuteName">上证指数</span> · 实时分时 <span class="muted" id="miniMinuteTime"></span>
-          <span class="btn-group" id="miniIndexBtns">
-            <button class="opt active" data-code="sh000001" data-name="上证指数">上证</button>
-            <button class="opt" data-code="sz399001" data-name="深证成指">深成</button>
-            <button class="opt" data-code="sz399006" data-name="创业板指">创业板</button>
-            <button class="opt" data-code="sh000688" data-name="科创50">科创50</button>
-            <button class="opt" data-code="sh000300" data-name="沪深300">沪深300</button>
+        <div class="card-title">自选股
+          <span class="inline-form">
+            <input id="watchInput" placeholder="输入代码，如 300432" maxlength="8">
+            <button class="btn" onclick="addWatch()">添加</button>
           </span>
         </div>
-        <div id="miniMinute" style="height:190px"></div>
+        <div id="watchTable"></div>
       </div>
-      <div class="card">
-        <div class="card-title">明日预测概率 <span class="muted">启发式估计</span></div>
-        <div id="forecastBox"><div class="empty">计算中…</div></div>
-      </div>
-    </div>
-    <div class="grid-3">
-      <div class="card">
-        <div class="card-title">市场统计 <span class="muted" id="statsTime"></span></div>
-        <div id="marketStats" class="stats-row"></div>
-      </div>
-      <div class="card">
-        <div class="card-title">市场情绪与大周期</div>
-        <div id="marketSentiment"><div class="empty">计算中…</div></div>
-        <div id="marketCycle"></div>
-      </div>
-      <div class="card">
-        <div class="card-title">领涨 / 领跌 <span class="muted">各20条</span></div>
-        <div class="grid-2 movers movers-scroll" id="movers"></div>
-      </div>
-    </div>
-    <div class="grid-2" style="grid-template-columns: 1.6fr 1fr">
-      <div class="card">
-        <div class="card-title">智能提醒 <span class="muted">每10分钟轮动刷新买卖点 · 量化参考不构成投资建议</span></div>
-        <div id="alertFeed" class="alert-feed"><div class="empty">暂无提醒</div></div>
-      </div>
-      <div class="card">
-        <div class="card-title">今日黄历 · 九宫方位 <span class="muted">民俗文化参考</span></div>
-        <div id="dashAlmanac"><div class="empty">加载中…</div></div>
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-title">自选股
-        <span class="inline-form">
-          <input id="watchInput" placeholder="输入代码，如 300432" maxlength="8">
-          <button class="btn" onclick="addWatch()">添加</button>
-        </span>
-      </div>
-      <div id="watchTable"></div>
     </div>
   </section>
 
@@ -126,6 +139,11 @@
           <button class="btn" onclick="savePlan()">保存方案</button>
         </span>
       </div>
+      <div class="semantic-rule" id="screenerSentence">未设置条件（全市场按购买指数排序）</div>
+      <div class="inline-form" style="width:100%;margin:8px 0 12px">
+        <input id="screenerSemantic" placeholder="用一句话描述，如：低估值放量的银行股 / 创业板主力净流入" style="flex:1">
+        <button class="btn" onclick="parseScreenerSemantic()">语义解析</button>
+      </div>
       <div id="screenerConditions"><div class="empty">加载中…</div></div>
     </div>
     <div class="card">
@@ -147,26 +165,38 @@
 
   <!-- 板块资金 -->
   <section class="page" id="page-sector">
-    <div class="card">
-      <div class="card-title">板块资金全景 <span class="muted" id="sectorTime"></span>
-        <span class="btn-group">
-          <span id="sectorDim">
-            <button class="opt active" data-dim="industry">行业板块</button>
-            <button class="opt" data-dim="concept">题材概念</button>
-          </span>
-          <span id="sectorView" style="margin-left:10px">
-            <button class="opt active" data-view="map">热力图</button>
-            <button class="opt" data-view="list">列表</button>
-          </span>
-        </span>
-      </div>
-      <div class="muted" style="margin-bottom:8px">方块大小 = 成交额；颜色 = 主力净流入（红入绿出）。点击方块查看成分股。</div>
-      <div id="sectorMap" class="chart-lg"></div>
-      <div id="sectorList" style="display:none"></div>
+    <div class="btn-group sub-tabs" id="sectorPageTabs">
+      <button class="opt active" data-page="flow">资金全景</button>
+      <button class="opt" data-page="recommend">板块推荐</button>
     </div>
-    <div class="card" id="sectorDrill" style="display:none">
-      <div class="card-title" id="sectorDrillTitle">成分股</div>
-      <div id="sectorDrillTable"></div>
+    <div id="sectorFlowView">
+      <div class="card">
+        <div class="card-title">板块资金全景 <span class="muted" id="sectorTime"></span>
+          <span class="btn-group">
+            <span id="sectorDim">
+              <button class="opt active" data-dim="industry">行业板块</button>
+              <button class="opt" data-dim="concept">题材概念</button>
+            </span>
+            <span id="sectorView" style="margin-left:10px">
+              <button class="opt active" data-view="map">热力图</button>
+              <button class="opt" data-view="list">列表</button>
+            </span>
+          </span>
+        </div>
+        <div class="muted" style="margin-bottom:8px">方块大小 = 成交额；颜色 = 主力净流入（红入绿出）。点击方块查看成分股。</div>
+        <div id="sectorMap" class="chart-lg"></div>
+        <div id="sectorList" style="display:none"></div>
+      </div>
+      <div class="card" id="sectorDrill" style="display:none">
+        <div class="card-title" id="sectorDrillTitle">成分股</div>
+        <div id="sectorDrillTable"></div>
+      </div>
+    </div>
+    <div id="sectorRecView" style="display:none">
+      <div class="card">
+        <div class="card-title">强势板块推荐 <span class="muted">资金+动量评分 TOP10，每板块推荐个股 TOP5</span></div>
+        <div id="sectorRecBox"><div class="empty">加载中…</div></div>
+      </div>
     </div>
   </section>
 
@@ -179,6 +209,8 @@
       <button class="opt" data-sub="sectorEvents">板块事件</button>
       <button class="opt" data-sub="policy">政策追踪</button>
       <button class="opt" data-sub="major">影响评估</button>
+      <button class="opt" data-sub="announce">公司公告</button>
+      <button class="opt" data-sub="knowledge">股票常识</button>
     </div>
     <div class="card" id="macroContent"><div class="empty">加载中…</div></div>
   </section>
@@ -250,6 +282,20 @@
             <button class="opt" data-v="normal">平稳</button>
             <button class="opt" data-v="shrink">缩量</button>
           </span></span>
+        <span><span class="g-label muted">市值</span>
+          <span class="btn-group" id="recMv">
+            <button class="opt active" data-v="">全部</button>
+            <button class="opt" data-v="small">小盘&lt;100亿</button>
+            <button class="opt" data-v="mid">中盘</button>
+            <button class="opt" data-v="large">大盘&gt;500亿</button>
+          </span></span>
+        <span><span class="g-label muted">换手</span>
+          <span class="btn-group" id="recTurn">
+            <button class="opt active" data-v="">全部</button>
+            <button class="opt" data-v="low">低&lt;3%</button>
+            <button class="opt" data-v="mid">中3-10%</button>
+            <button class="opt" data-v="high">高≥10%</button>
+          </span></span>
         <span><span class="g-label muted">排序</span>
           <span class="btn-group" id="recOrder">
             <button class="opt active" data-v="">榜单指标</button>
@@ -263,29 +309,26 @@
     </div>
   </section>
 
-  <!-- 公司公告 -->
-  <section class="page" id="page-announce">
+  <!-- 榜单 -->
+  <section class="page" id="page-ranks">
+    <div class="btn-group sub-tabs" id="rankTabs"></div>
     <div class="card">
-      <div class="card-title">公司公告
-        <span class="inline-form">
-          <input id="annSearch" placeholder="输入代码/名称过滤，如 300432">
-          <button class="btn" onclick="loadAnnouncements()">查询</button>
-          <button class="btn ghost" onclick="clearAnnSearch()">全部公告</button>
-        </span>
-      </div>
-      <div class="muted" id="annNote" style="margin-bottom:8px"></div>
-      <div id="annRatings"></div>
-      <div id="annList"><div class="empty">加载中…</div></div>
+      <div class="muted" id="rankNote" style="margin-bottom:8px"></div>
+      <div id="rankTable"><div class="empty">加载中…</div></div>
     </div>
   </section>
 
-  <!-- 股票常识 -->
-  <section class="page" id="page-knowledge">
+  <!-- AI 选股 -->
+  <section class="page" id="page-aipick">
     <div class="card">
-      <div class="card-title">股票常识 · 术语与技巧
-        <span class="inline-form"><input id="kbSearch" placeholder="搜索术语，如 量比"></span>
+      <div class="card-title">AI 选股 <span class="muted">自然语言描述 → 语义解析 + 本地库筛选</span></div>
+      <div class="inline-form" style="width:100%;margin-bottom:10px">
+        <input id="aiPickInput" placeholder="如：低估值放量的银行股、华为产业链小市值企稳" style="flex:1">
+        <button class="btn" onclick="runAiPick()">开始选股</button>
       </div>
-      <div id="kbContent"><div class="empty">加载中…</div></div>
+      <div id="aiPickRule" class="semantic-rule" style="display:none"></div>
+      <div id="aiPickComment"></div>
+      <div id="aiPickTable"><div class="empty">输入描述后点击「开始选股」</div></div>
     </div>
   </section>
 
@@ -367,6 +410,18 @@
 <div id="ctxMenu" class="ctx-menu" style="display:none">
   <div class="ctx-item" id="ctxAiItem">🤖 AI 分析该股</div>
   <div class="ctx-item" id="ctxOpenItem">📈 打开个股分析</div>
+  <div class="ctx-item" id="ctxWatchItem">⭐ 加入自选</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-sub">五行标签（可多选）</div>
+  <div class="ctx-wx" id="ctxWx">
+    <label class="wx-check wx-金"><input type="checkbox" value="金"> 金</label>
+    <label class="wx-check wx-木"><input type="checkbox" value="木"> 木</label>
+    <label class="wx-check wx-水"><input type="checkbox" value="水"> 水</label>
+    <label class="wx-check wx-火"><input type="checkbox" value="火"> 火</label>
+    <label class="wx-check wx-土"><input type="checkbox" value="土"> 土</label>
+  </div>
+  <div class="ctx-item" id="ctxWxAi">✨ 发送AI五行分类</div>
+  <div class="ctx-item" id="ctxNewsAi" style="display:none">🤖 发送AI分析（消息）</div>
 </div>
 
 <script src="/static/app.js"></script>

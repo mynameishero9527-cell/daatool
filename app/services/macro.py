@@ -93,6 +93,30 @@ def assess_impact(text: str) -> dict:
     }
 
 
+def get_news_range(days: int = 0, limit: int = 80, policy_only: bool = False) -> list[dict]:
+    """时间范围筛选（FR8-02-1）：days=1 当日 / 3 / 5 / 10 / 0 全部近端。历史来自本地事件库。"""
+    get_news(120)  # 先刷新最新一批入库
+    from datetime import datetime as _dt, timedelta as _td
+    where = "event_id LIKE 'news_%'"
+    params: list = []
+    if days:
+        cutoff = (_dt.now() - _td(days=days)).strftime("%Y-%m-%d 00:00:00")
+        where += " AND event_time >= ?"
+        params.append(cutoff)
+    rows = query(f"SELECT * FROM macro_event WHERE {where} ORDER BY event_time DESC LIMIT ?",
+                 (*params, limit * 3))
+    out = []
+    for r in rows:
+        item = {"id": r["event_id"], "text": r["summary"], "time": r["event_time"],
+                **assess_impact(r["summary"] or ""), "source": "本地事件库", "tags": []}
+        if policy_only and not item["is_policy"]:
+            continue
+        out.append(item)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def get_news(limit: int = 60) -> list[dict]:
     """实时快讯 + 影响评估，成功后落库供离线回看。"""
     def loader():
@@ -229,8 +253,8 @@ def _generate_events(days: int) -> list[dict]:
 
 
 def get_calendar(months: int = 3) -> list[dict]:
-    """未来 1-3 个月重大事件日历（兼容 1.0 接口）。"""
-    return _generate_events(max(1, min(months, 3)) * 31)
+    """未来 1-6 个月重大事件日历。"""
+    return _generate_events(max(1, min(months, 6)) * 31)
 
 
 # ---------------- 多时间跨度展望（FR2-05） ----------------

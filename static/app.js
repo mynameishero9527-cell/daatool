@@ -16,6 +16,9 @@ const cls = (v) => (v > 0 ? "up" : v < 0 ? "down" : "flat");
 const sign = (v) => (v > 0 ? "+" : "");
 const pct = (v) => (v === null || v === undefined) ? "-" : `${sign(v)}${fmt(v)}%`;
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const wxBadges = (tags) => (tags && tags.length)
+  ? tags.map((t) => `<span class="wx-badge wx-${esc(t)}">${esc(t)}</span>`).join("") : "";
+let watchCodes = new Set();
 
 /* ---------------- 主选项卡 ---------------- */
 let activeTab = "dashboard";
@@ -51,6 +54,27 @@ async function loadDashboard() {
   loadForecast();
   loadAlerts();
   loadDashAlmanac();
+  loadTopAlmanac();
+}
+
+$("#dashTabs").addEventListener("click", (e) => {
+  const btn = e.target.closest(".opt");
+  if (!btn) return;
+  $$("#dashTabs .opt").forEach((b) => b.classList.toggle("active", b === btn));
+  $("#dashMarket").style.display = btn.dataset.view === "market" ? "" : "none";
+  $("#dashWatch").style.display = btn.dataset.view === "watch" ? "" : "none";
+});
+
+async function loadTopAlmanac() {
+  try {
+    const a = await api("/api/macro/almanac");
+    const h = a.huangdao || {};
+    const el = $("#topAlmanac");
+    el.textContent = `📅 ${a.day_ganzhi} · ${a.zodiac}年 · ${h.text || ""}`;
+    el.title = `${a.date} ${a.weekday}\n${a.year_ganzhi}【${a.zodiac}年】 ${a.month_ganzhi} ${a.day_ganzhi}\n`
+      + `${h.text || ""}\n${a.wuxing}\n财神：${a.caishen}\n（民俗参考，不构成投资建议）`;
+    el.classList.toggle("heidao", !h.is_huangdao);
+  } catch (err) { console.warn(err); }
 }
 
 let dashAlmanacLoaded = false;
@@ -62,7 +86,8 @@ async function loadDashAlmanac() {
     $("#dashAlmanac").innerHTML = `
       <div style="font-size:15px">${esc(a.date)}（${esc(a.weekday)}）</div>
       <div class="desc-hl">${esc(a.year_ganzhi)}【${esc(a.zodiac)}年】${esc(a.month_ganzhi)} ${esc(a.day_ganzhi)}
-        ${a.solar_term ? `<span class="badge level-3">${esc(a.solar_term)}</span>` : ""}</div>
+        ${a.solar_term ? `<span class="badge level-3">${esc(a.solar_term)}</span>` : ""}
+        ${a.huangdao ? `<span class="badge ${a.huangdao.is_huangdao ? "level-3" : "level-2"}">${esc(a.huangdao.text)}</span>` : ""}</div>
       <div class="muted" style="font-size:12px;margin:4px 0">${esc(a.wuxing)} ｜ 财神：${esc(a.caishen)}</div>
       <div class="kv"><span class="k">旺相休囚</span><span style="color:#e8c46b">${esc(a.wangxiang_text)}</span></div>
       <div class="jiugong">${a.jiugong.flat().map((c) =>
@@ -130,14 +155,27 @@ async function loadForecast() {
 async function loadAlerts() {
   try {
     const d = await api("/api/alerts");
-    $("#alertFeed").innerHTML = d.items.length ? d.items.map((a) => `
+    const item = (a) => `
       <div class="alert-item">
-        <span class="time">${esc(a.created_at.slice(5, 16).replace("T", " "))}</span>
+        <span class="time">${esc((a.created_at || "").slice(5, 16).replace("T", " "))}</span>
         <div class="body">
           <span class="badge at-${a.alert_type}">${esc(a.type_name)}</span> ${esc(a.title)}
           ${a.detail ? `<div class="detail">${esc(a.detail)}</div>` : ""}
         </div>
-      </div>`).join("") : '<div class="empty">暂无提醒，交易时段每10分钟自动扫描</div>';
+      </div>`;
+    const buys = d.items.filter((a) => a.alert_type === "buy_point");
+    const sells = d.items.filter((a) => a.alert_type === "sell_point");
+    const others = d.items.filter((a) => a.alert_type !== "buy_point" && a.alert_type !== "sell_point");
+    if (!d.items.length) {
+      $("#alertFeed").innerHTML = '<div class="empty">暂无提醒，交易时段每10分钟自动扫描</div>';
+      return;
+    }
+    $("#alertFeed").innerHTML = `
+      <div class="alert-cols">
+        <div><div class="alert-col-title">最佳买点</div>${buys.map(item).join("") || '<div class="empty">暂无买点</div>'}</div>
+        <div><div class="alert-col-title">最佳卖点</div>${sells.map(item).join("") || '<div class="empty">暂无卖点</div>'}</div>
+      </div>
+      ${others.length ? `<div class="alert-other">${others.map(item).join("")}</div>` : ""}`;
   } catch (err) { console.warn(err); }
 }
 
@@ -211,13 +249,15 @@ function renderMovers(m) {
 }
 
 function renderWatchlist(list) {
+  watchCodes = new Set(list.map((r) => r.code));
   if (!list.length) { $("#watchTable").innerHTML = '<div class="empty">暂无自选股</div>'; return; }
   $("#watchTable").innerHTML = `<table><thead><tr>
-    <th>代码</th><th>名称</th><th>最新价</th><th>涨跌幅</th><th>涨跌额</th>
+    <th>代码</th><th>名称</th><th>五行</th><th>最新价</th><th>涨跌幅</th><th>涨跌额</th>
     <th>成交量(手)</th><th>成交额(万)</th><th>量比</th><th>换手%</th><th>振幅%</th><th>操作</th>
   </tr></thead><tbody>${list.map((r) => `
-    <tr onclick="openStock('${r.code}','${esc(r.name)}')">
+    <tr data-code="${r.code}" data-name="${esc(r.name)}" onclick="openStock('${r.code}','${esc(r.name)}')">
       <td>${r.pinned ? "📌 " : ""}${r.code}</td><td>${esc(r.name)}</td>
+      <td>${wxBadges(r.wuxing)}</td>
       <td class="num ${cls(r.pct)}">${fmt(r.price)}</td>
       <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
       <td class="num ${cls(r.pct)}">${sign(r.change)}${fmt(r.change)}</td>
@@ -292,13 +332,17 @@ async function loadProfile() {
   const box = $("#stockProfile");
   box.innerHTML = "";
   try {
-    const p = await api(`/api/profile?code=${currentStock.code}`);
-    if (!p.industry && !p.concepts.length) { box.innerHTML = ""; return; }
+    const [p, wx] = await Promise.all([
+      api(`/api/profile?code=${currentStock.code}`),
+      api(`/api/wuxing?code=${currentStock.code}`).catch(() => ({ tags: [] })),
+    ]);
+    if (!p.industry && !p.concepts.length && !(wx.tags || []).length) { box.innerHTML = ""; return; }
     box.innerHTML = `
       <div style="margin-bottom:10px">
+        ${wxBadges(wx.tags)}
         ${p.industry ? `<span class="badge level-3" style="cursor:pointer" onclick="drillFromProfile('industry','${esc(p.industry)}')">${esc(p.industry)}</span>` : ""}
         ${p.concepts.map((c) => `<span class="badge sector-tag" style="cursor:pointer" onclick="drillFromProfile('concept','${esc(c)}')">${esc(c)}</span>`).join("")}
-        <div class="muted" style="margin-top:6px;font-size:12px">${esc(p.desc)}</div>
+        <div class="muted" style="margin-top:6px;font-size:12px">${esc(p.desc)}${wx.note ? " · " + esc(wx.note) : ""}</div>
       </div>`;
   } catch (err) { console.warn(err); }
 }
@@ -591,10 +635,15 @@ const stars = (lv) => `<span class="${lv >= 4 ? "up" : "flat"}" style="letter-sp
 let outlookHorizon = "week";
 let calRange = 0;      // 0=全部, 1=今天, 3, 7, 31 天
 let calMinLevel = 0;   // 0=全部, 4, 5
-const newsFilter = { level: 0, direction: "", region: "" };  // FR5-01-1 二级筛选
+const newsFilter = { level: 0, direction: "", region: "", days: 0 };  // FR5-01-1 + FR8-02-1
+let sectorEvGroup = "day";
 
 function newsFilterBar() {
   return `
+    <div class="btn-group" style="margin-bottom:6px" id="nfDays">
+      ${[[1, "当日"], [3, "3日内"], [5, "5日内"], [10, "10日内"], [0, "全部"]].map(([v, t]) =>
+        `<button class="opt ${v === newsFilter.days ? "active" : ""}" data-v="${v}">${t}</button>`).join("")}
+    </div>
     <div class="btn-group" style="margin-bottom:6px" id="nfLevel">
       ${[[0, "全部等级"], [2, "较小+"], [3, "中等+"], [4, "重大+"], [5, "极重大"]].map(([v, t]) =>
         `<button class="opt ${v === newsFilter.level ? "active" : ""}" data-v="${v}">${t}</button>`).join("")}
@@ -610,7 +659,7 @@ function newsFilterBar() {
 }
 
 function bindNewsFilters() {
-  for (const [id, key, isNum] of [["nfLevel", "level", true], ["nfDir", "direction", false], ["nfRegion", "region", false]]) {
+  for (const [id, key, isNum] of [["nfDays", "days", true], ["nfLevel", "level", true], ["nfDir", "direction", false], ["nfRegion", "region", false]]) {
     const el = $(`#${id}`);
     if (!el) continue;
     el.addEventListener("click", (e) => {
@@ -639,7 +688,8 @@ async function almanacCard() {
       <div class="outlook-summary" style="border-color:rgba(232,196,107,.4);background:rgba(232,196,107,.06)">
         <b>📅 今日黄历</b> <span class="muted">${esc(a.note)}</span><br>
         ${esc(a.date)}（${esc(a.weekday)}）｜ ${esc(a.year_ganzhi)}【${esc(a.zodiac)}年】 ${esc(a.month_ganzhi)} ${esc(a.day_ganzhi)}
-        ${a.solar_term ? `｜ <span class="badge level-3">今日${esc(a.solar_term)}</span>` : ""}<br>
+        ${a.solar_term ? `｜ <span class="badge level-3">今日${esc(a.solar_term)}</span>` : ""}
+        ${a.huangdao ? `｜ <span class="badge ${a.huangdao.is_huangdao ? "level-3" : "level-2"}">${esc(a.huangdao.text)}</span>` : ""}<br>
         <span class="muted">五行：${esc(a.wuxing)} ｜ 财神方位：${esc(a.caishen)}（民俗参考）</span><br>
         <span class="muted" style="font-size:12px">时辰方位：${a.shichen.map((s) => `${esc(s.name.split(" ")[0])}${esc(s.direction)}`).join(" · ")}</span>
       </div>`;
@@ -651,16 +701,42 @@ async function loadMacro() {
   try {
     if (macroSub === "sectorEvents") {
       const rows = await api("/api/macro/sector-events");
-      box.innerHTML = (await almanacCard()) + '<div id="eventDetailBox"></div>' +
-        '<div class="muted" style="margin-bottom:8px">板块周期大事件（未来12个月）：点击查看影响板块与相关个股</div>' +
-        (rows.length ? rows.map((ev) => `
+      const groups = {};
+      for (const ev of rows) {
+        let key = ev.date;
+        if (sectorEvGroup === "week") {
+          const d = new Date(ev.date + "T00:00:00");
+          const day = d.getDay() || 7;
+          d.setDate(d.getDate() - day + 1);
+          key = d.toISOString().slice(0, 10) + " 当周";
+        } else if (sectorEvGroup === "month") {
+          key = ev.date.slice(0, 7);
+        }
+        (groups[key] ||= []).push(ev);
+      }
+      const evRow = (ev) => `
         <div class="cal-item" style="cursor:pointer" onclick="showEventDetail('${esc(ev.title)}','${esc(ev.sectors)}')">
-          <span class="cal-date">${ev.date.slice(5)}</span>
+          <span class="cal-date" style="width:108px">${esc(ev.date)}</span>
           ${stars(ev.impact_level)}
           <span class="flag">${esc(ev.city)}</span>
           <span style="flex:1">${esc(ev.title)} <span class="badge sector-tag" style="font-size:11px">${esc(ev.sectors)}</span></span>
           <span class="muted">${esc(ev.cycle_desc)}</span>
-        </div>`).join("") : '<div class="empty">暂无板块事件</div>');
+        </div>`;
+      box.innerHTML = (await almanacCard()) + '<div id="eventDetailBox"></div>' +
+        `<div class="btn-group" style="margin-bottom:10px" id="seGroupBtns">
+          ${[["day", "按日"], ["week", "按周"], ["month", "按月"]].map(([v, t]) =>
+            `<button class="opt ${v === sectorEvGroup ? "active" : ""}" data-v="${v}">${t}</button>`).join("")}
+        </div>
+        <div class="muted" style="margin-bottom:8px">板块周期大事件：点击查看影响板块与相关个股 · 日期为完整年月日</div>` +
+        (rows.length ? Object.entries(groups).map(([k, list]) =>
+          `<div class="outlook-group">${esc(k)}（${list.length}）</div>` + list.map(evRow).join("")).join("")
+          : '<div class="empty">暂无板块事件</div>');
+      $("#seGroupBtns")?.addEventListener("click", (e) => {
+        const btn = e.target.closest(".opt");
+        if (!btn) return;
+        sectorEvGroup = btn.dataset.v;
+        loadMacro();
+      });
       return;
     }
     if (macroSub === "outlook") {
@@ -711,7 +787,8 @@ async function loadMacro() {
       return;
     }
     if (macroSub === "calendar") {
-      const rows = await api("/api/macro/calendar?months=3");
+      const months = calRange >= 180 ? 6 : 3;
+      const rows = await api(`/api/macro/calendar?months=${months}`);
       const today = new Date().toISOString().slice(0, 10);
       const rangeEnd = calRange ? new Date(Date.now() + calRange * 86400000).toISOString().slice(0, 10) : "9999";
       const filtered = rows.filter((ev) =>
@@ -719,7 +796,7 @@ async function loadMacro() {
       box.innerHTML = `
         ${await almanacCard()}
         <div class="btn-group" style="margin-bottom:6px" id="calRangeBtns">
-          ${[[0, "全部"], [1, "今天"], [3, "3天内"], [7, "一周内"], [31, "一月内"]].map(([v, t]) =>
+          ${[[0, "全部"], [1, "今天"], [3, "3天内"], [7, "一周内"], [31, "一月内"], [183, "半年内"]].map(([v, t]) =>
             `<button class="opt ${v === calRange ? "active" : ""}" data-range="${v}">${t}</button>`).join("")}
         </div>
         <div class="btn-group" style="margin-bottom:12px" id="calLevelBtns">
@@ -729,7 +806,7 @@ async function loadMacro() {
         <div id="eventDetailBox"></div>
         ${filtered.length ? filtered.map((ev) => `
         <div class="cal-item" style="cursor:pointer" onclick="showEventDetail('${esc(ev.title)}','${esc(ev.sectors || "")}')" title="点击查看影响板块与相关个股">
-          <span class="cal-date">${ev.date.slice(5)}</span>
+          <span class="cal-date" style="width:108px">${esc(ev.date)}</span>
           ${stars(ev.impact_level)}
           <span class="badge level-${ev.impact_level}">${ev.impact_desc}</span>
           <span class="flag">${esc(ev.region)}</span>
@@ -750,13 +827,38 @@ async function loadMacro() {
       });
       return;
     }
+    if (macroSub === "knowledge") {
+      box.innerHTML = `
+        <div class="inline-form" style="margin-bottom:10px;width:100%">
+          <input id="kbSearch" placeholder="搜索术语，如 量比 / 换手率 / 量比" style="flex:1">
+        </div>
+        <div id="kbContent"><div class="empty">加载中…</div></div>`;
+      $("#kbSearch").addEventListener("input", debounce(loadKnowledge, 300));
+      loadKnowledge();
+      return;
+    }
+    if (macroSub === "announce") {
+      box.innerHTML = `
+        <div class="inline-form" style="margin-bottom:10px;width:100%">
+          <input id="annSearch" placeholder="输入代码/名称过滤，如 300432" style="flex:1">
+          <button class="btn" onclick="loadAnnouncements()">查询</button>
+          <button class="btn ghost" onclick="clearAnnSearch()">全部公告</button>
+        </div>
+        <div class="muted" id="annNote" style="margin-bottom:8px"></div>
+        <div id="annRatings"></div>
+        <div id="annList"><div class="empty">加载中…</div></div>`;
+      loadAnnouncements();
+      return;
+    }
     const path = macroSub === "policy" ? "/api/macro/policies" : macroSub === "major" ? "/api/macro/major" : "/api/macro/news";
-    const rows = applyNewsFilter(await api(path));
+    const qs = (macroSub === "news" || macroSub === "policy") && newsFilter.days
+      ? `?days=${newsFilter.days}` : "";
+    const rows = applyNewsFilter(await api(path + qs));
     const offline = rows.length && rows[0].offline;
     box.innerHTML = newsFilterBar() + '<div id="eventDetailBox"></div>' +
       (offline ? '<div class="offline-banner">当前展示本地缓存数据（离线）</div>' : "") +
       (rows.length ? rows.map((n) => `
-      <div class="news-item">
+      <div class="news-item" data-news="${esc(n.text)}" data-impact="${esc(n.impact_desc || "")}">
         <span class="time">${esc((n.time || "").slice(5, 16))}</span>
         <div class="body">${esc(n.text)}
           <div class="meta">
@@ -871,6 +973,7 @@ function renderScreenerConditions() {
     <span class="muted">已选条件 ${totalConds} 项</span></div>`;
   $("#screenerConditions").innerHTML = html;
   renderChips();
+  updateScreenerSentence();
 
   $("#screenerConditions").querySelectorAll(".btn-group.multi").forEach((grp) => {
     grp.addEventListener("click", (e) => {
@@ -901,7 +1004,45 @@ function renderChips() {
     }
   }
   $("#condChips").innerHTML = chips.join("") || '<span class="muted" style="font-size:12px">未设置条件（默认展示全市场按购买指数排序）</span>';
+  updateScreenerSentence();
 }
+
+function updateScreenerSentence() {
+  const el = $("#screenerSentence");
+  if (!el || !screenerMeta) return;
+  const parts = [];
+  if (screenerState.boards.length) parts.push(screenerState.boards.join("/"));
+  if (screenerState.industries.length) parts.push(screenerState.industries.join("/"));
+  for (const [group, arr] of Object.entries(screenerState)) {
+    if (!Array.isArray(arr) || !arr.length) continue;
+    if (group === "boards" || group === "industries") continue;
+    const labels = arr.map((v) => (screenerMeta.buckets[group] || {})[v] || v);
+    parts.push(`${GROUP_LABELS[group] || group}=${labels.join("/")}`);
+  }
+  if (screenerState.price_min || screenerState.price_max) {
+    parts.push(`股价${screenerState.price_min || "*"}~${screenerState.price_max || "*"}`);
+  }
+  if (screenerState.exclude_st) parts.push("剔除ST");
+  el.textContent = parts.length ? parts.join(" 且 ") : "未设置条件（全市场按购买指数排序）";
+}
+
+window.parseScreenerSemantic = async () => {
+  const text = ($("#screenerSemantic")?.value || "").trim();
+  if (!text) return;
+  try {
+    const d = await api("/api/screener/parse", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    clearScreener(false);
+    Object.assign(screenerState, d.conditions);
+    for (const g of Object.keys(GROUP_LABELS)) screenerState[g] ||= [];
+    screenerState.boards ||= []; screenerState.industries ||= [];
+    renderScreenerConditions();
+    $("#screenerSentence").textContent = d.summary || $("#screenerSentence").textContent;
+    runScreener();
+  } catch (err) { console.warn(err); }
+};
 
 window.clearGroup = (group) => {
   if (Array.isArray(screenerState[group])) screenerState[group] = [];
@@ -951,11 +1092,12 @@ async function runScreener() {
     });
     $("#screenerCount").textContent = `命中 ${d.total} 只（最多显示100）`;
     $("#screenerResult").innerHTML = d.items.length ? `<table><thead><tr>
-      <th>#</th><th>名称</th><th>行业</th><th>最新价</th><th>涨跌幅</th><th>购买指数</th>
+      <th>#</th><th>名称</th><th>五行</th><th>行业</th><th>最新价</th><th>涨跌幅</th><th>购买指数</th>
       <th>情绪</th><th>暗盘力量</th><th>主力净流入(万)</th><th>PE</th><th>量比</th><th>企稳</th>
     </tr></thead><tbody>${d.items.map((r, i) => `
-      <tr onclick="openStock('${r.code}','${esc(r.name)}')">
+      <tr data-code="${r.code}" data-name="${esc(r.name)}" onclick="openStock('${r.code}','${esc(r.name)}')">
         <td>${i + 1}</td><td>${esc(r.name)} <span class="muted">${r.code}</span></td>
+        <td>${wxBadges(r.wuxing)}</td>
         <td>${esc(r.industry || "-")}</td>
         <td class="num ${cls(r.pct)}">${fmt(r.price)}</td>
         <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
@@ -1013,6 +1155,18 @@ window.deletePlan = async (id) => { await post(`/api/screener/plans/delete?plan_
 let sectorDim = "industry";
 let sectorView = "map";
 let sectorChart = null;
+let sectorPage = "flow";
+
+$("#sectorPageTabs").addEventListener("click", (e) => {
+  const btn = e.target.closest(".opt");
+  if (!btn) return;
+  sectorPage = btn.dataset.page;
+  $$("#sectorPageTabs .opt").forEach((b) => b.classList.toggle("active", b === btn));
+  $("#sectorFlowView").style.display = sectorPage === "flow" ? "" : "none";
+  $("#sectorRecView").style.display = sectorPage === "recommend" ? "" : "none";
+  if (sectorPage === "flow") { loadSector(); sectorChart?.resize(); }
+  else loadSectorRecommend();
+});
 
 $("#sectorDim").addEventListener("click", (e) => {
   const btn = e.target.closest(".opt");
@@ -1032,12 +1186,42 @@ $("#sectorView").addEventListener("click", (e) => {
 });
 
 async function loadSector() {
+  if (sectorPage === "recommend") { loadSectorRecommend(); return; }
   try {
     const d = await api(`/api/sector/flow?dim=${sectorDim}`);
     $("#sectorTime").textContent = `更新于 ${d.updated_at}`;
     renderSectorMap(d.items);
     renderSectorList(d.items);
   } catch (err) { console.warn(err); }
+}
+
+async function loadSectorRecommend() {
+  const box = $("#sectorRecBox");
+  box.innerHTML = '<div class="empty">加载中…</div>';
+  try {
+    const rows = await api("/api/sector/recommend");
+    box.innerHTML = rows.length ? rows.map((sec, i) => `
+      <div class="sec-rec">
+        <div class="card-title" style="margin-bottom:6px">
+          <span>${i + 1}. ${esc(sec.name)}
+            <span class="badge ${cls(sec.pct) === "up" ? "level-4" : cls(sec.pct) === "down" ? "level-1" : "level-2"}">${pct(sec.pct)}</span>
+            <span class="muted">热度 ${fmt(sec.hot_score, 1)} · 5日 ${pct(sec.d5)} · 净流入 ${fmt(sec.net_in_yi)} 亿</span>
+          </span>
+        </div>
+        <table><thead><tr>
+          <th>名称</th><th>五行</th><th>现价</th><th>涨跌幅</th><th>购买指数</th><th>评分</th><th>提示</th>
+        </tr></thead><tbody>${(sec.stocks || []).map((r) => `
+          <tr data-code="${r.code}" data-name="${esc(r.name)}" onclick="openStock('${r.code}','${esc(r.name)}')">
+            <td>${esc(r.name)} <span class="muted">${r.code}</span></td>
+            <td>${wxBadges(r.wuxing)}</td>
+            <td class="num ${cls(r.pct)}">${fmt(r.price)}</td>
+            <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
+            <td class="num">${r.buy_index !== null ? `<b>${fmt(r.buy_index, 0)}</b>` : "-"}</td>
+            <td class="num"><b>${fmt(r.score, 1)}</b></td>
+            <td><span class="badge ${r.advice === "增持" ? "advice-buy" : r.advice === "减持" ? "advice-sell" : "advice-hold"}" style="font-size:11px;padding:2px 7px">${esc(r.advice || "-")}</span></td>
+          </tr>`).join("")}</tbody></table>
+      </div>`).join("") : '<div class="empty">暂无板块推荐（需全量快照）</div>';
+  } catch (err) { box.innerHTML = '<div class="empty">加载失败</div>'; }
 }
 
 function flowColor(ratio) {
@@ -1361,11 +1545,13 @@ window.openEtfDetail = async (code, name) => {
 
 /* ---------------- 个股推荐 ---------------- */
 let recommendBoard = "composite";
-const recState = { page: 1, page_size: 20, advice: "", min_score: 0, vol_filter: "", order_by: "" };
+const recState = { page: 1, page_size: 20, advice: "", min_score: 0, vol_filter: "", order_by: "",
+  mv_filter: "", turn_filter: "" };
 
 const scoreRowClass = (s) => s >= 95 ? "score-95" : s >= 85 ? "score-85" : s >= 75 ? "score-75" : s >= 65 ? "score-65" : s >= 55 ? "score-55" : "";
 
-for (const [id, key] of [["recAdvice", "advice"], ["recScore", "min_score"], ["recVol", "vol_filter"], ["recOrder", "order_by"]]) {
+for (const [id, key] of [["recAdvice", "advice"], ["recScore", "min_score"], ["recVol", "vol_filter"],
+  ["recOrder", "order_by"], ["recMv", "mv_filter"], ["recTurn", "turn_filter"]]) {
   $(`#${id}`).addEventListener("click", (e) => {
     const btn = e.target.closest(".opt");
     if (!btn) return;
@@ -1393,7 +1579,8 @@ async function loadRecommend() {
   try {
     const qs = new URLSearchParams({ board: recommendBoard, page: recState.page,
       page_size: recState.page_size, advice: recState.advice,
-      min_score: recState.min_score, vol_filter: recState.vol_filter, order_by: recState.order_by });
+      min_score: recState.min_score, vol_filter: recState.vol_filter, order_by: recState.order_by,
+      mv_filter: recState.mv_filter, turn_filter: recState.turn_filter });
     const d = await api(`/api/recommend?${qs}`);
     if (!$("#recommendBoards").children.length) {
       $("#recommendBoards").innerHTML = Object.entries(d.boards).map(([k, v]) =>
@@ -1410,12 +1597,13 @@ async function loadRecommend() {
       ? '<div class="offline-banner" style="border-color:rgba(255,82,82,.5);color:var(--up);background:rgba(255,82,82,.08)">⚠️ 妖股波动剧烈，随时可能天地板，本榜仅作市场现象研究，严禁跟风追高</div>'
       : "";
     box.innerHTML = d.items.length ? demonBanner + statsHtml + `<table><thead><tr>
-      <th>#</th><th>名称</th><th>所属板块</th><th>现价</th><th>涨跌幅</th><th>${esc(d.items[0].metric_name)}</th>
+      <th>#</th><th>名称</th><th>五行</th><th>所属板块</th><th>现价</th><th>涨跌幅</th><th>${esc(d.items[0].metric_name)}</th>
       ${isStab ? "<th>闸门</th><th>星级</th>" : ""}<th>购买指数</th><th>情绪</th>
       <th>量能</th><th>评分</th><th>提示</th><th>入选理由</th>
     </tr></thead><tbody>${d.items.map((r, i) => `
-      <tr class="${scoreRowClass(r.score)}" onclick="openStock('${r.code}','${esc(r.name)}')">
+      <tr class="${scoreRowClass(r.score)}" data-code="${r.code}" data-name="${esc(r.name)}" onclick="openStock('${r.code}','${esc(r.name)}')">
         <td>${(d.page - 1) * d.page_size + i + 1}</td><td>${esc(r.name)} <span class="muted">${r.code}</span></td>
+        <td>${wxBadges(r.wuxing)}</td>
         <td>${esc(r.industry || "-")}</td>
         <td class="num ${cls(r.pct)}">${fmt(r.price)}</td>
         <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
@@ -1427,7 +1615,7 @@ async function loadRecommend() {
         <td>${esc(r.volume_desc)}</td>
         <td class="num"><b>${fmt(r.score, 1)}</b></td>
         <td><span class="badge ${r.advice === "增持" ? "advice-buy" : r.advice === "减持" ? "advice-sell" : "advice-hold"}" style="font-size:12px;padding:2px 8px">${r.advice}</span></td>
-        <td class="muted" style="font-size:12px;white-space:normal;min-width:220px;max-width:340px">${esc(r.reason || "")}</td>
+        <td class="desc-hl" style="white-space:normal;min-width:220px;max-width:340px">${esc(r.reason || "")}</td>
       </tr>`).join("")}</tbody></table>
       <div class="muted" style="margin-top:8px;font-size:12px">评分行背景：≥55 淡橙 → ≥95 深红 递进。榜单为量化参考，不构成投资建议。</div>`
       : '<div class="empty">该筛选条件下无个股（企稳/指标类榜单需先在设置页执行「重建指标」）</div>';
@@ -1443,14 +1631,19 @@ $("#recommendBoards").addEventListener("click", (e) => {
   loadRecommend();
 });
 
-/* ---------------- 公司公告（FR7-04） ---------------- */
+/* ---------------- 公司公告（FR7-04，8.0 收编至宏观二级） ---------------- */
 async function loadAnnouncements() {
-  const code = $("#annSearch").value.trim();
-  $("#annList").innerHTML = '<div class="empty">加载中…</div>';
+  const inp = $("#annSearch");
+  const code = inp ? inp.value.trim() : "";
+  const list = $("#annList");
+  if (!list) return;
+  list.innerHTML = '<div class="empty">加载中…</div>';
   try {
     const d = await api(`/api/announcements?code=${encodeURIComponent(code)}`);
-    $("#annNote").textContent = d.note + (d.target_name ? ` · 当前筛选：${d.target_name}` : "");
-    $("#annRatings").innerHTML = d.ratings ? `
+    const note = $("#annNote");
+    if (note) note.textContent = d.note + (d.target_name ? ` · 当前筛选：${d.target_name}` : "");
+    const ratings = $("#annRatings");
+    if (ratings) ratings.innerHTML = d.ratings ? `
       <div class="outlook-summary" style="margin-bottom:10px">
         <b>📊 ${esc(d.target_name)} 机构评级</b> <span class="muted">${d.ratings.simulated ? "规则模拟·仅供参考" : ""}</span><br>
         评级分布：${Object.entries(d.ratings.distribution).filter(([, n]) => n > 0).map(([k, n]) => `${k} ${n} 家`).join(" · ")}
@@ -1458,8 +1651,8 @@ async function loadAnnouncements() {
         <span class="muted" style="font-size:12px">${d.ratings.items.slice(0, 5).map((it) =>
           `${esc(it.broker)}:${it.rating}(${fmt(it.target_price)})`).join("　")}</span>
       </div>` : "";
-    $("#annList").innerHTML = d.items.length ? d.items.map((a) => `
-      <div class="news-item">
+    list.innerHTML = d.items.length ? d.items.map((a) => `
+      <div class="news-item" data-news="${esc(a.text)}" data-impact="${esc(a.impact_desc || "")}">
         <span class="time">${esc((a.time || "").slice(5, 16))}</span>
         <div class="body">${esc(a.text)}
           <div class="meta">
@@ -1471,17 +1664,20 @@ async function loadAnnouncements() {
           ${a.brief ? `<div class="desc-hl" style="font-size:13px;margin-top:3px">💡 ${esc(a.brief)}</div>` : ""}
         </div>
       </div>`).join("") : '<div class="empty">暂无匹配公告（公告源为7x24快讯识别）</div>';
-  } catch (err) { $("#annList").innerHTML = '<div class="empty">加载失败</div>'; }
+  } catch (err) { list.innerHTML = '<div class="empty">加载失败</div>'; }
 }
 window.loadAnnouncements = loadAnnouncements;
-window.clearAnnSearch = () => { $("#annSearch").value = ""; loadAnnouncements(); };
+window.clearAnnSearch = () => { const el = $("#annSearch"); if (el) el.value = ""; loadAnnouncements(); };
 
-/* ---------------- 股票常识（FR7-03） ---------------- */
+/* ---------------- 股票常识（FR7-03，8.0 收编至宏观二级） ---------------- */
 async function loadKnowledge() {
-  const kw = $("#kbSearch").value.trim();
+  const inp = $("#kbSearch");
+  const kw = inp ? inp.value.trim() : "";
+  const box = $("#kbContent");
+  if (!box) return;
   try {
     const groups = await api(`/api/knowledge?q=${encodeURIComponent(kw)}`);
-    $("#kbContent").innerHTML = groups.length ? groups.map((g) => `
+    box.innerHTML = groups.length ? groups.map((g) => `
       <div class="region-title">${esc(g.group)}（${g.items.length}）</div>
       ${g.items.map((it) => `<div class="kb-item">
         <div class="term">${esc(it.term)}</div>
@@ -1489,7 +1685,82 @@ async function loadKnowledge() {
       : '<div class="empty">未找到相关词条</div>';
   } catch (err) { console.warn(err); }
 }
-$("#kbSearch").addEventListener("input", debounce(loadKnowledge, 300));
+
+/* ---------------- 榜单（FR8-04） ---------------- */
+let rankType = "limit_up";
+async function loadRanks() {
+  const box = $("#rankTable");
+  try {
+    const d = await api(`/api/ranks?type=${rankType}`);
+    const tabs = $("#rankTabs");
+    if (tabs && !tabs.children.length) {
+      tabs.innerHTML = Object.entries(d.types).map(([k, v]) =>
+        `<button class="opt ${k === rankType ? "active" : ""}" data-type="${k}">${v}</button>`).join("");
+      tabs.addEventListener("click", (e) => {
+        const btn = e.target.closest(".opt");
+        if (!btn) return;
+        rankType = btn.dataset.type;
+        $$("#rankTabs .opt").forEach((b) => b.classList.toggle("active", b === btn));
+        loadRanks();
+      });
+    }
+    $("#rankNote").textContent = d.note || "";
+    box.innerHTML = d.items.length ? `<table><thead><tr>
+      <th>#</th><th>名称</th><th>五行</th><th>所属板块</th><th>现价</th><th>涨跌幅</th>
+      <th>${esc(d.items[0].metric_name)}</th><th>购买指数</th><th>评分</th><th>提示</th>
+    </tr></thead><tbody>${d.items.map((r, i) => `
+      <tr class="${scoreRowClass(r.score)}" data-code="${r.code}" data-name="${esc(r.name)}" onclick="openStock('${r.code}','${esc(r.name)}')">
+        <td>${i + 1}</td><td>${esc(r.name)} <span class="muted">${r.code}</span></td>
+        <td>${wxBadges(r.wuxing)}</td>
+        <td>${esc(r.industry || "-")}</td>
+        <td class="num ${cls(r.pct)}">${fmt(r.price)}</td>
+        <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
+        <td class="num">${fmt(r.metric_value)}</td>
+        <td class="num">${r.buy_index !== null ? `<b>${fmt(r.buy_index, 0)}</b>` : "-"}</td>
+        <td class="num"><b>${fmt(r.score, 1)}</b></td>
+        <td><span class="badge ${r.advice === "增持" ? "advice-buy" : r.advice === "减持" ? "advice-sell" : "advice-hold"}" style="font-size:11px;padding:2px 7px">${esc(r.advice || "-")}</span></td>
+      </tr>`).join("")}</tbody></table>
+      <div class="muted" style="margin-top:8px;font-size:12px">行背景按评分五档着色。榜单为本地异动口径，不构成投资建议。</div>`
+      : '<div class="empty">该榜暂无数据（需全量快照）</div>';
+  } catch (err) { box.innerHTML = '<div class="empty">加载失败</div>'; console.warn(err); }
+}
+
+/* ---------------- AI 选股（FR8-05） ---------------- */
+window.runAiPick = async () => {
+  const desc = ($("#aiPickInput")?.value || "").trim();
+  if (!desc) return;
+  $("#aiPickTable").innerHTML = '<div class="empty">解析筛选中…</div>';
+  $("#aiPickRule").style.display = "none";
+  $("#aiPickComment").innerHTML = "";
+  try {
+    const d = await api("/api/ai/pick", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ description: desc }),
+    });
+    $("#aiPickRule").style.display = "";
+    $("#aiPickRule").innerHTML = `<b>解析规则</b>：${esc(d.summary || "未解析出规则")}
+      <span class="muted"> · 来源 ${esc(d.source || "")} · 命中 ${d.total || 0} 只</span>`;
+    if (d.commentary) {
+      $("#aiPickComment").innerHTML = `<div class="outlook-summary" style="white-space:pre-wrap">${esc(d.commentary)}</div>`;
+    }
+    $("#aiPickTable").innerHTML = d.items && d.items.length ? `<table><thead><tr>
+      <th>#</th><th>名称</th><th>五行</th><th>行业</th><th>现价</th><th>涨跌幅</th>
+      <th>购买指数</th><th>PE</th><th>量比</th><th>主力净流入(万)</th>
+    </tr></thead><tbody>${d.items.map((r, i) => `
+      <tr data-code="${r.code}" data-name="${esc(r.name)}" onclick="openStock('${r.code}','${esc(r.name)}')">
+        <td>${i + 1}</td><td>${esc(r.name)} <span class="muted">${r.code}</span></td>
+        <td>${wxBadges(r.wuxing)}</td>
+        <td>${esc(r.industry || "-")}</td>
+        <td class="num ${cls(r.pct)}">${fmt(r.price)}</td>
+        <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
+        <td class="num">${r.buy_index !== null ? `<b>${fmt(r.buy_index, 0)}</b>` : "-"}</td>
+        <td class="num">${fmt(r.pe_ttm, 1)}</td>
+        <td class="num">${fmt(r.volume_ratio)}</td>
+        <td class="num ${cls(r.main_net_in)}">${fmt(r.main_net_in, 0)}</td>
+      </tr>`).join("")}</tbody></table>` : '<div class="empty">未命中个股，可换个描述或放宽条件</div>';
+  } catch (err) { $("#aiPickTable").innerHTML = '<div class="empty">选股失败</div>'; console.warn(err); }
+};
+async function loadAiPick() { /* 进入页不自动请求，等待用户输入 */ }
 
 /* ---------------- AI 分析（FR7-07） ---------------- */
 let aiMode = "market";
@@ -1534,27 +1805,127 @@ window.runAiAnalyze = async () => {
   } catch (err) { $("#aiOutput").innerHTML = '<div class="empty">分析失败，请检查配置</div>'; }
 };
 
-/* AI 小窗 + 右键菜单（FR7-07-4） */
+/* AI 小窗 + 右键菜单（FR7-07-4 / FR8-07） */
 let ctxStock = null;
-document.addEventListener("contextmenu", (e) => {
-  const el = e.target.closest("[onclick]");
-  const m = el && /openStock\('([^']+)','([^']*)'\)/.exec(el.getAttribute("onclick") || "");
-  if (!m) { $("#ctxMenu").style.display = "none"; return; }
+let ctxNews = null;
+function hideCtxMenu() { $("#ctxMenu").style.display = "none"; }
+function showStockCtxItems(show) {
+  ["ctxAiItem", "ctxOpenItem", "ctxWatchItem", "ctxWxAi"].forEach((id) => {
+    const el = $(`#${id}`); if (el) el.style.display = show ? "" : "none";
+  });
+  const wx = $("#ctxWx"); if (wx) wx.style.display = show ? "" : "none";
+  const sub = document.querySelector(".ctx-sub"); if (sub) sub.style.display = show ? "" : "none";
+  $("#ctxNewsAi").style.display = show ? "none" : "";
+}
+
+document.addEventListener("contextmenu", async (e) => {
+  const newsEl = e.target.closest(".news-item[data-news]");
+  const el = e.target.closest("[data-code], [onclick]");
+  const m = el && ((el.dataset && el.dataset.code && { code: el.dataset.code, name: el.dataset.name })
+    || (() => { const g = /openStock\('([^']+)','([^']*)'\)/.exec(el.getAttribute("onclick") || "");
+      return g ? { code: g[1], name: g[2] } : null; })());
+  if (!m && !newsEl) { hideCtxMenu(); return; }
   e.preventDefault();
-  ctxStock = { code: m[1], name: m[2] };
   const menu = $("#ctxMenu");
   menu.style.display = "";
-  menu.style.left = Math.min(e.clientX, window.innerWidth - 190) + "px";
-  menu.style.top = Math.min(e.clientY, window.innerHeight - 90) + "px";
+  menu.style.left = Math.min(e.clientX, window.innerWidth - 220) + "px";
+  menu.style.top = Math.min(e.clientY, window.innerHeight - 280) + "px";
+  if (newsEl && !m) {
+    ctxStock = null;
+    ctxNews = { text: newsEl.dataset.news, impact: newsEl.dataset.impact || "" };
+    showStockCtxItems(false);
+    return;
+  }
+  ctxNews = newsEl ? { text: newsEl.dataset.news, impact: newsEl.dataset.impact || "" } : null;
+  ctxStock = m;
+  showStockCtxItems(true);
+  $("#ctxNewsAi").style.display = ctxNews ? "" : "none";
+  $("#ctxWatchItem").textContent = watchCodes.has(m.code) ? "☆ 移出自选" : "⭐ 加入自选";
+  try {
+    const wx = await api(`/api/wuxing?code=${m.code}`);
+    $$("#ctxWx input").forEach((inp) => { inp.checked = (wx.tags || []).includes(inp.value); });
+  } catch { $$("#ctxWx input").forEach((inp) => { inp.checked = false; }); }
 });
-document.addEventListener("click", () => { $("#ctxMenu").style.display = "none"; });
+document.addEventListener("click", (e) => {
+  if (!e.target.closest("#ctxMenu")) hideCtxMenu();
+});
 $("#ctxAiItem").addEventListener("click", () => {
   if (ctxStock) openAiModal(ctxStock.code, ctxStock.name);
-  $("#ctxMenu").style.display = "none";
+  hideCtxMenu();
 });
 $("#ctxOpenItem").addEventListener("click", () => {
   if (ctxStock) openStock(ctxStock.code, ctxStock.name);
-  $("#ctxMenu").style.display = "none";
+  hideCtxMenu();
+});
+$("#ctxWatchItem").addEventListener("click", async () => {
+  if (!ctxStock) return;
+  if (watchCodes.has(ctxStock.code)) {
+    await post(`/api/watchlist/remove?code=${ctxStock.code}`);
+    watchCodes.delete(ctxStock.code);
+  } else {
+    await post(`/api/watchlist/add?code=${encodeURIComponent(ctxStock.code)}`);
+    watchCodes.add(ctxStock.code);
+  }
+  hideCtxMenu();
+  if (activeTab === "dashboard") loadDashboard();
+});
+$("#ctxWx").addEventListener("click", (e) => e.stopPropagation());
+$("#ctxWx").addEventListener("change", async () => {
+  if (!ctxStock) return;
+  const tags = $$("#ctxWx input:checked").map((i) => i.value);
+  await api("/api/wuxing/set", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code: ctxStock.code, tags }),
+  });
+  if (currentStock && currentStock.code === ctxStock.code) loadProfile();
+});
+$("#ctxWxAi").addEventListener("click", async () => {
+  if (!ctxStock) return;
+  const { code, name } = ctxStock;
+  hideCtxMenu();
+  const modal = $("#aiModal");
+  modal.style.display = "";
+  $("#aiModalTitle").textContent = `✨ 五行分类：${name}（${code}）`;
+  $("#aiModalBody").innerHTML = '<div class="empty">判定中，请稍候…</div>';
+  try {
+    const d = await api("/api/ai/wuxing", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+    $("#aiModalBody").innerHTML = `<div class="muted" style="margin-bottom:6px">来源：${esc(d.source)}
+      ${d.applied ? " · 已回填标签 " + wxBadges(d.tags) : " · 建议 " + wxBadges(d.tags)}</div>`
+      + esc(d.text).replace(/\n/g, "<br>")
+      + (d.applied ? "" : `<div style="margin-top:10px"><button class="btn small" id="applyWxBtn">应用建议标签</button></div>`);
+    const btn = $("#applyWxBtn");
+    if (btn) btn.addEventListener("click", async () => {
+      await api("/api/wuxing/set", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, tags: d.tags }),
+      });
+      btn.textContent = "已应用";
+      if (currentStock && currentStock.code === code) loadProfile();
+    });
+    if (d.applied && currentStock && currentStock.code === code) loadProfile();
+  } catch (err) { $("#aiModalBody").innerHTML = '<div class="empty">分类失败</div>'; }
+});
+$("#ctxNewsAi").addEventListener("click", async () => {
+  if (!ctxNews) return;
+  hideCtxMenu();
+  const modal = $("#aiModal");
+  modal.style.display = "";
+  $("#aiModalTitle").textContent = "🤖 AI 解读消息";
+  $("#aiModalBody").innerHTML = '<div class="empty">分析中，请稍候…</div>';
+  try {
+    const d = await api("/api/ai/analyze", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mode: "custom",
+        question: `请解读以下财经消息的市场影响（利好/利空、可能受益或受损板块、风险提示，分点，200字内）。\n影响评估：${ctxNews.impact}\n消息：${ctxNews.text}`,
+      }),
+    });
+    $("#aiModalBody").innerHTML = `<div class="muted" style="margin-bottom:6px">来源：${esc(d.source)}</div>`
+      + esc(d.text).replace(/\n/g, "<br>");
+  } catch (err) { $("#aiModalBody").innerHTML = '<div class="empty">分析失败</div>'; }
 });
 
 window.openAiModal = async (code, name) => {
@@ -1614,12 +1985,20 @@ async function loadSettings() {
       <div class="kv"><span class="k">状态</span><span>${esc(sync.message)}</span></div>
       ${sync.running ? '<div class="progress"><div class="p" style="width:60%"></div></div>' : ""}`;
     loadMetricsState();
+    const freqOpts = [1, 5, 10, 15, 30, 60, 120, 180];
+    const freqLabel = (m) => m >= 60 ? `${m / 60}小时` : `${m}分钟`;
     $("#jobTable").innerHTML = `<table><thead><tr>
-      <th>任务</th><th>上次执行</th><th>状态</th><th>下次执行</th>
+      <th>任务</th><th>上次执行</th><th>状态</th><th>下次执行</th><th>频率</th><th>开关</th>
     </tr></thead><tbody>${d.jobs.map((j) => `
-      <tr><td>${esc(j.name)}</td><td>${esc(j.last_run)}</td>
+      <tr style="cursor:default">
+        <td>${esc(j.name)}</td><td>${esc(j.last_run)}</td>
         <td>${j.ok === true ? '<span class="down">正常</span>' : j.ok === false ? `<span class="up">失败</span> <span class="muted">${esc(j.error)}</span>` : '<span class="muted">未执行</span>'}</td>
-        <td>${esc(j.next_run)}</td></tr>`).join("")}</tbody></table>`;
+        <td>${esc(j.next_run)}</td>
+        <td>${j.adjustable ? `<span class="btn-group job-freq">${freqOpts.map((m) =>
+          `<button class="opt ${j.interval_minutes === m ? "active" : ""}" onclick="setJobInterval('${j.id}',${m})">${freqLabel(m)}</button>`).join("")}</span>`
+          : '<span class="muted">定点</span>'}</td>
+        <td><button class="btn small ${j.paused ? "" : "ghost"}" onclick="toggleJob('${j.id}')">${j.paused ? "开启" : "暂停"}</button></td>
+      </tr>`).join("")}</tbody></table>`;
     const anyCircuit = d.sources.some((s) => s.circuit_open);
     const anyFail = d.jobs.some((j) => j.ok === false);
     $("#healthDot").className = "dot " + (anyCircuit ? "bad" : anyFail ? "warn" : "ok");
@@ -1664,6 +2043,14 @@ window.rebuildMetrics = async () => {
 };
 
 window.toggleSource = async (name) => { await post(`/api/system/source-toggle?name=${encodeURIComponent(name)}`); loadSettings(); };
+window.toggleJob = async (id) => { await post(`/api/system/job-toggle?job_id=${encodeURIComponent(id)}`); loadSettings(); };
+window.setJobInterval = async (id, minutes) => {
+  await api("/api/system/job-interval", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ job_id: id, minutes }),
+  });
+  loadSettings();
+};
 window.clearCache = async () => { await post("/api/system/clear-cache"); loadSettings(); };
 window.fullSync = async () => {
   await post("/api/system/sync");
@@ -1689,8 +2076,8 @@ loaders.macro = loadMacro;
 loaders.commodity = loadCommodities;
 loaders.global = loadGlobal;
 loaders.recommend = loadRecommend;
-loaders.announce = loadAnnouncements;
-loaders.knowledge = loadKnowledge;
+loaders.ranks = loadRanks;
+loaders.aipick = loadAiPick;
 loaders.ai = loadAiConfig;
 loaders.settings = loadSettings;
 
@@ -1701,6 +2088,8 @@ schedule("macro", () => { if (macroSub !== "calendar" && macroSub !== "outlook")
 schedule("sector", loadSector, 60000);
 schedule("commodity", loadCommodities, 60000);
 schedule("global", loadGlobal, 60000);
+schedule("recommend", loadRecommend, 60000);
+schedule("ranks", loadRanks, 60000);
 schedule("settings", loadSettings, 10000);
 setInterval(loadSettingsHealthOnly, 30000);
 async function loadSettingsHealthOnly() {
@@ -1717,3 +2106,4 @@ window.addEventListener("resize", () => { klineChart?.resize(); sectorChart?.res
 loadDashboard();
 initCommodityCats();
 loadSettingsHealthOnly();
+loadTopAlmanac();

@@ -212,7 +212,7 @@ input:focus { border-color: var(--accent); }
 .progress .p { height: 100%; background: var(--accent); }
 
 /* ---- 7.0 新增 ---- */
-.desc-hl { font-size: 15px; color: #ffd9a8; line-height: 1.7; }
+.desc-hl { font-size: 14px; color: #ffa940; line-height: 1.7; font-weight: 600; }
 .reason-item { padding: 6px 0; border-bottom: 1px dashed rgba(42,53,72,.6); }
 .reason-item .rt { color: var(--accent); font-weight: 600; font-size: 13px; margin-right: 6px; }
 
@@ -245,18 +245,50 @@ input:focus { border-color: var(--accent); }
   white-space: pre-wrap; line-height: 1.75; font-size: 13.5px; }
 
 .ctx-menu { position: fixed; z-index: 1100; background: var(--card); border: 1px solid var(--border);
-  border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,.5); overflow: hidden; }
+  border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,.5); overflow: hidden; min-width: 200px; }
 .ctx-item { padding: 9px 18px; cursor: pointer; font-size: 14px; }
 .ctx-item:hover { background: var(--accent); color: #fff; }
+.ctx-sep { height: 1px; background: var(--border); margin: 4px 0; }
+.ctx-sub { padding: 6px 18px 2px; font-size: 11px; color: var(--muted); }
+.ctx-wx { padding: 4px 12px 8px; display: flex; flex-wrap: wrap; gap: 4px; }
+.wx-check { display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border-radius: 6px;
+  font-size: 12px; cursor: pointer; font-weight: 700; }
+.wx-check input { accent-color: currentColor; }
+
+/* 五行徽章 */
+.wx-badge { display: inline-block; border-radius: 4px; padding: 1px 6px; font-size: 11px;
+  font-weight: 700; margin-right: 3px; line-height: 1.5; }
+.wx-金 { background: #e8c46b; color: #1a1408; }
+.wx-木 { background: #26c281; color: #04150d; }
+.wx-水 { background: #4a9eff; color: #041018; }
+.wx-火 { background: #ff5252; color: #1a0505; }
+.wx-土 { background: #b08050; color: #1a1208; }
+
+.top-almanac { font-size: 12px; color: #e8c46b; max-width: 320px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; cursor: default; }
+.top-almanac.heidao { color: #9aa8be; }
+
+.semantic-rule {
+  background: rgba(74,158,255,.08); border: 1px dashed rgba(74,158,255,.45);
+  border-radius: 8px; padding: 8px 12px; color: #c8dcff; font-size: 13px; line-height: 1.6;
+}
+
+.job-freq .opt { padding: 3px 8px; font-size: 11px; }
+
+.sec-rec { margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid rgba(42,53,72,.5); }
 
 /* ---- 4.0 新增 ---- */
 .movers-scroll > div { max-height: 260px; overflow-y: auto; }
 
-.alert-feed { max-height: 320px; overflow-y: auto; }
+.alert-feed { max-height: 420px; overflow-y: auto; }
 .alert-item { display: flex; gap: 10px; padding: 9px 4px; border-bottom: 1px solid rgba(42,53,72,.5); align-items: flex-start; }
 .alert-item .time { color: var(--muted); font-size: 12px; white-space: nowrap; padding-top: 3px; }
 .alert-item .body { flex: 1; line-height: 1.6; }
 .alert-item .detail { color: var(--muted); font-size: 12px; }
+.alert-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 900px) { .alert-cols { grid-template-columns: 1fr; } }
+.alert-col-title { color: var(--muted); font-size: 12px; margin-bottom: 6px; font-weight: 600; }
+.alert-other { margin-top: 10px; border-top: 1px dashed var(--border); padding-top: 8px; }
 .at-buy_point { background: #8b1a1a; color: #ffb3b3; }
 .at-sell_point { background: #0f5c3d; color: #a9eccd; }
 .at-index_move { background: #7a4a12; color: #ffd9a8; }

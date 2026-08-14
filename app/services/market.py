@@ -105,7 +105,10 @@ def ensure_default_watchlist() -> None:
 
 
 def get_watchlist() -> list[dict]:
-    items = query("SELECT code,name,pinned FROM watchlist ORDER BY pinned DESC, created_at")
+    items = query(
+        "SELECT w.code, w.name, w.pinned, l.industry "
+        "FROM watchlist w LEFT JOIN stock_list l ON l.code = w.code "
+        "ORDER BY w.pinned DESC, w.created_at")
     quotes = get_quotes([i["code"] for i in items])
     out = []
     for item in items:
@@ -113,6 +116,8 @@ def get_watchlist() -> list[dict]:
         out.append({**item, **{k: q.get(k) for k in (
             "price", "pct", "change", "volume", "amount", "volume_ratio",
             "turnover_rate", "amplitude", "time", "source")}})
+    from . import wuxing
+    wuxing.tags_for_list(out)
     return out
 
 

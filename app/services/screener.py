@@ -132,6 +132,8 @@ def run(conditions: dict, limit: int = 100) -> dict:
     for r in rows:
         r["buy_level"] = metrics_svc.buy_index_level(r["buy_index"])[0] if r["buy_index"] is not None else None
         r["sent_level"] = metrics_svc.sentiment_level(r["sentiment"])[0] if r["sentiment"] is not None else None
+    from . import wuxing
+    wuxing.tags_for_list(rows)
     return {"total": len(rows), "items": rows}
 
 
@@ -147,6 +149,89 @@ def meta() -> dict:
         "industries": industries_list(),
         "presets": PRESETS,
     }
+
+
+# ---------------- 语义解析（FR8-05 / FR8-06-2） ----------------
+
+_SEMANTIC_RULES: list[tuple[tuple, str, list[str]]] = [
+    (("低估值", "便宜", "低市盈"), "pe", ["lt15"]),
+    (("破净",), "pb", ["lt1"]),
+    (("放量", "量能放大"), "volume_ratio", ["mild", "surge"]),
+    (("缩量",), "volume_ratio", ["ground", "shrink"]),
+    (("涨停",), "pct_today", ["limit_up"]),
+    (("跌停",), "pct_today", ["limit_down"]),
+    (("大涨", "强势"), "pct_today", ["gt5"]),
+    (("超跌",), "pct_d20", ["ltneg20"]),
+    (("企稳", "止跌"), "tech", ["stabilized"]),
+    (("主力流入", "资金流入", "主力买入"), "main_flow", ["inflow"]),
+    (("主力流出", "资金流出"), "main_flow", ["outflow"]),
+    (("吸筹", "暗中吸筹"), "tech", ["dark_buy"]),
+    (("小市值", "小盘"), "mv", ["lt50", "50to100"]),
+    (("大市值", "大盘股", "权重"), "mv", ["500to1000", "gt1000"]),
+    (("中盘",), "mv", ["100to500"]),
+    (("高换手", "活跃"), "turnover", ["7to15", "gt15"]),
+    (("金叉",), "tech", ["macd_gold"]),
+    (("新高", "突破"), "tech", ["break20_high"]),
+    (("多头", "均线多头"), "tech", ["ma_bull"]),
+    (("超卖",), "tech", ["rsi_oversold"]),
+    (("回调",), "tech", ["pullback_shrink"]),
+    (("持续流入",), "main_flow_d5", ["in5"]),
+]
+
+_SEMANTIC_LABELS = {
+    "pe": "PE", "pb": "PB", "volume_ratio": "量能", "pct_today": "今日涨跌",
+    "pct_d20": "20日涨跌", "tech": "形态", "main_flow": "主力资金",
+    "main_flow_d5": "5日资金", "mv": "市值", "turnover": "换手",
+}
+
+
+def parse_semantic(text: str) -> dict:
+    """自然语言 → 筛选条件 JSON + 解析说明。"""
+    text = text.strip()
+    conditions: dict = {"exclude_st": True}
+    explains: list[str] = []
+
+    for board in BOARD_MAP:
+        if board in text:
+            conditions.setdefault("boards", []).append(board)
+            explains.append(f"板块={board}")
+    for ind in industries_list():
+        if ind and ind in text:
+            conditions.setdefault("industries", []).append(ind)
+            explains.append(f"行业={ind}")
+    # 概念题材（按活跃概念名匹配）
+    concepts = [r["concept"] for r in query(
+        "SELECT concept FROM concept_board ORDER BY turnover DESC LIMIT 150")]
+    hit_concepts = [c for c in concepts if len(c) >= 2 and c in text]
+    if hit_concepts:
+        conditions["concepts"] = hit_concepts[:3]
+        explains.append("题材=" + "、".join(hit_concepts[:3]))
+
+    for keywords, group, buckets in _SEMANTIC_RULES:
+        if any(k in text for k in keywords):
+            existing = conditions.setdefault(group, [])
+            for b in buckets:
+                if b not in existing:
+                    existing.append(b)
+            labels = BUCKET_LABELS.get(group, {})
+            explains.append(f"{_SEMANTIC_LABELS.get(group, group)}={'/'.join(labels.get(b, b) for b in buckets)}")
+
+    return {"conditions": conditions, "explains": explains,
+            "summary": (" 且 ".join(explains) if explains else "未解析出规则，请换个描述（如：低估值放量的银行股）")}
+
+
+def run_semantic(text: str, limit: int = 50) -> dict:
+    parsed = parse_semantic(text)
+    cond = dict(parsed["conditions"])
+    concepts = cond.pop("concepts", [])
+    result = run(cond, limit=100)
+    items = result["items"]
+    if concepts:
+        codes = {r["code"] for r in query(
+            f"SELECT DISTINCT code FROM concept_map WHERE concept IN ({','.join('?' * len(concepts))})",
+            tuple(concepts))}
+        items = [i for i in items if i["code"] in codes]
+    return {**parsed, "total": len(items[:limit]), "items": items[:limit]}
 
 
 # ---------------- 方案保存 ----------------

@@ -132,6 +132,67 @@ def _call_llm(cfg: dict, context: str, task: str) -> str:
     return data["choices"][0]["message"]["content"].strip()
 
 
+def pick_stocks(description: str) -> dict:
+    """AI 选股（FR8-05）：语义解析 → 本地筛选；已配置大模型时附 AI 点评。"""
+    from . import screener
+    result = screener.run_semantic(description, limit=50)
+    commentary, source = "", "语义规则解析"
+    cfg = get_meta_json("ai_config", {}) or {}
+    if cfg.get("api_key") and cfg.get("api_base") and result["items"]:
+        try:
+            top = "；".join(
+                f"{i['name']}({i['code']}) 涨跌{i['pct']}% 购买指数{i['buy_index']}"
+                for i in result["items"][:10])
+            commentary = _call_llm(
+                cfg,
+                f"用户选股描述：「{description}」。解析规则：{result['summary']}。命中个股（前10）：{top}",
+                "请从命中个股中精选3只并各用一句话点评（结合规则与数据），最后给一句风险提示，150字内。")
+            source = f"语义规则解析 + AI点评（{cfg.get('model')}）"
+        except Exception as exc:  # noqa: BLE001
+            log.warning("AI选股点评失败: %s", exc)
+    return {**result, "commentary": (commentary + DISCLAIMER) if commentary else "",
+            "source": source}
+
+
+def classify_wuxing(code: str) -> dict:
+    """AI 五行打标（FR8-03-4）：大模型判定金木水火土，未配置时回退本地行业规则。"""
+    import re
+    from . import wuxing as wx
+    from . import market as mkt
+    norm = mkt.normalize_code(code) or code
+    info = wx.get_tags(norm)
+    tags = list(info.get("auto_tags") or ["土"])
+    text = (f"【本地规则】行业「{info.get('industry') or '未知'}」自动归类为"
+            f"{'、'.join(tags)}。{info.get('note', '')}")
+    source = "本地规则分类"
+    applied = False
+    cfg = get_meta_json("ai_config", {}) or {}
+    if cfg.get("api_key") and cfg.get("api_base"):
+        try:
+            raw = _call_llm(
+                cfg,
+                f"股票代码 {norm}，行业 {info.get('industry')}，"
+                f"本地自动分类参考 {tags}",
+                "请判定该股五行归属（金木水火土，可多选）。严格只输出一行JSON："
+                '{"tags":["火"],"reason":"一句话理由"}',
+            )
+            m = re.search(r"\{[^{}]*\}", raw)
+            if m:
+                parsed = json.loads(m.group())
+                cand = [t for t in parsed.get("tags", []) if t in wx.WUXING]
+                if cand:
+                    tags = cand
+                    wx.set_tags(norm, tags)
+                    applied = True
+            text = raw
+            source = f"AI大模型（{cfg.get('model') or '默认'}）"
+        except Exception as exc:  # noqa: BLE001
+            log.warning("AI五行分类失败: %s", exc)
+            text += f"\n（大模型调用失败，已回退本地规则：{str(exc)[:80]}）"
+    return {"code": norm, "tags": tags, "text": text + DISCLAIMER,
+            "source": source, "applied": applied}
+
+
 def _local_analysis(mode: str, code: str, question: str) -> str:
     """本地规则分析兜底：由既有指标体系生成结构化文本。"""
     if mode == "stock" and code:

@@ -5,10 +5,11 @@ from . import scheduler
 from .cache import cache
 from .database import get_meta
 from .datasources.base import HEALTH
+from . import scheduler as sched_mod
 from .services import (
     ai, alerts, announcement, attribution, commodity, cycle, darkpool, finance,
-    forecast, global_index, kline, knowledge, macro, market, rating, recommend,
-    screener, sector, stocklist,
+    forecast, global_index, kline, knowledge, macro, market, ranks, rating,
+    recommend, screener, sector, stocklist, wuxing,
 )
 from .services import metrics as metrics_svc
 from .database import query as db_query
@@ -47,6 +48,11 @@ def market_forecast():
 def quote(codes: str):
     code_list = [market.normalize_code(c) or c for c in codes.split(",") if c.strip()]
     return market.get_quotes(code_list)
+
+
+@router.get("/watchlist")
+def watchlist_get():
+    return market.get_watchlist()
 
 
 @router.post("/watchlist/add")
@@ -120,12 +126,16 @@ def analysis(code: str):
 # ---------------- 宏观情报 ----------------
 
 @router.get("/macro/news")
-def macro_news(limit: int = 60):
+def macro_news(limit: int = 60, days: int = 0):
+    if days:
+        return macro.get_news_range(days, limit)
     return macro.get_news(limit)
 
 
 @router.get("/macro/policies")
-def macro_policies(limit: int = 40):
+def macro_policies(limit: int = 40, days: int = 0):
+    if days:
+        return macro.get_news_range(days, limit, policy_only=True)
     return macro.get_policies(limit)
 
 
@@ -135,7 +145,7 @@ def macro_major(limit: int = 20):
 
 
 @router.get("/macro/calendar")
-def macro_calendar(months: int = Query(3, ge=1, le=3)):
+def macro_calendar(months: int = Query(3, ge=1, le=6)):
     return macro.get_calendar(months)
 
 
@@ -199,10 +209,12 @@ def etfs(filter: str = "all", page: int = 1, page_size: int = Query(20, le=50)):
 @router.get("/recommend")
 def recommend_board(board: str = "composite", page: int = 1,
                     page_size: int = Query(20, le=100), advice: str = "",
-                    min_score: float = 0, vol_filter: str = "", order_by: str = ""):
+                    min_score: float = 0, vol_filter: str = "", order_by: str = "",
+                    mv_filter: str = "", turn_filter: str = ""):
     return {"boards": recommend.BOARDS,
             **recommend.get_board(board, page=page, page_size=page_size, advice=advice,
-                                  min_score=min_score, vol_filter=vol_filter, order_by=order_by)}
+                                  min_score=min_score, vol_filter=vol_filter, order_by=order_by,
+                                  mv_filter=mv_filter, turn_filter=turn_filter)}
 
 
 # ---------------- 板块资金 / 画像 / 财务 / 周期（3.0） ----------------
@@ -334,6 +346,55 @@ def ai_save_config(payload: dict):
 def ai_analyze(payload: dict):
     return ai.analyze(payload.get("mode", "market"), payload.get("code", ""),
                       payload.get("question", ""))
+
+
+@router.post("/ai/pick")
+def ai_pick(payload: dict):
+    return ai.pick_stocks(payload.get("description", ""))
+
+
+@router.post("/ai/wuxing")
+def ai_wuxing(payload: dict):
+    return ai.classify_wuxing(payload.get("code", ""))
+
+
+# ---------------- 榜单 / 板块推荐 / 五行 / 语义筛选（8.0） ----------------
+
+@router.get("/ranks")
+def get_ranks(type: str = "limit_up", limit: int = Query(50, le=100)):
+    return ranks.get_rank(type, limit)
+
+
+@router.get("/sector/recommend")
+def sector_recommend():
+    return sector.get_sector_recommend()
+
+
+@router.get("/wuxing")
+def wuxing_get(code: str):
+    norm = market.normalize_code(code) or code
+    return wuxing.get_tags(norm)
+
+
+@router.post("/wuxing/set")
+def wuxing_set(payload: dict):
+    norm = market.normalize_code(payload.get("code", "")) or payload.get("code", "")
+    return wuxing.set_tags(norm, payload.get("tags", []))
+
+
+@router.post("/screener/parse")
+def screener_parse(payload: dict):
+    return screener.parse_semantic(payload.get("text", ""))
+
+
+@router.post("/system/job-toggle")
+def job_toggle(job_id: str):
+    return sched_mod.toggle_job(job_id)
+
+
+@router.post("/system/job-interval")
+def job_interval(payload: dict):
+    return sched_mod.set_job_interval(payload.get("job_id", ""), int(payload.get("minutes", 0)))
 
 
 # ---------------- 系统 / 设置 ----------------

@@ -121,6 +121,47 @@ def get_sector_stocks(dim: str, name: str, limit: int = 30) -> list[dict]:
     return rows
 
 
+# ---------------- 板块推荐（FR8-06-1） ----------------
+
+def get_sector_recommend(top_n: int = 10, stocks_per: int = 5) -> list[dict]:
+    """强势板块 TOP10 + 每板块推荐个股 TOP5。"""
+    def loader():
+        from . import rating as rating_svc
+        sectors = query(
+            """SELECT l.industry AS name, ROUND(AVG(s.pct),2) AS pct,
+                      ROUND(AVG(s.pct_d5),2) AS d5,
+                      ROUND(SUM(s.main_net_in)/10000,1) AS net_in_yi,
+                      COUNT(*) AS n
+               FROM stock_snapshot s JOIN stock_list l ON l.code=s.code
+               WHERE l.industry != '' AND s.pct IS NOT NULL
+               GROUP BY l.industry""")
+        for r in sectors:
+            r["hot_score"] = round((r["pct"] or 0) * 3 + (r["d5"] or 0) * 1.5
+                                   + min(max((r["net_in_yi"] or 0), -20), 20), 1)
+        sectors.sort(key=lambda r: -r["hot_score"])
+        out = []
+        for sec in sectors[:top_n]:
+            stocks = query(
+                """SELECT s.code, s.name, s.price, s.pct, s.pct_d5, s.pct_d20, s.pct_d60,
+                          s.main_net_in, s.volume_ratio, s.float_mv,
+                          m.buy_index, m.sentiment
+                   FROM stock_snapshot s
+                   JOIN stock_list l ON l.code = s.code AND l.industry = ?
+                   LEFT JOIN stock_metrics m ON m.code = s.code
+                   WHERE s.price IS NOT NULL AND s.name NOT LIKE '%ST%'
+                   ORDER BY (COALESCE(s.pct_d5,0) * 1.5 + COALESCE(s.main_net_in,0) / 5000.0
+                             + (COALESCE(s.volume_ratio,1) - 1) * 8) DESC LIMIT ?""",
+                (sec["name"], stocks_per))
+            for st in stocks:
+                st["score"], st["advice"] = rating_svc.quick_score(st)
+                st["industry"] = sec["name"]
+            from . import wuxing
+            wuxing.tags_for_list(stocks)
+            out.append({**sec, "stocks": stocks})
+        return out
+    return cached("sector:recommend", 120, loader)
+
+
 # ---------------- 板块周期阶段与季节性常识（FR7-05-3/4） ----------------
 
 SEASONAL_KNOWLEDGE = {

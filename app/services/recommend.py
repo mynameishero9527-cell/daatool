@@ -32,7 +32,7 @@ def _rows(sql: str, params: tuple = (), limit: int = 50) -> list[dict]:
 
 def get_board(board: str, limit: int = 50, page: int = 1, page_size: int = 20,
               advice: str = "", min_score: float = 0, vol_filter: str = "",
-              order_by: str = "") -> dict:
+              order_by: str = "", mv_filter: str = "", turn_filter: str = "") -> dict:
     """榜单：先取足量候选（缓存），再做二级筛选 + 排序 + 分页。"""
     if board not in BOARDS:
         board = "composite"
@@ -57,6 +57,19 @@ def get_board(board: str, limit: int = 50, page: int = 1, page_size: int = 20,
         items = [i for i in items if 0.8 <= (i["volume_ratio"] or 0) < 1.5]
     elif vol_filter == "shrink":
         items = [i for i in items if (i["volume_ratio"] or 1) < 0.8]
+    # 市值/换手档位（FR8-06-3）
+    if mv_filter == "small":
+        items = [i for i in items if (i.get("float_mv") or 0) < 100]
+    elif mv_filter == "mid":
+        items = [i for i in items if 100 <= (i.get("float_mv") or 0) < 500]
+    elif mv_filter == "large":
+        items = [i for i in items if (i.get("float_mv") or 0) >= 500]
+    if turn_filter == "low":
+        items = [i for i in items if (i.get("turnover_rate") or 0) < 3]
+    elif turn_filter == "mid":
+        items = [i for i in items if 3 <= (i.get("turnover_rate") or 0) < 10]
+    elif turn_filter == "high":
+        items = [i for i in items if (i.get("turnover_rate") or 0) >= 10]
 
     # 排序优化（FR4-04-3）
     keys = {"score": lambda i: i["score"] or 0,
@@ -72,9 +85,12 @@ def get_board(board: str, limit: int = 50, page: int = 1, page_size: int = 20,
     pages = max(1, (total + page_size - 1) // page_size)
     page = max(1, min(page, pages))
     start = (page - 1) * page_size
+    page_items = items[start:start + page_size]
+    from . import wuxing
+    wuxing.tags_for_list(page_items)
     return {
         "board": board, "title": BOARDS[board],
-        "items": items[start:start + page_size],
+        "items": page_items,
         "total": total, "page": page, "pages": pages, "page_size": page_size,
         **({"stats": data.get("stats")} if data.get("stats") else {}),
     }
@@ -191,6 +207,7 @@ def _build(board: str, limit: int) -> list[dict]:
             "sentiment": r.get("senti"),
             "dark_power": r.get("dark_power"),
             "industry": r.get("industry") or "",
+            "float_mv": r.get("float_mv"),
             "reason": _rich_reason(reason(r), r),
         }
         if r.get("senti") is not None:
