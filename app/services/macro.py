@@ -373,7 +373,8 @@ _SECTOR_SPEC: dict[str, dict[str, list[str]]] = {
 }
 
 _STOCK_COLS = """s.code, s.name, s.price, s.pct, s.main_net_in, s.volume_ratio,
-                 s.turnover_rate, m.buy_index, m.sentiment, m.dark_power, s.float_mv"""
+                 s.turnover_rate, m.buy_index, m.sentiment, m.dark_power, s.float_mv,
+                 l.industry"""
 
 
 def _resolve_sector(sec: str) -> tuple[list[str], list[str]]:
@@ -409,6 +410,7 @@ def _fetch_by_concepts(concepts: list[str], limit: int, exclude: list[str], like
         f"""SELECT DISTINCT {_STOCK_COLS}
             FROM stock_snapshot s
             JOIN concept_map c ON c.code = s.code AND {where}
+            LEFT JOIN stock_list l ON l.code = s.code
             LEFT JOIN stock_metrics m ON m.code = s.code
             WHERE s.price IS NOT NULL {extra}
             ORDER BY s.main_net_in DESC LIMIT ?""",
@@ -437,6 +439,7 @@ def _fetch_top_mv(limit: int, exclude: list[str]) -> list[dict]:
     return query(
         f"""SELECT {_STOCK_COLS}
             FROM stock_snapshot s
+            LEFT JOIN stock_list l ON l.code = s.code
             LEFT JOIN stock_metrics m ON m.code = s.code
             WHERE s.price IS NOT NULL {extra}
             ORDER BY s.float_mv DESC LIMIT ?""",
@@ -446,12 +449,16 @@ def _fetch_top_mv(limit: int, exclude: list[str]) -> list[dict]:
 
 def _annotate_rows(rows: list[dict], sector: str) -> list[dict]:
     from . import metrics as metrics_svc
+    from . import rating as rating_svc
+    from . import wuxing
     for r in rows:
         r["sector"] = sector
-        if r.get("sentiment") is not None:
-            r["sent_level"] = metrics_svc.sentiment_level(r["sentiment"])[0]
+        if r.get("buy_index") is not None:
+            r["buy_level"], r["buy_action"] = metrics_svc.buy_index_level(r["buy_index"])
         else:
-            r["sent_level"] = None
+            r["buy_level"] = r["buy_action"] = None
+        r["score"], r["advice"] = rating_svc.quick_score(r)
+    wuxing.tags_for_list(rows)
     return rows
 
 

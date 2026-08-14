@@ -929,24 +929,34 @@ function sectorBadges(sectors, title) {
 
 const relatedQuery = { title: "", sectors: "", limit: 30 };
 
+function buyCls(v) {
+  if (v === null || v === undefined || Number.isNaN(Number(v))) return "flat";
+  return v >= 65 ? "up" : v <= 35 ? "down" : "flat";
+}
+function relatedTags(r) {
+  const bits = [wxBadges(r.wuxing)];
+  if (r.buy_level) {
+    bits.push(`<span class="badge ${buyCls(r.buy_index)}" style="font-size:11px;padding:2px 7px">${esc(r.buy_level)}</span>`);
+  }
+  if (r.advice) {
+    const ac = r.advice === "增持" ? "advice-buy" : r.advice === "减持" ? "advice-sell" : "advice-hold";
+    bits.push(`<span class="badge ${ac}" style="font-size:11px;padding:2px 7px">${esc(r.advice)}</span>`);
+  }
+  return bits.filter(Boolean).join(" ");
+}
 function renderRelatedStockTable(stocks) {
   if (!stocks || !stocks.length) return '<div class="muted">未匹配到相关个股</div>';
   return `<table><thead><tr>
-    <th>名称</th><th>板块</th><th>最新价</th><th>涨跌幅</th><th>主力净流入(万)</th>
-    <th>量比</th><th>购买指数</th><th>情绪</th><th>暗盘力量</th>
+    <th>名称</th><th>代码</th><th>涨跌幅</th><th>购买指数</th><th>标签</th>
   </tr></thead><tbody>${stocks.map((r) => `
     <tr data-code="${r.code}" data-name="${esc(r.name)}" onclick="openStock('${r.code}','${esc(r.name)}')">
-      <td>${esc(r.name)} <span class="muted">${r.code}</span></td>
-      <td>${esc(r.sector || "-")}</td>
-      <td class="num ${cls(r.pct)}">${fmt(r.price)}</td>
+      <td>${esc(r.name)}</td>
+      <td class="muted">${esc(r.code)}</td>
       <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
-      <td class="num ${cls(r.main_net_in)}">${fmt(r.main_net_in, 0)}</td>
-      <td class="num">${fmt(r.volume_ratio)}</td>
-      <td class="num">${r.buy_index !== null && r.buy_index !== undefined ? `<b>${fmt(r.buy_index, 0)}</b>` : "-"}</td>
-      <td>${r.sent_level ? esc(r.sent_level) : "-"}</td>
-      <td class="num">${fmt(r.dark_power, 0)}</td>
+      <td class="num ${buyCls(r.buy_index)}">${r.buy_index !== null && r.buy_index !== undefined ? `<b>${fmt(r.buy_index, 0)}</b>` : "-"}</td>
+      <td>${relatedTags(r)}</td>
     </tr>`).join("")}</tbody></table>
-    <div class="muted" style="margin-top:6px;font-size:12px">展示 ${stocks.length} 只（TOP20–50，按主力净流入排序，与板块资金下钻相同口径）。点击行进入个股分析。</div>`;
+    <div class="muted" style="margin-top:6px;font-size:12px">展示 ${stocks.length} 只（TOP20–50）。涨跌幅红涨绿跌；标签含五行颜色、买点与操作提示。点击行进入个股分析。</div>`;
 }
 
 window.showNewsStocks = (sectors, title) => showEventDetail(title, sectors);
