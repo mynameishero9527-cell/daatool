@@ -250,6 +250,8 @@ function renderMovers(m) {
 
 function renderWatchlist(list) {
   watchCodes = new Set(list.map((r) => r.code));
+  const tab = $("#dashWatchTab");
+  if (tab) tab.textContent = list.length ? `自选（${list.length}）` : "自选";
   if (!list.length) { $("#watchTable").innerHTML = '<div class="empty">暂无自选股</div>'; return; }
   $("#watchTable").innerHTML = `<table><thead><tr>
     <th>代码</th><th>名称</th><th>五行</th><th>最新价</th><th>涨跌幅</th><th>涨跌额</th>
@@ -1157,7 +1159,7 @@ let sectorView = "map";
 let sectorChart = null;
 let sectorPage = "flow";
 
-$("#sectorPageTabs").addEventListener("click", (e) => {
+$("#sectorPageTabs")?.addEventListener("click", (e) => {
   const btn = e.target.closest(".opt");
   if (!btn) return;
   sectorPage = btn.dataset.page;
@@ -1552,7 +1554,9 @@ const scoreRowClass = (s) => s >= 95 ? "score-95" : s >= 85 ? "score-85" : s >= 
 
 for (const [id, key] of [["recAdvice", "advice"], ["recScore", "min_score"], ["recVol", "vol_filter"],
   ["recOrder", "order_by"], ["recMv", "mv_filter"], ["recTurn", "turn_filter"]]) {
-  $(`#${id}`).addEventListener("click", (e) => {
+  const el = $(`#${id}`);
+  if (!el) continue;
+  el.addEventListener("click", (e) => {
     const btn = e.target.closest(".opt");
     if (!btn) return;
     recState[key] = key === "min_score" ? Number(btn.dataset.v) : btn.dataset.v;

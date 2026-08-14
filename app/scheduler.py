@@ -1,6 +1,7 @@
 """定时任务调度（产品文档 §4）：盘前准备 / 盘中高中频 / 快讯轮询 / 盘后同步 / 每日维护。"""
 import logging
 from datetime import datetime, time as dtime
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -13,13 +14,19 @@ from .services import metrics as metrics_svc
 log = logging.getLogger("scheduler")
 _scheduler: BackgroundScheduler | None = None
 JOB_STATUS: dict[str, dict] = {}
+_TZ = ZoneInfo("Asia/Shanghai")
+
+
+def _now() -> datetime:
+    return datetime.now(_TZ)
 
 
 def _trading_time() -> bool:
-    now = datetime.now()
+    """A 股交易时段按北京时间判断（云主机默认 UTC，不能用 naive datetime.now()）。"""
+    now = _now()
     if now.weekday() >= 5:
         return False
-    t = now.time()
+    t = now.time().replace(tzinfo=None)
     return dtime(9, 15) <= t <= dtime(11, 30) or dtime(13, 0) <= t <= dtime(15, 5)
 
 
@@ -27,7 +34,7 @@ def _run(name: str, fn, only_trading: bool = False):
     def wrapper():
         if only_trading and not _trading_time():
             return
-        started = datetime.now().isoformat(timespec="seconds")
+        started = _now().replace(tzinfo=None).isoformat(timespec="seconds")
         try:
             fn()
             JOB_STATUS[name] = {"last_run": started, "ok": True, "error": ""}
@@ -46,7 +53,7 @@ def _job_refresh_realtime():
             cache.delete(key)
     market.get_quotes(codes)
     market.get_indices_overview()
-    set_meta("last_realtime_refresh", datetime.now().isoformat(timespec="seconds"))
+    set_meta("last_realtime_refresh", _now().replace(tzinfo=None).isoformat(timespec="seconds"))
 
 
 def _job_refresh_medium():
@@ -73,7 +80,7 @@ def _job_snapshot_sync():
 def _job_daily_maintain():
     cache.clear()
     stocklist.full_sync()
-    set_meta("last_daily_maintain", datetime.now().isoformat(timespec="seconds"))
+    set_meta("last_daily_maintain", _now().replace(tzinfo=None).isoformat(timespec="seconds"))
 
 
 def _job_metrics_rebuild():
