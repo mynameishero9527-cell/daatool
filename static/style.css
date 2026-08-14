@@ -184,6 +184,12 @@ input:focus { border-color: var(--accent); }
 .dir-利空 { background: #0f5c3d; color: #a9eccd; }
 .dir-中性 { background: #3a4556; color: #c6d2e2; }
 .sector-tag { background: rgba(74,158,255,.15); color: var(--accent); }
+.sector-tag.js-sector, .badge.js-sector {
+  cursor: pointer; border: 1px solid rgba(74,158,255,.35);
+}
+.sector-tag.js-sector:hover, .badge.js-sector:hover {
+  background: rgba(74,158,255,.35);
+}
 
 /* 日历 */
 .cal-item { display: flex; gap: 14px; padding: 10px 4px; border-bottom: 1px solid rgba(42,53,72,.5); align-items: center; }

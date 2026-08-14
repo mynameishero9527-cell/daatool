@@ -225,8 +225,9 @@ def etf_holdings(code: str, limit: int = Query(20, le=50)):
 
 
 @router.get("/macro/event-detail")
-def macro_event_detail(title: str, bull: str = "", bear: str = ""):
-    return macro.get_event_detail(title, bull, bear)
+def macro_event_detail(title: str, bull: str = "", bear: str = "",
+                       limit: int = Query(30, ge=20, le=50)):
+    return macro.get_event_detail(title, bull, bear, limit=limit)
 
 
 @router.get("/macro/almanac")

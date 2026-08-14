@@ -749,11 +749,11 @@ async function loadMacro() {
         (groups[key] ||= []).push(ev);
       }
       const evRow = (ev) => `
-        <div class="cal-item" style="cursor:pointer" onclick="showEventDetail('${esc(ev.title)}','${esc(ev.sectors)}')">
+        <div class="cal-item js-event-row" data-title="${esc(ev.title)}" data-sectors="${esc(ev.sectors || "")}" style="cursor:pointer" title="点击查看影响板块与相关个股">
           <span class="cal-date" style="width:108px">${esc(ev.date)}</span>
           ${stars(ev.impact_level)}
           <span class="flag">${esc(ev.city)}</span>
-          <span style="flex:1">${esc(ev.title)} <span class="badge sector-tag" style="font-size:11px">${esc(ev.sectors)}</span></span>
+          <span style="flex:1">${esc(ev.title)} ${sectorBadges(ev.sectors, ev.title)}</span>
           <span class="muted">${esc(ev.cycle_desc)}</span>
         </div>`;
       box.innerHTML = (await almanacCard()) + '<div id="eventDetailBox"></div>' +
@@ -785,12 +785,12 @@ async function loadMacro() {
         <div id="eventDetailBox"></div>
         ${d.groups.map((g) => {
           const evHtml = (ev) => `
-            <div class="cal-item" style="cursor:pointer" onclick="showEventDetail('${esc(ev.title)}','${esc(ev.sectors || "")}')" title="点击查看影响板块与相关个股">
+            <div class="cal-item js-event-row" data-title="${esc(ev.title)}" data-sectors="${esc(ev.sectors || "")}" style="cursor:pointer" title="点击查看影响板块与相关个股">
               <span class="cal-date">${ev.date.slice(5)}</span>
               ${stars(ev.impact_level)}
               <span class="badge level-${ev.impact_level}">${ev.impact_desc}</span>
               <span class="flag">${esc(ev.region)}</span>
-              <span style="flex:1">${esc(ev.title)}${ev.custom ? ` <button class="btn small danger" onclick="event.stopPropagation();delCustomEvent(${ev.id.replace("custom_", "")})">删</button>` : ""}</span>
+              <span style="flex:1">${esc(ev.title)} ${sectorBadges(ev.sectors, ev.title)}${ev.custom ? ` <button class="btn small danger" onclick="event.stopPropagation();delCustomEvent(${ev.id.replace("custom_", "")})">删</button>` : ""}</span>
               <span class="muted">${esc(ev.category)}</span>
             </div>`;
           if (outlookHorizon === "week") {
@@ -839,12 +839,12 @@ async function loadMacro() {
         </div>
         <div id="eventDetailBox"></div>
         ${filtered.length ? filtered.map((ev) => `
-        <div class="cal-item" style="cursor:pointer" onclick="showEventDetail('${esc(ev.title)}','${esc(ev.sectors || "")}')" title="点击查看影响板块与相关个股">
+        <div class="cal-item js-event-row" data-title="${esc(ev.title)}" data-sectors="${esc(ev.sectors || "")}" style="cursor:pointer" title="点击查看影响板块与相关个股">
           <span class="cal-date" style="width:108px">${esc(ev.date)}</span>
           ${stars(ev.impact_level)}
           <span class="badge level-${ev.impact_level}">${ev.impact_desc}</span>
           <span class="flag">${esc(ev.region)}</span>
-          <span style="flex:1">${esc(ev.title)}</span>
+          <span style="flex:1">${esc(ev.title)} ${sectorBadges(ev.sectors, ev.title)}</span>
           <span class="muted">${esc(ev.category)}</span>
         </div>`).join("") : '<div class="empty">该筛选条件下无事件</div>'}`;
       $("#calRangeBtns").addEventListener("click", (e) => {
@@ -879,6 +879,7 @@ async function loadMacro() {
           <button class="btn ghost" onclick="clearAnnSearch()">全部公告</button>
         </div>
         <div class="muted" id="annNote" style="margin-bottom:8px"></div>
+        <div id="eventDetailBox"></div>
         <div id="annRatings"></div>
         <div id="annList"><div class="empty">加载中…</div></div>`;
       loadAnnouncements();
@@ -891,8 +892,11 @@ async function loadMacro() {
     const offline = rows.length && rows[0].offline;
     box.innerHTML = newsFilterBar() + '<div id="eventDetailBox"></div>' +
       (offline ? '<div class="offline-banner">当前展示本地缓存数据（离线）</div>' : "") +
-      (rows.length ? rows.map((n) => `
-      <div class="news-item" data-news="${esc(n.text)}" data-impact="${esc(n.impact_desc || "")}">
+      (rows.length ? rows.map((n) => {
+        const title = (n.text || "").slice(0, 40);
+        const secs = (n.affected_sectors || []).join(",");
+        return `
+      <div class="news-item js-news-item" data-sectors="${esc(secs)}" data-title="${esc(title)}" data-news="${esc(n.text)}" data-impact="${esc(n.impact_desc || "")}">
         <span class="time">${esc((n.time || "").slice(5, 16))}</span>
         <div class="body">${esc(n.text)}
           <div class="meta">
@@ -900,15 +904,49 @@ async function loadMacro() {
             <span class="badge level-${n.impact_level}">${n.impact_desc || ""}</span>
             <span class="badge dir-${n.impact_direction}">${n.impact_direction}</span>
             ${n.is_policy ? '<span class="badge sector-tag">政策</span>' : ""}
-            ${(n.affected_sectors || []).map((s) => `<span class="badge sector-tag">${esc(s)}</span>`).join("")}
-            ${(n.affected_sectors || []).length ? `<button class="btn small ghost" onclick='showNewsStocks(${JSON.stringify((n.affected_sectors || []).join(","))}, ${JSON.stringify((n.text || "").slice(0, 24))})'>相关个股 ›</button>` : ""}
+            ${sectorBadges(n.affected_sectors, title)}
+            ${(n.affected_sectors || []).length ? `<button class="btn small ghost js-news-stocks" data-sectors="${esc(secs)}" data-title="${esc(title)}">相关个股 ›</button>` : ""}
           </div>
           ${n.brief ? `<div class="muted" style="font-size:12px;margin-top:3px">💡 ${esc(n.brief)}</div>` : ""}
           ${n.commentary ? `<div class="desc-hl" style="font-size:13px;margin-top:3px">💬 ${esc(n.commentary)}</div>` : ""}
         </div>
-      </div>`).join("") : '<div class="empty">该筛选条件下暂无数据</div>');
+      </div>`;
+      }).join("") : '<div class="empty">该筛选条件下暂无数据</div>');
     bindNewsFilters();
   } catch (err) { box.innerHTML = '<div class="empty">加载失败，稍后自动重试</div>'; console.warn(err); }
+}
+
+function parseSectors(v) {
+  if (!v) return [];
+  if (Array.isArray(v)) return v.map((s) => String(s).trim()).filter(Boolean);
+  return String(v).split(/[,，、/|]+/).map((s) => s.trim()).filter(Boolean);
+}
+function sectorBadges(sectors, title) {
+  return parseSectors(sectors).map((s) =>
+    `<span class="badge sector-tag js-sector" data-sector="${esc(s)}" data-title="${esc(title || s)}" title="点击查看「${esc(s)}」相关个股 TOP20–50">${esc(s)}</span>`
+  ).join("");
+}
+
+const relatedQuery = { title: "", sectors: "", limit: 30 };
+
+function renderRelatedStockTable(stocks) {
+  if (!stocks || !stocks.length) return '<div class="muted">未匹配到相关个股</div>';
+  return `<table><thead><tr>
+    <th>名称</th><th>板块</th><th>最新价</th><th>涨跌幅</th><th>主力净流入(万)</th>
+    <th>量比</th><th>购买指数</th><th>情绪</th><th>暗盘力量</th>
+  </tr></thead><tbody>${stocks.map((r) => `
+    <tr data-code="${r.code}" data-name="${esc(r.name)}" onclick="openStock('${r.code}','${esc(r.name)}')">
+      <td>${esc(r.name)} <span class="muted">${r.code}</span></td>
+      <td>${esc(r.sector || "-")}</td>
+      <td class="num ${cls(r.pct)}">${fmt(r.price)}</td>
+      <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
+      <td class="num ${cls(r.main_net_in)}">${fmt(r.main_net_in, 0)}</td>
+      <td class="num">${fmt(r.volume_ratio)}</td>
+      <td class="num">${r.buy_index !== null && r.buy_index !== undefined ? `<b>${fmt(r.buy_index, 0)}</b>` : "-"}</td>
+      <td>${r.sent_level ? esc(r.sent_level) : "-"}</td>
+      <td class="num">${fmt(r.dark_power, 0)}</td>
+    </tr>`).join("")}</tbody></table>
+    <div class="muted" style="margin-top:6px;font-size:12px">展示 ${stocks.length} 只（TOP20–50，按主力净流入排序，与板块资金下钻相同口径）。点击行进入个股分析。</div>`;
 }
 
 window.showNewsStocks = (sectors, title) => showEventDetail(title, sectors);
@@ -916,27 +954,64 @@ window.showNewsStocks = (sectors, title) => showEventDetail(title, sectors);
 window.showEventDetail = async (title, sectors = "") => {
   const box = $("#eventDetailBox");
   if (!box) return;
+  relatedQuery.title = title || "";
+  relatedQuery.sectors = sectors || "";
   box.innerHTML = '<div class="empty">分析中…</div>';
   try {
-    const d = await api(`/api/macro/event-detail?title=${encodeURIComponent(title)}&bull=${encodeURIComponent(sectors)}`);
+    const d = await api(`/api/macro/event-detail?title=${encodeURIComponent(title || "")}&bull=${encodeURIComponent(sectors || "")}&limit=${relatedQuery.limit}`);
+    const focus = parseSectors(sectors);
     box.innerHTML = `
       <div class="outlook-summary" style="border-color:rgba(255,169,64,.4)">
         <b>📌 ${esc(d.title)} — 影响分析</b>
-        <button class="btn small ghost" style="float:right" onclick="this.closest('.outlook-summary').remove()">收起</button>
-        <div class="kv"><span class="k">利好板块</span><span>${d.bull_sectors.map((s) => `<span class="badge dir-利好">${esc(s)}</span>`).join("")}</span></div>
-        <div class="kv"><span class="k">利空板块</span><span>${d.bear_sectors.map((s) => `<span class="badge dir-利空">${esc(s)}</span>`).join("")}</span></div>
+        <button class="btn small ghost" style="float:right" onclick="this.closest('.outlook-summary').parentElement.innerHTML=''">收起</button>
+        <div class="kv"><span class="k">利好板块</span><span>${(d.bull_sectors || []).map((s) =>
+          `<span class="badge dir-利好 js-sector" data-sector="${esc(s)}" data-title="${esc(s)}" title="点击查看该板块个股">${esc(s)}</span>`).join("")}</span></div>
+        <div class="kv"><span class="k">利空板块</span><span>${(d.bear_sectors || []).map((s) =>
+          `<span class="badge dir-利空 js-sector" data-sector="${esc(s)}" data-title="${esc(s)}" title="点击查看该板块个股">${esc(s)}</span>`).join("")}</span></div>
         <div class="kv"><span class="k">利好概率</span><span><b class="${d.bull_prob >= 55 ? "up" : d.bull_prob <= 45 ? "down" : "flat"}">${d.bull_prob}%</b> <span class="muted">${esc(d.prob_note)}</span></span></div>
-        ${d.stocks.length ? `
-        <div class="muted" style="margin:6px 0 4px">相关题材个股（${d.stocks.length} 只，点击进入个股分析）：</div>
-        <div>${d.stocks.map((s) => `
-          <span class="chip" style="cursor:pointer" onclick="openStock('${s.code}','${esc(s.name)}')">
-            ${esc(s.name)} ${s.code} <span class="${cls(s.pct)}">${pct(s.pct)}</span>${s.buy_index !== null ? ` · 购${fmt(s.buy_index, 0)}` : ""}
-          </span>`).join("")}</div>` : '<div class="muted">未匹配到相关个股</div>'}
+        <div class="muted" style="margin:8px 0 4px">${focus.length === 1 ? `「${esc(focus[0])}」相关个股` : "相关题材个股"}
+          <span class="btn-group" id="relLimitBtns" style="margin-left:10px">
+            ${[20, 30, 50].map((n) =>
+              `<button class="opt ${relatedQuery.limit === n ? "active" : ""}" data-n="${n}">TOP${n}</button>`).join("")}
+          </span>
+        </div>
+        ${renderRelatedStockTable(d.stocks)}
         <div class="muted" style="font-size:11px;margin-top:6px">${esc(d.disclaimer)}</div>
       </div>`;
+    $("#relLimitBtns")?.addEventListener("click", (e) => {
+      const btn = e.target.closest(".opt");
+      if (!btn) return;
+      e.stopPropagation();
+      relatedQuery.limit = Number(btn.dataset.n);
+      showEventDetail(relatedQuery.title, relatedQuery.sectors);
+    });
     box.scrollIntoView({ behavior: "smooth", block: "nearest" });
   } catch (err) { box.innerHTML = '<div class="empty">分析加载失败</div>'; }
 };
+
+$("#page-macro")?.addEventListener("click", (e) => {
+  const tag = e.target.closest(".js-sector");
+  if (tag) {
+    e.preventDefault();
+    e.stopPropagation();
+    const sec = tag.dataset.sector || "";
+    if (!sec || sec === "无明显利空" || sec === "政策") return;
+    showEventDetail(tag.dataset.title || sec, sec);
+    return;
+  }
+  const allBtn = e.target.closest(".js-news-stocks");
+  if (allBtn) {
+    e.preventDefault();
+    e.stopPropagation();
+    showEventDetail(allBtn.dataset.title || "相关个股", allBtn.dataset.sectors || "");
+    return;
+  }
+  if (e.target.closest("button, input, select, a, table")) return;
+  const row = e.target.closest(".js-event-row, .js-news-item");
+  if (row && (row.dataset.sectors || "")) {
+    showEventDetail(row.dataset.title || "相关个股", row.dataset.sectors || "");
+  }
+});
 
 window.addCustomEvent = async () => {
   const res = await api("/api/macro/custom-event", {
@@ -1695,7 +1770,7 @@ async function loadAnnouncements() {
             <span class="badge sector-tag">${esc(a.tag)}</span>
             <span class="badge dir-${a.direction}">${esc(a.direction)}</span>
             <span class="badge level-${a.impact_level}">${esc(a.impact_desc)}</span>
-            ${(a.affected_sectors || []).map((s) => `<span class="badge sector-tag">${esc(s)}</span>`).join("")}
+            ${(a.affected_sectors || []).map((s) => `<span class="badge sector-tag js-sector" data-sector="${esc(s)}" data-title="${esc(s)}" title="点击查看「${esc(s)}」相关个股 TOP20–50">${esc(s)}</span>`).join("")}
           </div>
           ${a.brief ? `<div class="desc-hl" style="font-size:13px;margin-top:3px">💡 ${esc(a.brief)}</div>` : ""}
         </div>

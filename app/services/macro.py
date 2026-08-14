@@ -331,56 +331,175 @@ _EVENT_IMPACT_MAP: list[tuple[tuple, list[str], list[str], int]] = [
     (("社零", "工业增加值"), ["大消费", "家用电器"], ["无明显利空"], 52),
 ]
 
-# 板块词 → 本地可查询的（概念候选, 行业候选）
-_SECTOR_LOOKUP: dict[str, tuple[str, str]] = {
-    "券商": ("证券", "非银金融"), "银行": ("银行", "银行"), "房地产": ("房地产", "房地产"),
-    "贵金属": ("黄金", "有色金属"), "黄金": ("黄金", "有色金属"),
-    "半导体": ("半导体", "电子"), "人工智能": ("人工智能", "计算机"),
-    "科技成长": ("人工智能", "计算机"), "科技自主": ("国产替代", "计算机"),
-    "食品饮料": ("食品", "食品饮料"), "农林牧渔": ("农业", "农林牧渔"),
-    "大消费": ("消费", "食品饮料"), "家用电器": ("家电", "家用电器"),
-    "基建": ("基建", "建筑装饰"), "钢铁": ("钢铁", "钢铁"), "机械设备": ("机械", "机械设备"),
-    "出口链": ("跨境电商", "轻工制造"), "石油石化": ("石油", "石油石化"),
-    "油气开采": ("油气", "石油石化"), "航空": ("航空", "交通运输"), "物流": ("物流", "交通运输"),
-    "绩优白马": ("基金重仓", "食品饮料"), "高估值成长": ("人工智能", "计算机"),
+# 板块词 → 申万行业 + 概念（快讯/政策标签与日历事件共用）
+_SECTOR_SPEC: dict[str, dict[str, list[str]]] = {
+    "半导体": {"concepts": ["芯片概念"], "industries": ["电子"]},
+    "新能源": {"concepts": ["新能源车", "光伏概念", "储能概念", "锂电池概念", "风电概念"],
+             "industries": ["电力设备"]},
+    "医药": {"concepts": [], "industries": ["医药生物"]},
+    "地产": {"concepts": [], "industries": ["房地产"]},
+    "房地产": {"concepts": [], "industries": ["房地产"]},
+    "金融": {"concepts": [], "industries": ["银行", "非银金融"]},
+    "银行": {"concepts": [], "industries": ["银行"]},
+    "券商": {"concepts": ["证券"], "industries": ["非银金融"]},
+    "能源": {"concepts": [], "industries": ["石油石化", "煤炭", "公用事业"]},
+    "有色": {"concepts": [], "industries": ["有色金属"]},
+    "有色金属": {"concepts": [], "industries": ["有色金属"]},
+    "汽车": {"concepts": [], "industries": ["汽车"]},
+    "军工": {"concepts": ["军工"], "industries": ["国防军工"]},
+    "国防军工": {"concepts": ["军工"], "industries": ["国防军工"]},
+    "消费": {"concepts": [], "industries": ["食品饮料", "商贸零售", "家用电器", "美容护理", "社会服务"]},
+    "大消费": {"concepts": [], "industries": ["食品饮料", "商贸零售", "家用电器"]},
+    "科技": {"concepts": ["人工智能", "数据中心"], "industries": ["计算机", "通信"]},
+    "科技成长": {"concepts": ["人工智能"], "industries": ["计算机"]},
+    "科技自主": {"concepts": ["国产替代"], "industries": ["计算机", "电子"]},
+    "人工智能": {"concepts": ["人工智能"], "industries": ["计算机"]},
+    "贵金属": {"concepts": ["黄金"], "industries": ["有色金属"]},
+    "黄金": {"concepts": ["黄金"], "industries": ["有色金属"]},
+    "石油石化": {"concepts": [], "industries": ["石油石化"]},
+    "油气开采": {"concepts": [], "industries": ["石油石化"]},
+    "航空": {"concepts": ["航空"], "industries": ["交通运输"]},
+    "物流": {"concepts": ["物流"], "industries": ["交通运输"]},
+    "基建": {"concepts": ["基建"], "industries": ["建筑装饰", "建筑材料"]},
+    "钢铁": {"concepts": [], "industries": ["钢铁"]},
+    "机械设备": {"concepts": [], "industries": ["机械设备"]},
+    "食品饮料": {"concepts": [], "industries": ["食品饮料"]},
+    "农林牧渔": {"concepts": ["农业"], "industries": ["农林牧渔"]},
+    "家用电器": {"concepts": ["家电"], "industries": ["家用电器"]},
+    "出口链": {"concepts": ["跨境电商"], "industries": ["轻工制造", "纺织服饰"]},
+    "绩优白马": {"concepts": ["基金重仓"], "industries": ["食品饮料"]},
+    "高估值成长": {"concepts": ["人工智能"], "industries": ["计算机"]},
+    "指数权重": {"concepts": [], "industries": []},
 }
+
+_STOCK_COLS = """s.code, s.name, s.price, s.pct, s.main_net_in, s.volume_ratio,
+                 s.turnover_rate, m.buy_index, m.sentiment, m.dark_power, s.float_mv"""
+
+
+def _resolve_sector(sec: str) -> tuple[list[str], list[str]]:
+    spec = _SECTOR_SPEC.get(sec)
+    if spec:
+        return list(spec.get("industries") or []), list(spec.get("concepts") or [])
+    if query("SELECT 1 FROM stock_list WHERE industry = ? LIMIT 1", (sec,)):
+        return [sec], []
+    if query("SELECT 1 FROM concept_map WHERE concept = ? LIMIT 1", (sec,)):
+        return [], [sec]
+    return [], [sec]
+
+
+def _not_in(codes: list[str]) -> tuple[str, list]:
+    if not codes:
+        return "", []
+    return " AND s.code NOT IN (" + ",".join("?" * len(codes)) + ")", list(codes)
+
+
+def _fetch_by_concepts(concepts: list[str], limit: int, exclude: list[str], like: bool = False) -> list[dict]:
+    if not concepts or limit <= 0:
+        return []
+    extra, params_ex = _not_in(exclude)
+    if like:
+        cond = " OR ".join(["c.concept LIKE ?" for _ in concepts])
+        params = [f"%{c}%" for c in concepts] + params_ex + [limit]
+        where = f"({cond})"
+    else:
+        ph = ",".join("?" * len(concepts))
+        params = list(concepts) + params_ex + [limit]
+        where = f"c.concept IN ({ph})"
+    return query(
+        f"""SELECT DISTINCT {_STOCK_COLS}
+            FROM stock_snapshot s
+            JOIN concept_map c ON c.code = s.code AND {where}
+            LEFT JOIN stock_metrics m ON m.code = s.code
+            WHERE s.price IS NOT NULL {extra}
+            ORDER BY s.main_net_in DESC LIMIT ?""",
+        tuple(params),
+    )
+
+
+def _fetch_by_industries(industries: list[str], limit: int, exclude: list[str]) -> list[dict]:
+    if not industries or limit <= 0:
+        return []
+    extra, params_ex = _not_in(exclude)
+    ph = ",".join("?" * len(industries))
+    return query(
+        f"""SELECT {_STOCK_COLS}
+            FROM stock_snapshot s
+            JOIN stock_list l ON l.code = s.code AND l.industry IN ({ph})
+            LEFT JOIN stock_metrics m ON m.code = s.code
+            WHERE s.price IS NOT NULL {extra}
+            ORDER BY s.main_net_in DESC LIMIT ?""",
+        (*industries, *params_ex, limit),
+    )
+
+
+def _fetch_top_mv(limit: int, exclude: list[str]) -> list[dict]:
+    extra, params_ex = _not_in(exclude)
+    return query(
+        f"""SELECT {_STOCK_COLS}
+            FROM stock_snapshot s
+            LEFT JOIN stock_metrics m ON m.code = s.code
+            WHERE s.price IS NOT NULL {extra}
+            ORDER BY s.float_mv DESC LIMIT ?""",
+        (*params_ex, limit),
+    )
+
+
+def _annotate_rows(rows: list[dict], sector: str) -> list[dict]:
+    from . import metrics as metrics_svc
+    for r in rows:
+        r["sector"] = sector
+        if r.get("sentiment") is not None:
+            r["sent_level"] = metrics_svc.sentiment_level(r["sentiment"])[0]
+        else:
+            r["sent_level"] = None
+    return rows
 
 
 def _stocks_for_sectors(sectors: list[str], limit: int = 30) -> list[dict]:
-    """由板块词反查本地个股（概念优先、行业兜底），按流通市值排序去重。"""
+    """由板块词反查本地个股（概念优先、行业兜底），按主力净流入排序，返回 20–50 只。"""
+    limit = max(20, min(int(limit or 30), 50))
+    names = [s.strip() for s in sectors if s and s.strip() and s.strip() != "无明显利空"]
+    if not names:
+        return _annotate_rows(_fetch_top_mv(limit, []), "指数权重")[:limit]
     seen, out = set(), []
-    for sec in sectors:
-        concept, industry = _SECTOR_LOOKUP.get(sec, (sec, sec))
-        rows = query(
-            """SELECT s.code, s.name, s.price, s.pct, m.buy_index, s.float_mv
-               FROM stock_snapshot s
-               JOIN concept_map c ON c.code = s.code AND c.concept LIKE ?
-               LEFT JOIN stock_metrics m ON m.code = s.code
-               WHERE s.price IS NOT NULL ORDER BY s.float_mv DESC LIMIT 15""",
-            (f"%{concept}%",))
-        if not rows:
-            rows = query(
-                """SELECT s.code, s.name, s.price, s.pct, m.buy_index, s.float_mv
-                   FROM stock_snapshot s
-                   JOIN stock_list l ON l.code = s.code AND l.industry = ?
-                   LEFT JOIN stock_metrics m ON m.code = s.code
-                   WHERE s.price IS NOT NULL ORDER BY s.float_mv DESC LIMIT 15""",
-                (industry,))
-        for r in rows:
-            if r["code"] not in seen:
-                seen.add(r["code"])
-                r["sector"] = sec
-                out.append(r)
-        if len(out) >= limit:
+    nsec = len(names)
+    per = limit if nsec == 1 else max(8, (limit + nsec - 1) // nsec)
+    for sec in names:
+        need = min(per, limit - len(out))
+        if need <= 0:
             break
-    return out[:max(20, min(limit, 50))]
+        industries, concepts = _resolve_sector(sec)
+        rows: list[dict] = []
+        if concepts:
+            rows = _fetch_by_concepts(concepts, need, list(seen), like=False)
+            if not rows:
+                rows = _fetch_by_concepts(concepts, need, list(seen), like=True)
+        if len(rows) < need and industries:
+            rows.extend(_fetch_by_industries(industries, need - len(rows),
+                                             list(seen) + [r["code"] for r in rows]))
+        if not rows:
+            rows = _fetch_by_concepts([sec], need, list(seen), like=True)
+        if not rows and industries:
+            rows = _fetch_by_industries(industries, need, list(seen))
+        if not rows and sec == "指数权重":
+            rows = _fetch_top_mv(need, list(seen))
+        for r in _annotate_rows(rows, sec):
+            if r["code"] in seen:
+                continue
+            seen.add(r["code"])
+            out.append(r)
+            if len(out) >= limit:
+                return out[:limit]
+    return out[:limit]
 
 
-def get_event_detail(title: str, bull_override: str = "", bear_override: str = "") -> dict:
+def get_event_detail(title: str, bull_override: str = "", bear_override: str = "",
+                     limit: int = 30) -> dict:
     """预期事件详情：利好/利空板块、利好概率、相关个股（20-50 只）。
 
-    bull_override/bear_override：逗号分隔板块名，用于节气/节日/板块事件直接传参。
+    bull_override/bear_override：逗号分隔板块名，用于节气/节日/板块事件/快讯标签直接传参。
     """
+    limit = max(20, min(int(limit or 30), 50))
     bull, bear, base_prob = ["指数权重"], ["无明显利空"], 50
     if bull_override:
         bull = [s.strip() for s in bull_override.replace("、", ",").split(",") if s.strip()]
@@ -407,7 +526,7 @@ def get_event_detail(title: str, bull_override: str = "", bear_override: str = "
         pass
 
     bull_valid = [s for s in bull if s != "无明显利空"]
-    stocks = _stocks_for_sectors(bull_valid, limit=50)
+    stocks = _stocks_for_sectors(bull_valid, limit=limit)
     return {
         "title": title,
         "bull_sectors": bull, "bear_sectors": bear,
