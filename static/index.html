@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>A股量化工具</title>
-<link rel="stylesheet" href="/static/style.css">
-<script src="/static/vendor/echarts.min.js"></script>
+<link rel="stylesheet" href="/static/style.css?v=8.0.1">
+<script src="/static/vendor/echarts.min.js?v=8.0.1"></script>
 </head>
 <body>
 <header class="topbar">
@@ -31,6 +31,7 @@
   </div>
 </header>
 
+<div id="apiBanner" class="offline-banner" style="display:none;margin:10px 18px 0"></div>
 <main>
   <!-- 行情看板 -->
   <section class="page active" id="page-dashboard">
@@ -424,6 +425,6 @@
   <div class="ctx-item" id="ctxNewsAi" style="display:none">🤖 发送AI分析（消息）</div>
 </div>
 
-<script src="/static/app.js"></script>
+<script src="/static/app.js?v=8.0.1"></script>
 </body>
 </html>

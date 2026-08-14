@@ -2,9 +2,11 @@
 import logging
 import threading
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import scheduler
 from .api import router
@@ -16,8 +18,70 @@ from .services import metrics as metrics_svc
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("main")
 
-app = FastAPI(title="A股量化工具", version="1.0.0")
+_NO_STORE = {"Cache-Control": "no-store, max-age=0"}
+
+_HTML_404 = """<!DOCTYPE html>
+<html lang="zh-CN"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>页面不存在</title>
+<style>
+body{font-family:-apple-system,sans-serif;background:#0d1117;color:#dbe4f0;padding:40px 24px;max-width:640px;margin:0 auto;line-height:1.6}
+a{color:#4a9eff;text-decoration:none} a:hover{text-decoration:underline}
+.card{background:#161b22;border:1px solid #30363d;padding:18px 20px;border-radius:10px;margin:14px 0}
+h1{font-size:22px;margin:0 0 8px} p{margin:8px 0} .muted{color:#8b9bb4;font-size:13px}
+</style></head><body>
+<h1>404 · 页面不存在</h1>
+<p class="muted">请从下面入口进入，不要直接打开本地 HTML 文件。</p>
+<div class="card">
+  <p><a href="/">前端界面</a></p>
+  <p><a href="/docs">后端 Swagger 文档</a></p>
+  <p><a href="/api">API 入口</a></p>
+</div>
+</body></html>
+"""
+
+app = FastAPI(title="A股量化工具", version="8.0.1", docs_url="/docs", redoc_url="/redoc")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.include_router(router)
+
+
+def _index_page():
+    return FileResponse(STATIC_DIR / "index.html", media_type="text/html", headers=_NO_STORE)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_error_handler(request: Request, exc: StarletteHTTPException):
+    if exc.status_code == 404 and "text/html" in request.headers.get("accept", ""):
+        return HTMLResponse(_HTML_404, status_code=404)
+    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+
+
+@app.get("/", include_in_schema=False)
+def index_root():
+    """前端入口。"""
+    return _index_page()
+
+
+@app.get("/index.html", include_in_schema=False)
+def index_html():
+    """兼容直接访问 /index.html（此前会落到 FastAPI JSON 404）。"""
+    return _index_page()
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
+        '<rect fill="#0d1117" width="32" height="32" rx="6"/>'
+        '<text x="16" y="22" text-anchor="middle" font-size="16" fill="#4a9eff">A</text></svg>'
+    )
+    return Response(svg, media_type="image/svg+xml")
+
 
 
 @app.on_event("startup")
@@ -55,8 +119,3 @@ def startup() -> None:
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-
-
-@app.get("/")
-def index():
-    return FileResponse(STATIC_DIR / "index.html")

@@ -4,10 +4,38 @@
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
 
+function apiUrl(path) {
+  /* 同源请求；file:// 直接打开 HTML 时回落到本机后端 */
+  if (/^https?:\/\//i.test(path)) return path;
+  const abs = path.startsWith("/") ? path : `/${path}`;
+  const origin = window.location.origin || "";
+  if (!origin || origin === "null" || origin.startsWith("file:")) {
+    return "http://127.0.0.1:8000" + abs;
+  }
+  try {
+    const u = new URL(abs, origin);
+    return u.pathname + u.search;
+  } catch {
+    return abs;
+  }
+}
+
+function showApiBanner(msg) {
+  const el = $("#apiBanner");
+  if (!el) return;
+  el.style.display = msg ? "" : "none";
+  el.textContent = msg || "";
+}
+
 async function api(path, opts = {}) {
-  const resp = await fetch(path, opts);
-  if (!resp.ok) throw new Error(`${path} -> ${resp.status}`);
-  return resp.json();
+  const resp = await fetch(apiUrl(path), opts);
+  const ct = resp.headers.get("content-type") || "";
+  if (!ct.includes("application/json")) {
+    throw new Error(`${path} → ${resp.status}（返回的不是 JSON，请用 http://主机:8000/ 打开前端，不要直接打开本地 HTML 文件）`);
+  }
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(`${path} → ${resp.status} ${data.detail ? JSON.stringify(data.detail) : ""}`);
+  return data;
 }
 const post = (path) => api(path, { method: "POST" });
 
@@ -47,7 +75,11 @@ async function loadDashboard() {
     renderMovers(d.movers);
     renderWatchlist(d.watchlist);
     $("#lastRefresh").textContent = "更新 " + new Date().toLocaleTimeString("zh-CN");
-  } catch (err) { console.warn(err); }
+    showApiBanner("");
+  } catch (err) {
+    console.warn(err);
+    showApiBanner("前端拉接口失败：" + (err && err.message ? err.message : err));
+  }
   loadMarketSentiment();
   loadMarketCycle();
   loadMiniMinute();

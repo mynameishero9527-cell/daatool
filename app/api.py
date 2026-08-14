@@ -1,5 +1,6 @@
 """FastAPI 路由：所有接口为同步函数，由框架线程池执行，保证事件循环不被阻塞。"""
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
+from fastapi.responses import HTMLResponse
 
 from . import scheduler
 from .cache import cache
@@ -15,6 +16,57 @@ from .services import metrics as metrics_svc
 from .database import query as db_query
 
 router = APIRouter(prefix="/api")
+
+_API_INDEX = {
+    "name": "A股量化工具 API",
+    "ui": "/",
+    "docs": "/docs",
+    "redoc": "/redoc",
+    "openapi": "/openapi.json",
+    "health": "/api/system/status",
+    "dashboard": "/api/dashboard",
+}
+
+_API_HTML = """<!DOCTYPE html>
+<html lang="zh-CN"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A股量化工具 · API</title>
+<style>
+body{font-family:-apple-system,sans-serif;background:#0d1117;color:#dbe4f0;padding:40px 24px;max-width:640px;margin:0 auto;line-height:1.6}
+a{color:#4a9eff;text-decoration:none} a:hover{text-decoration:underline}
+.card{background:#161b22;border:1px solid #30363d;padding:18px 20px;border-radius:10px;margin:14px 0}
+h1{font-size:22px;margin:0 0 8px} p{margin:8px 0} .muted{color:#8b9bb4;font-size:13px}
+</style></head><body>
+<h1>A股量化工具 · 后端入口</h1>
+<p class="muted">你打开的是 API 地址，不是前端页面。</p>
+<div class="card">
+  <p><a href="/">打开前端界面</a></p>
+  <p><a href="/docs">Swagger 接口文档（可直接调试）</a></p>
+  <p><a href="/redoc">ReDoc 文档</a></p>
+  <p><a href="/api/system/status">健康检查 JSON</a></p>
+  <p><a href="/api/dashboard">看板数据 JSON</a></p>
+  <p><a href="/openapi.json">OpenAPI JSON</a></p>
+</div>
+</body></html>
+"""
+
+
+def _api_root(request: Request):
+    """浏览器打开 /api 给导航页；curl / 脚本拿到 JSON。"""
+    accept = request.headers.get("accept", "")
+    if "text/html" in accept:
+        return HTMLResponse(_API_HTML)
+    return _API_INDEX
+
+
+@router.get("", include_in_schema=False)
+def api_root(request: Request):
+    return _api_root(request)
+
+
+@router.get("/", include_in_schema=False)
+def api_root_slash(request: Request):
+    return _api_root(request)
 
 
 # ---------------- 行情看板 ----------------
