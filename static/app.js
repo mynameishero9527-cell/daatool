@@ -3422,7 +3422,7 @@ function readBuyFlashState() {
 const buyFlashState = (() => {
   const s = readBuyFlashState();
   return {
-    collapsed: false,
+    collapsed: s.collapsed === true,
     win: s.win && Number.isFinite(s.win.left) ? s.win : null,
     logo: s.logo && Number.isFinite(s.logo.left) ? s.logo : null,
   };
@@ -3545,7 +3545,6 @@ async function loadBuyPoints() {
       body.innerHTML = `<div class="empty">${esc(note || "暂无最佳买点")}</div>`;
       return;
     }
-    if (buyFlashState.collapsed) setBuyFlashCollapsed(false);
     if (!watchCodesLoaded) {
       for (const r of items) {
         if (r.in_watchlist && r.code) watchCodes.add(r.code);
