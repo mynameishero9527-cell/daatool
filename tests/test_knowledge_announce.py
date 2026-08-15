@@ -4,7 +4,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from app.database import execute, init_db
+from app.database import execute, init_db, query
 from app.services import announcement, knowledge
 
 
@@ -25,18 +25,44 @@ class AnnouncementFilterTests(unittest.TestCase):
             "某某董事会决议：控股股东拟增持公司股份",
             "000001 平安银行股份回购进展公告",
             "上市公司发布业绩预告：净利润同比预增",
+            "华测导航公告，2026年上半年营业收入19.29亿元",
+            "广东鸿图公告称，公司第九届董事会第九次会议同意现金管理",
+            "【中国海诚中标云南沃森生物能碳管理平台项目】此次中标是公司在生物医药领域的突破",
         ):
             self.assertTrue(announcement._is_company_announcement(text), text)  # noqa: SLF001
 
+    def test_rejects_gov_roundup_and_non_filings(self):
+        for text in (
+            "海关总署发布关于进口泰国食用水生动物检疫和卫生要求的公告",
+            "印度政府一份公告显示下调出口税",
+            "【下周将有29只股解禁 2股解禁比例超50%】据统计，下周将有29只股解禁",
+            "【中方团队在全球最大“人造太阳”壁处理领域实现技术链条贯通】据中核集团消息，日前，中核集团核工业西南物理研究院团队在国际热核聚变实验堆（ITER）装置壁处理技术领域接连取得重要进展：不仅顺利通过辉光放电清洗系统",
+            "【宇树科技未上市先疯抢 部分中介出价520元/股】记者获悉，宇树科技场外“暗盘交易”悄然兴起。目前多家中介通过各类渠道收购该股新股",
+            "【从价格战到场景战 LED产业链结构性修复】今年上半年LED产业链上市公司业绩呈现显著分化，部分公司发布业绩预告",
+            "【美国ITC发布对墨盒及其组件II的337部分终裁】美国国际贸易委员会（ITC）发布公告称，对特定墨盒作出终裁",
+            "【原山东钢铁集团房地产有限公司董事长王文学接受纪律审查和监察调查】8月14日，莒县纪委监委通报",
+            "【段永平继续加仓拼多多，大幅减持英伟达、谷歌】截至二季度末，由段永平管理的基金总持仓市值约191亿美元",
+        ):
+            self.assertFalse(announcement._is_company_announcement(text), text)  # noqa: SLF001
+
     def test_get_announcements_always_returns_list(self):
         init_db()
-        d = announcement.get_announcements("", 20)
+        with patch("app.services.macro.get_news", return_value=[]):
+            d = announcement.get_announcements("", 20)
         self.assertIsInstance(d.get("items"), list)
         self.assertIn("empty_reason", d)
         self.assertIn("note", d)
+        joined = "\n".join(it.get("text") or "" for it in d["items"])
+        for bad in ("人造太阳", "暗盘交易", "LED产业链", "美国ITC", "海关总署", "枪支回购"):
+            self.assertNotIn(bad, joined, bad)
         for it in d["items"]:
             self.assertTrue(announcement._is_company_announcement(it.get("text") or ""))  # noqa: SLF001
             self.assertIsInstance(it.get("affected_sectors"), list)
+        if query("SELECT 1 FROM macro_event WHERE event_id LIKE 'news_%' AND summary LIKE '%华测导航公告%' LIMIT 1"):
+            self.assertTrue(any("华测导航" in (it.get("text") or "") for it in d["items"]))
+        elif d["items"]:
+            self.assertTrue(any("公告称" in (it.get("text") or "") or "中标" in (it.get("text") or "")
+                                for it in d["items"]))
 
 
 class KnowledgeAiTests(unittest.TestCase):
@@ -106,5 +132,45 @@ class KnowledgeAiTests(unittest.TestCase):
         self.assertIn("整节失败时仍应保留", item["desc"])
 
 
+class KnowledgeAiEndpointTests(unittest.TestCase):
+    """右键更新走 POST /api/knowledge/ai：空 body 不得 422。"""
+
+    @classmethod
+    def setUpClass(cls):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from app.api import router
+        app = FastAPI()
+        app.include_router(router)
+        cls.client = TestClient(app)
+        init_db()
+        knowledge.ensure_table()
+
+    def test_empty_body_is_json_not_422(self):
+        r = self.client.post("/api/knowledge/ai")
+        self.assertNotEqual(r.status_code, 422, r.text)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.headers.get("content-type", "")[:16], "application/json")
+        d = r.json()
+        self.assertFalse(d.get("applied"))
+        self.assertTrue(d.get("error"))
+
+    def test_json_term_and_query_fallback(self):
+        r = self.client.post("/api/knowledge/ai", json={"term": "量比"})
+        self.assertEqual(r.status_code, 200, r.text)
+        d = r.json()
+        self.assertEqual(d.get("term"), "量比")
+        self.assertIn("applied", d)
+        r2 = self.client.post("/api/knowledge/ai?term=%E9%87%8F%E6%AF%94")
+        self.assertEqual(r2.status_code, 200, r2.text)
+        self.assertEqual(r2.json().get("term"), "量比")
+
+    def test_empty_json_object(self):
+        r = self.client.post("/api/knowledge/ai", json={})
+        self.assertEqual(r.status_code, 200)
+        self.assertFalse(r.json().get("applied"))
+
+
 if __name__ == "__main__":
     unittest.main()
+

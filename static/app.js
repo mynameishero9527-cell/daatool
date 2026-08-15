@@ -4112,22 +4112,26 @@ async function loadAnnouncements() {
       const ident = a.id || `${a.time || ""}:${(a.text || "").slice(0, 40)}`;
       const key = intelKey("announce", ident);
       const secs = Array.isArray(a.affected_sectors)
-        ? a.affected_sectors.join(",")
+        ? a.affected_sectors.filter((s) => typeof s === "string").join(",")
         : String(a.affected_sectors || "");
+      const dir = a.direction || "中性";
+      const dirCls = dir === "利空" ? "dir-利空" : dir === "利好" ? "dir-利好" : "level-2";
+      const t = String(a.time || "");
+      const tshow = t.length >= 16 ? t.slice(5, 16) : t;
       return `
       <div class="news-item js-intel-row js-news-item" data-news="${escAttr(a.text)}" data-impact="${escAttr(a.impact_desc || "")}"
-        data-title="${escAttr((a.text || "").slice(0, 40))}" data-sectors="${escAttr(secs)}" data-direction="${escAttr(a.direction || "")}"
+        data-title="${escAttr((a.text || "").slice(0, 40))}" data-sectors="${escAttr(secs)}" data-direction="${escAttr(dir)}"
         data-intel-source="announce" data-intel-id="${escAttr(ident)}" data-intel-key="${escAttr(key)}"
         data-intel-title="${escAttr((a.text || "").slice(0, 40))}" data-intel-text="${escAttr((a.text || "").slice(0, 500))}"
-        data-intel-time="${escAttr(a.time || "")}" data-attention="${escAttr((a.impact_level || 0) * 20)}">
-        <span class="time">${esc((a.time || "").slice(5, 16))}</span>
+        data-intel-time="${escAttr(t)}" data-attention="${escAttr((a.impact_level || 0) * 20)}">
+        <span class="time">${esc(tshow)}</span>
         <div class="body">${esc(a.text)}
           <div class="meta">
-            <span class="badge sector-tag">${esc(a.tag)}</span>
-            <span class="badge dir-${esc(a.direction || "中性")}">${esc(a.direction || "中性")}</span>
-            <span class="badge level-${esc(a.impact_level || 1)}">${esc(a.impact_desc)}</span>
+            <span class="badge sector-tag">${esc(a.tag || "公告")}</span>
+            <span class="badge ${dirCls}">${esc(dir)}</span>
+            ${a.impact_desc ? `<span class="badge level-${esc(a.impact_level || 1)}">${esc(a.impact_desc)}</span>` : ""}
             ${intelFlagHtml(key)}
-            ${intelSectorBadges(key, a.affected_sectors, a.tag, a.direction)}
+            ${intelSectorBadges(key, secs, a.tag, dir)}
           </div>
           ${a.brief ? `<div class="desc-hl" style="font-size:calc(13px * var(--font-scale));margin-top:3px">💡 ${esc(a.brief)}</div>` : ""}
           ${intelReasonLine(key)}
@@ -4172,7 +4176,10 @@ async function loadKnowledge() {
         `).join("")}
       </div>`).join("")
       : '<div class="empty">未找到相关词条</div>';
-  } catch (err) { console.warn(err); }
+  } catch (err) {
+    box.innerHTML = `<div class="empty">加载失败：${esc(err.message || err)}</div>`;
+    console.warn(err);
+  }
 }
 
 /* ---------------- 榜单（FR8-04） ---------------- */
@@ -4667,19 +4674,33 @@ $("#ctxHolderKw")?.addEventListener("click", () => {
   runIntelAi("keywords", `🔑 AI 提取关键信息词库「${(ctxIntel && ctxIntel.title) || ""}」`);
 });
 async function runKbAi() {
-  if (!ctxKb) return;
-  const { term, section } = ctxKb;
+  const kb = ctxKb;
+  if (!kb || (!kb.term && !kb.section)) {
+    hideCtxMenu();
+    return;
+  }
+  const term = (kb.term || "").trim();
+  const section = (kb.section || "").trim();
   hideCtxMenu();
   const modal = $("#aiModal");
   modal.style.display = "";
   const title = term ? `📚 AI 更新知识「${term}」` : `📚 AI 更新知识「${section || ""}」`;
   $("#aiModalTitle").textContent = title;
   $("#aiModalBody").innerHTML = '<div class="empty">正在更新知识，大模型最长约 1 分钟，失败不覆盖已有解释…</div>';
+  const qs = new URLSearchParams();
+  if (term) qs.set("term", term);
+  else if (section) qs.set("section", section);
+  const path = `/api/knowledge/ai?${qs.toString()}`;
   try {
-    const d = await api("/api/knowledge/ai", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ term: term || "", section: term ? "" : (section || "") }),
-    });
+    let d;
+    try {
+      d = await api(path, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ term: term || "", section: term ? "" : (section || "") }),
+      });
+    } catch (first) {
+      d = await api(path, { method: "POST" });
+    }
     const n = d.applied_n || (d.applied ? 1 : 0);
     const fail = d.failed_n || 0;
     const applied = d.applied
@@ -4688,13 +4709,17 @@ async function runKbAi() {
     const extra = fail ? `，${fail} 条未覆盖` : "";
     $("#aiModalBody").innerHTML = aiErrBanner(d, "。未假装成功，未覆盖已有解释。")
       + `<div class="muted" style="margin-bottom:6px">${esc(d.source || "")}${applied}${extra}</div>`
-      + esc(d.text || d.desc || "").replace(/\n/g, "<br>");
+      + esc(d.text || d.desc || d.error || "").replace(/\n/g, "<br>");
     if (d.applied) loadKnowledge();
   } catch (err) {
     $("#aiModalBody").innerHTML = `<div class="empty">更新失败：${esc(err.message || err)}</div>`;
   }
 }
-$("#ctxKbAi")?.addEventListener("click", () => { runKbAi(); });
+$("#ctxKbAi")?.addEventListener("click", (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  runKbAi();
+});
 $("#ctxKbRevert")?.addEventListener("click", async () => {
   if (!ctxKb || !ctxKb.term) return;
   const term = ctxKb.term;
@@ -5739,7 +5764,7 @@ function applyBuyFlashPos() {
   const panel = $("#buyFlash");
   const fab = $("#buyFlashFab");
   if (panel && buyFlashState.win) {
-    const p = clampSoulPos(buyFlashState.win.left, buyFlashState.win.top, panel.offsetWidth || 430, Math.min(panel.offsetHeight || 200, window.innerHeight));
+    const p = clampSoulPos(buyFlashState.win.left, buyFlashState.win.top, panel.offsetWidth || 720, Math.min(panel.offsetHeight || 200, window.innerHeight));
     panel.style.left = p.left + "px";
     panel.style.top = p.top + "px";
     panel.style.right = "auto";
@@ -5871,26 +5896,35 @@ async function loadBuyPoints() {
         if (r.in_watchlist && r.code) watchCodes.add(r.code);
       }
     }
-    body.innerHTML = items.map((r) => `
-      <div class="buy-flash-row" data-code="${esc(r.code)}" data-name="${esc(r.name)}">
-        <div class="buy-flash-main">
-          <span class="hl-name">${esc(r.name)}</span>
-          <span class="hl-code">${esc(r.code)}</span>
-          ${pxHtml(r.price, r.pct)}
-          <span class="num ${cls(r.pct)}">${pct(r.pct)}</span>
-        </div>
-        ${planPickedHtml(r, kind)}
-        ${signalContextHtml(r)}
-        <div class="buy-flash-meta">
-          <span>现价 ${pxHtml(r.price, r.pct)}</span>
-          <span class="${cls(r.pct)}">${pct(r.pct)}</span>
-          <span>购买指数 <b>${fmt(r.buy_index, 0)}</b> ${esc(r.buy_level || "")}</span>
-          <span>量比 ${fmt(r.volume_ratio)}</span>
-          <span>评级 ${esc(r.finance_grade || "—")}</span>
-        </div>
-        <div class="buy-flash-advice">${esc(r.advice_summary || r.advice || r.hit_action || "")}</div>
-        ${watchBtnHtml(r.code, r.name, r.in_watchlist)}
-      </div>`).join("");
+    const adviceBadge = (r) => {
+      const a = r.op_advice || r.advice || "";
+      const short = a.includes("减持") ? "减持" : a.includes("增持") ? "增持" : (a.includes("持有") || a.includes("观望") ? "观望" : (kind === "sell" ? "减持" : "关注"));
+      const clsName = short === "增持" ? "advice-buy" : short === "减持" ? "advice-sell" : "advice-hold";
+      return `<span class="badge ${clsName}" style="font-size:calc(12px * var(--font-scale));padding:2px 8px">${esc(short)}</span>`;
+    };
+    body.innerHTML = `<table><thead><tr>
+      <th>名称</th><th>五行</th><th>财报</th><th>所属板块</th><th>现价</th><th>涨跌幅</th>
+      <th>量比</th>${flowMetricHeaders()}<th>购买指数</th><th>提示</th>
+    </tr></thead><tbody>${items.map((r) => `
+      <tr class="${scoreRowClass(r.score)}" data-code="${escAttr(r.code)}" data-name="${escAttr(r.name)}" onclick="openStock('${esc(r.code)}','${esc(r.name)}')">
+        <td>${esc(r.name)} <span class="muted">${esc(r.code)}</span>
+          ${planPickedHtml(r, kind)}
+        </td>
+        <td>${wxBadges(r.wuxing) || "—"}</td>
+        <td>${finBadge(r)}</td>
+        <td>${esc(r.industry || r.board_text || "-")}</td>
+        <td class="num">${pxHtml(r.price, r.pct)}</td>
+        <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
+        <td class="num">${fmt(r.volume_ratio)}</td>${flowMetricCells(r)}
+        <td class="num"><b>${fmt(r.buy_index, 0)}</b> <span class="muted">${esc(r.buy_level || "")}</span></td>
+        <td>
+          ${adviceBadge(r)}
+          ${signalLevelsHtml(r)}
+          <div class="buy-flash-advice">${esc(r.advice_summary || r.hit_action || "")}</div>
+          ${watchBtnHtml(r.code, r.name, r.in_watchlist)}
+        </td>
+      </tr>`).join("")}</tbody></table>
+      <div class="muted" style="margin-top:8px;font-size:calc(12px * var(--font-scale))">与主界面相同的表格与卡片样式。量化参考，不构成投资建议。</div>`;
     syncWatchButtons();
   } catch (err) {
     paintEmpty(kindLabel + "加载失败，请检查服务是否在运行", "失败");

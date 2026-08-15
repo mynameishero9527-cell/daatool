@@ -297,7 +297,7 @@ table { width: 100%; border-collapse: collapse; font-size: calc(13px * var(--fon
 th, td { white-space: nowrap; }
 #watchTable, #screenerResult, #recommendTable, #rankTable, #aiPickTable, #spTable, #ipTable,
 #sectorDrillTable, #flowBarStocksTable, #etfHoldings, #ckRelatedTable, #flowTrendTable,
-#holdersSec { overflow-x: auto; }
+#holdersSec, #buyFlashBody { overflow-x: auto; }
 th, td { padding: 9px 11px; text-align: right; white-space: nowrap; }
 th { color: var(--muted); font-weight: 500; font-size: calc(13px * var(--font-scale)); border-bottom: 1px solid var(--border); }
 td { border-bottom: 1px solid var(--hairline); }
@@ -411,7 +411,7 @@ input:focus { border-color: var(--accent); }
 .comp-bar .fill { height: 100%; background: var(--accent); border-radius: 4px; }
 
 /* 快讯 */
-.news-item { padding: 10px 4px; border-bottom: 1px solid rgba(42,53,72,.5); display: flex; gap: 10px; }
+.news-item { padding: 10px 4px; border-bottom: 1px solid var(--hairline); display: flex; gap: 10px; }
 .news-item .time { color: var(--muted); font-size: calc(12px * var(--font-scale)); white-space: nowrap; padding-top: 2px; }
 .news-item .body { flex: 1; line-height: 1.6; }
 .news-item .meta { margin-top: 4px; }
@@ -480,7 +480,7 @@ input:focus { border-color: var(--accent); }
   text-align: center; padding: 9px 2px; font-size: calc(12px * var(--font-scale)); }
 .jiugong div.center { background: rgba(232,196,107,.12); color: #e8c46b; }
 
-.kb-item { padding: 10px 4px; border-bottom: 1px solid rgba(42,53,72,.5); cursor: context-menu; }
+.kb-item { padding: 10px 4px; border-bottom: 1px solid var(--hairline); cursor: context-menu; }
 .kb-item .term { color: var(--accent); font-weight: 700; font-size: calc(15px * var(--font-scale)); }
 .kb-item .desc { color: var(--text); margin-top: 3px; line-height: 1.7; }
 .kb-section-title { cursor: context-menu; }
@@ -490,8 +490,8 @@ input:focus { border-color: var(--accent); }
 
 .ai-modal {
   position: fixed; right: 24px; bottom: 24px; width: 430px; max-width: 92vw; z-index: 1000;
-  background: var(--card); border: 1px solid var(--accent); border-radius: 12px;
-  box-shadow: 0 8px 32px rgba(0,0,0,.55);
+  background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 8px 32px var(--shadow);
 }
 .ai-modal-head { display: flex; justify-content: space-between; align-items: center;
   padding: 10px 14px; border-bottom: 1px solid var(--border); font-weight: 700; cursor: move;
@@ -703,12 +703,12 @@ tr.score-95 td { background: rgba(255, 60, 60, .30); }
   padding: 2px 8px; border-radius: 6px; font-weight: 600;
 }
 .plan-badge-full.buy {
-  background: rgba(255,82,82,.18); color: #ffb3b3;
-  border: 1px solid rgba(255,82,82,.45);
+  background: var(--up-soft); color: var(--up);
+  border: 1px solid var(--up-ring);
 }
 .plan-badge-full.sell {
-  background: rgba(38,194,129,.18); color: #a9eccd;
-  border: 1px solid rgba(38,194,129,.45);
+  background: var(--down-soft); color: var(--down);
+  border: 1px solid var(--down-ring);
 }
 .plan-picked-verb { font-size: calc(12px * var(--font-scale)); color: var(--muted); }
 .plan-card label input[type=checkbox] { width: 16px; height: 16px; }
@@ -796,59 +796,42 @@ tr.score-95 td { background: rgba(255, 60, 60, .30); }
 
 .buy-flash {
   position: fixed; top: 72px; right: 18px; left: auto; bottom: auto; z-index: 400;
-  width: 430px; min-height: 220px; max-height: min(72vh, 580px);
+  width: min(920px, calc(100vw - 36px)); min-height: 220px; max-height: min(78vh, 640px);
   color: var(--text);
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 12px;
-  box-shadow: 0 8px 32px var(--shadow);
+  padding: 0;
   display: flex; flex-direction: column; overflow: hidden;
 }
-.buy-flash.kind-buy { border-color: var(--up-ring); }
-.buy-flash.kind-sell { border-color: var(--down-ring); }
-.buy-flash.dragging { box-shadow: 0 8px 32px var(--shadow), 0 0 0 1px var(--accent); }
+.buy-flash.dragging { outline: 1px solid var(--accent); }
 .buy-flash-head {
   flex: 0 0 auto;
   display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;
-  padding: 10px 14px; border-bottom: 1px solid var(--border);
-  background: var(--bg2);
+  padding: 14px 16px 10px;
   font-weight: 600; cursor: grab; user-select: none;
   color: var(--text);
 }
-.buy-flash.kind-buy .buy-flash-head { border-bottom-color: var(--up-ring); }
-.buy-flash.kind-sell .buy-flash-head { border-bottom-color: var(--down-ring); }
 .buy-flash-head:active { cursor: grabbing; }
 .buy-flash-title { font-size: calc(16px * var(--font-scale)); font-weight: 600; color: var(--text); }
 .buy-flash-note {
-  flex: 0 0 auto; padding: 8px 14px 0; font-size: calc(12px * var(--font-scale)); color: var(--muted); line-height: 1.45;
+  flex: 0 0 auto; padding: 0 16px 8px; font-size: calc(13px * var(--font-scale)); color: var(--muted); line-height: 1.45;
 }
 .buy-flash-note.warn { color: var(--warn); }
-.buy-flash-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 10px 14px 14px; }
-.buy-flash-body .empty { padding: 24px 8px; }
-.buy-flash-row {
-  border: 1px solid var(--border); border-radius: 10px;
-  padding: 10px 12px; margin-bottom: 8px; background: var(--bg2);
-}
-.buy-flash-row:hover { background: var(--card-hover); cursor: pointer; }
-.buy-flash-main { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; flex-wrap: wrap; }
-.buy-flash-meta {
-  display: flex; flex-wrap: wrap; gap: 8px 12px;
-  font-size: calc(12px * var(--font-scale)); color: var(--muted); margin-bottom: 4px;
-}
-.buy-flash-advice { font-size: calc(12px * var(--font-scale)); margin-bottom: 6px; line-height: 1.5; white-space: normal; }
-.buy-flash.kind-buy .buy-flash-advice { color: var(--up); }
-.buy-flash.kind-sell .buy-flash-advice { color: var(--down); }
+.buy-flash-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 0 16px 14px; }
+.buy-flash-body .empty { padding: 30px 0; }
+.buy-flash-body td:last-child { white-space: normal; text-align: left; max-width: 280px; }
+.buy-flash-advice { font-size: calc(12px * var(--font-scale)); margin: 4px 0 0; line-height: 1.5; white-space: normal; color: var(--muted); }
 .advice-summary { font-size: calc(12px * var(--font-scale)); color: var(--up); line-height: 1.5; margin-top: 4px; white-space: normal; }
 .signal-extra { display: flex; flex-wrap: wrap; gap: 6px 10px; font-size: calc(12px * var(--font-scale)); color: var(--muted); margin: 4px 0; }
 .buy-flash-logo {
   position: fixed; right: 18px; bottom: 18px; left: auto; top: auto; z-index: 400;
   width: 48px; height: 48px; padding: 0; border: 1px solid var(--border); border-radius: 12px;
   background: var(--card); color: var(--accent); cursor: grab;
-  box-shadow: 0 8px 24px var(--shadow);
   font-size: calc(15px * var(--font-scale)); font-weight: 700;
 }
-.buy-flash-logo.kind-buy { color: var(--up); border-color: var(--up-ring); }
-.buy-flash-logo.kind-sell { color: var(--down); border-color: var(--down-ring); }
+.buy-flash-logo.kind-buy { color: var(--up); border-color: var(--border); }
+.buy-flash-logo.kind-sell { color: var(--down); border-color: var(--border); }
 .buy-flash-logo:hover { background: var(--card-hover); }
 .buy-flash-logo:active { cursor: grabbing; }
 .buy-flash-fab-label { pointer-events: none; }

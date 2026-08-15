@@ -564,18 +564,40 @@ def get_knowledge(q: str = ""):
     return knowledge.get_knowledge(q)
 
 
+async def _json_obj(request: Request) -> dict:
+    """空 body / 非 JSON 不抛 422，右键更新才能稳定调用。"""
+    try:
+        data = await request.json()
+    except Exception:  # noqa: BLE001
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 @router.post("/knowledge/ai")
-def knowledge_ai(payload: dict):
+async def knowledge_ai(request: Request, term: str = Query(""), section: str = Query("")):
     """右键 AI 更新股票常识 / 选股票小技巧。失败不覆盖已保存解释。"""
-    return knowledge.ai_update(
-        term=payload.get("term") or "",
-        section=payload.get("section") or "",
-    )
+    body = await _json_obj(request)
+    try:
+        return knowledge.ai_update(
+            term=(body.get("term") or term or "").strip(),
+            section=(body.get("section") or section or "").strip(),
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False, "applied": False, "kept": True,
+            "error": str(exc)[:300],
+            "hint": "未覆盖已有解释。可到 AI 分析页检查配置后再试。",
+            "text": "更新失败，已保留原解释。",
+        }
 
 
 @router.post("/knowledge/revert")
-def knowledge_revert(payload: dict):
-    return knowledge.revert_knowledge(payload.get("term") or "")
+async def knowledge_revert(request: Request, term: str = Query("")):
+    body = await _json_obj(request)
+    try:
+        return knowledge.revert_knowledge((body.get("term") or term or "").strip())
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "applied": False, "error": str(exc)[:300]}
 
 
 @router.get("/announcements")
