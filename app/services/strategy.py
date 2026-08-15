@@ -284,22 +284,82 @@ def _sort_hits(items: list[dict], kind: str) -> list[dict]:
     return items
 
 
+def plan_caption(pid: str) -> str:
+    p = PLANS.get(pid)
+    return f"方案{pid}·{p.name}" if p else f"方案{pid}"
+
+
+def stamp_plans(row: dict, plans: list[str] | None, kind: str) -> dict:
+    """给命中行打上可读的方案出处（完整名称，不是只写 A）。"""
+    ids = [p for p in (plans or []) if p in PLANS]
+    row["plans"] = ids
+    row["plan_id"] = ",".join(ids)
+    row["plan_labels"] = [plan_caption(p) for p in ids]
+    row["plan_names"] = "、".join(row["plan_labels"])
+    if kind == "buy":
+        actions = [PLANS[p].buy_action for p in ids]
+    else:
+        actions = [PLANS[p].sell_action for p in ids]
+    row["hit_action"] = "；".join(actions) if actions else ""
+    if ids:
+        row["picked_by"] = row["plan_names"]
+        row["picked_text"] = f"由{'、'.join(row['plan_labels'])}选出"
+    else:
+        row["picked_by"] = ""
+        row["picked_text"] = "观察池（非策略命中）"
+    return row
+
+
 def _annotate(items: list[dict], kind: str) -> list[dict]:
     for r in items:
-        plans = [p for p in (r.get("plans") or []) if p in PLANS]
-        r["plans"] = plans
-        r["plan_id"] = ",".join(plans)
-        if kind == "buy":
-            actions = [PLANS[p].buy_action for p in plans]
-        else:
-            actions = [PLANS[p].sell_action for p in plans]
-        r["hit_action"] = "；".join(actions) if actions else ""
-        r["plan_names"] = "、".join(f"{p} {PLANS[p].name}" for p in plans)
+        stamp_plans(r, r.get("plans") or [], kind)
     return items
 
 
+def _fair_take(items: list[dict], enabled: list[str], limit: int) -> list[dict]:
+    """多方案并行时按方案轮询取数，避免只显示某一方案的头部标的。"""
+    limit = max(1, min(int(limit or 8), 80))
+    if len(items) <= limit:
+        return items
+    if not enabled:
+        return items[:limit]
+    used: set[str] = set()
+    out: list[dict] = []
+    queues = {pid: [r for r in items if pid in (r.get("plans") or [])] for pid in enabled}
+    cursor = {pid: 0 for pid in enabled}
+    while len(out) < limit:
+        progressed = False
+        for pid in enabled:
+            q = queues.get(pid) or []
+            i = cursor.get(pid, 0)
+            while i < len(q):
+                r = q[i]
+                i += 1
+                code = r.get("code")
+                if not code or code in used:
+                    continue
+                out.append(r)
+                used.add(code)
+                progressed = True
+                break
+            cursor[pid] = i
+            if len(out) >= limit:
+                return out
+        if not progressed:
+            break
+    for r in items:
+        code = r.get("code")
+        if not code or code in used:
+            continue
+        out.append(r)
+        used.add(code)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def collect_hits(kind: str, enabled: list[str] | None = None, limit: int = PER_PLAN_CAP) -> list[dict]:
-    """启用方案并集。同一代码命中多个方案只保留一行并叠加 plans。"""
+    """启用方案并集。同一代码命中多个方案只保留一行并叠加方案出处。"""
     if kind not in ("buy", "sell"):
         raise ValueError("kind must be buy or sell")
     enabled = enabled if enabled is not None else get_enabled()
@@ -312,39 +372,37 @@ def collect_hits(kind: str, enabled: list[str] | None = None, limit: int = PER_P
         order = plan.buy_order if kind == "buy" else plan.sell_order
         for row in _fetch(fragment, order):
             _merge(bucket, row, pid)
-    items = _sort_hits(list(bucket.values()), kind)
-    return _annotate(items[: max(1, min(int(limit or 8), 80))], kind)
+    items = _annotate(_sort_hits(list(bucket.values()), kind), kind)
+    return _fair_take(items, enabled, limit)
 
 
-def collect_buy_points(limit: int = 8) -> tuple[list[dict], str, str]:
+def collect_buy_points(limit: int = 12) -> tuple[list[dict], str, str]:
     """实时买点窗：主规则并集 →（仅当全空且 A 启用）A 的 65 回退 → 观察池。"""
-    limit = max(3, min(int(limit or 8), 20))
+    limit = max(3, min(int(limit or 12), 40))
     enabled = get_enabled()
-    items = collect_hits("buy", enabled, limit=80)
+    items = collect_hits("buy", enabled, limit=limit)
     source, note = "hit", _hit_note(enabled, "buy")
     if items:
-        return items[:limit], source, note
+        return items, source, note
 
     plan_a = PLANS["A"]
     if "A" in enabled and plan_a.buy_fallback_where:
         bucket: dict[str, dict] = {}
         for row in _fetch(plan_a.buy_fallback_where, plan_a.buy_order):
             _merge(bucket, row, "A")
-        items = _annotate(_sort_hits(list(bucket.values()), "buy"), "buy")
+        items = _annotate(_sort_hits(list(bucket.values()), "buy"), "buy")[:limit]
         if items:
             note = (
                 "启用方案主规则暂无命中，已按方案 A 回退：购买指数≥65 且主力净流入>0"
                 "（较好买点观察池，非极佳买点）。不构成投资建议"
             )
-            return items[:limit], "relaxed_65", note
+            return items, "relaxed_65", note
 
     if "A" in enabled:
         rows = _fetch("m.buy_index IS NOT NULL", "m.buy_index DESC", limit)
         for r in rows:
-            r["plans"] = []
-            r["plan_id"] = ""
+            stamp_plans(r, [], "buy")
             r["hit_action"] = "观察池，非策略命中"
-            r["plan_names"] = ""
         if rows:
             note = (
                 "启用方案暂无「规则命中且主力净流入」组合，已按购买指数从高到低展示观察池"
@@ -352,23 +410,29 @@ def collect_buy_points(limit: int = 8) -> tuple[list[dict], str, str]:
             )
             return rows[:limit], "top_buy_index", note
 
-    names = "、".join(f"{i} {PLANS[i].name}" for i in enabled)
+    names = "、".join(plan_caption(i) for i in enabled)
     return [], "empty", f"当前启用方案（{names}）暂无买点命中，请确认已同步行情并重建指标"
 
 
-def collect_sell_points(limit: int = 5) -> list[dict]:
-    return collect_hits("sell", limit=limit)
+def collect_sell_points(limit: int = 12) -> tuple[list[dict], str, str]:
+    limit = max(3, min(int(limit or 12), 40))
+    enabled = get_enabled()
+    items = collect_hits("sell", enabled, limit=limit)
+    if items:
+        return items, "hit", _hit_note(enabled, "sell")
+    names = "、".join(plan_caption(i) for i in enabled)
+    return [], "empty", f"当前启用方案（{names}）暂无卖点命中"
 
 
 def _hit_note(enabled: list[str], kind: str) -> str:
-    labels = "、".join(f"{i} {PLANS[i].name}" for i in enabled)
+    labels = "、".join(plan_caption(i) for i in enabled)
     verb = "买点" if kind == "buy" else "卖点"
     if len(enabled) > 1:
         return (
-            f"并行方案 {labels} 取并集：命中任一方案即入选；同一标的命中多个方案会叠加标签并优先排序。"
+            f"并行方案 {labels} 取并集：命中任一方案即入选；同一标的会注明全部选出方案。"
             f"不构成投资建议"
         )
-    return f"当前执行方案 {labels} 的{verb}规则。不构成投资建议"
+    return f"当前执行{labels} 的{verb}规则。每条个股会标明由该方案选出。不构成投资建议"
 
 
 def plan_counts() -> dict[str, dict[str, int]]:
@@ -384,7 +448,7 @@ def executing_text(enabled: list[str] | None = None) -> dict:
     title = ("方案 " + "、".join(names) + " 并行") if len(enabled) > 1 else f"方案 {names[0]}"
     blocks = [
         f"当前执行：{title}",
-        "并行规则：启用方案同时扫描，买点/卖点取并集；同一代码命中多个方案只显示一行并叠加【方案】标签。",
+        "并行规则：启用方案同时扫描，买点/卖点取并集；同一代码命中多个方案只显示一行，并注明全部选出方案。",
         "财报评级为独立维度，不并入购买指数，也不作为本菜单的买卖条件。",
         "",
     ]

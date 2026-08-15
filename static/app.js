@@ -62,11 +62,14 @@ const cls = (v) => (v > 0 ? "up" : v < 0 ? "down" : "flat");
 const sign = (v) => (v > 0 ? "+" : "");
 const pct = (v) => (v === null || v === undefined) ? "-" : `${sign(v)}${fmt(v)}%`;
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-function planBadgesHtml(plans) {
-  const list = Array.isArray(plans) ? plans.filter(Boolean) : [];
-  if (!list.length) return "";
-  const multi = list.length > 1 ? " multi" : "";
-  return list.map((p) => `<span class="plan-badge${multi}">【${esc(p)}】</span>`).join("");
+function planPickedHtml(row) {
+  const labels = Array.isArray(row && row.plan_labels) ? row.plan_labels.filter(Boolean) : [];
+  const multi = labels.length > 1 ? " multi" : "";
+  if (labels.length) {
+    return `<div class="plan-picked">${labels.map((l) => `<span class="plan-badge-full${multi}">${esc(l)}</span>`).join("")}<span class="plan-picked-verb">选出</span></div>`;
+  }
+  const text = (row && (row.picked_text || row.picked_by)) || "";
+  return text ? `<div class="plan-picked"><span class="plan-picked-verb">${esc(text)}</span></div>` : "";
 }
 const wxBadges = (tags) => (tags && tags.length)
   ? tags.map((t) => `<span class="wx-badge wx-${esc(t)}">${esc(t)}</span>`).join("") : "";
@@ -392,53 +395,81 @@ function bindAlertDock() {
 
 async function loadAlerts() {
   try {
-    const d = await api("/api/alerts");
+    const [d, buyLive, sellLive] = await Promise.all([
+      api("/api/alerts"),
+      api("/api/alerts/buy-points?limit=16").catch(() => ({ items: [] })),
+      api("/api/alerts/sell-points?limit=16").catch(() => ({ items: [] })),
+    ]);
     const items = d.items || [];
+    const liveBuys = buyLive.items || [];
+    const liveSells = sellLive.items || [];
     const countEl = $("#alertDockCount");
-    if (countEl) countEl.textContent = items.length ? `${items.length} 条` : "暂无";
+    if (countEl) {
+      const n = liveBuys.length + liveSells.length + items.filter((a) => a.alert_type !== "buy_point" && a.alert_type !== "sell_point").length;
+      countEl.textContent = n ? `${n} 条` : "暂无";
+    }
     const strip = $("#alertStrip");
     if (strip) {
-      strip.innerHTML = items.length
-        ? items.slice(0, 16).map((a) =>
-          `<span class="alert-chip"><span class="badge at-${a.alert_type}">${esc(a.type_name)}</span>`
-          + `<span>${esc(a.title)}</span><span class="t">${esc((a.created_at || "").slice(11, 16))}</span></span>`).join("")
-        : `<span class="muted">暂无提醒，交易时段每10分钟自动扫描</span>`;
+      const chips = [
+        ...liveBuys.slice(0, 8).map((r) => ({ kind: "buy_point", type_name: "买点关注", title: `${r.name} ${r.picked_text || ""}`.trim() })),
+        ...liveSells.slice(0, 8).map((r) => ({ kind: "sell_point", type_name: "卖点警示", title: `${r.name} ${r.picked_text || ""}`.trim() })),
+      ];
+      strip.innerHTML = chips.length
+        ? chips.map((a) =>
+          `<span class="alert-chip"><span class="badge at-${a.kind}">${esc(a.type_name)}</span>`
+          + `<span>${esc(a.title)}</span></span>`).join("")
+        : `<span class="muted">暂无提醒，请在设置→选股策略勾选方案</span>`;
     }
     const feed = $("#alertFeed");
     if (!feed) return;
+    const signalItem = (r, kind) => {
+      const code = r.code || "";
+      const name = r.name || "";
+      const watchBtn = code ? watchBtnHtml(code, name, r.in_watchlist) : "";
+      const attrs = code ? ` data-code="${esc(code)}" data-name="${esc(name)}"` : "";
+      const typeName = kind === "buy" ? "买点关注" : "卖点警示";
+      const typeCls = kind === "buy" ? "buy_point" : "sell_point";
+      return `
+      <div class="alert-item"${attrs}>
+        <div class="body">
+          <span class="badge at-${typeCls}">${typeName}</span>
+          <b>${esc(name)}</b> <span class="muted">${esc(code)}</span>
+          <span class="num ${cls(r.pct)}">${pct(r.pct)}</span>
+          ${planPickedHtml(r)}
+          <div class="detail">${esc(r.hit_action || r.advice || "")}${r.buy_index != null ? ` · 购买指数 ${fmt(r.buy_index, 0)}` : ""}</div>
+        </div>
+        ${watchBtn}
+      </div>`;
+    };
     const item = (a) => {
       const code = a.code || "";
       const name = a.name || "";
-      const canStock = !!(code && a.alert_type === "buy_point");
+      const canStock = !!(code && (a.alert_type === "buy_point" || a.alert_type === "sell_point"));
       const watchBtn = canStock ? watchBtnHtml(code, name, a.in_watchlist) : "";
       const attrs = canStock ? ` data-code="${esc(code)}" data-name="${esc(name)}"` : "";
-      const plans = planBadgesHtml(a.plans);
       return `
       <div class="alert-item"${attrs}>
         <span class="time">${esc((a.created_at || "").slice(5, 16).replace("T", " "))}</span>
         <div class="body">
-          <span class="badge at-${a.alert_type}">${esc(a.type_name)}</span> ${plans}${esc(a.title)}
+          <span class="badge at-${a.alert_type}">${esc(a.type_name)}</span> ${esc(a.title)}
+          ${planPickedHtml(a)}
           ${a.detail ? `<div class="detail">${esc(a.detail)}</div>` : ""}
         </div>
         ${watchBtn}
       </div>`;
     };
-    const buys = items.filter((a) => a.alert_type === "buy_point");
-    const sells = items.filter((a) => a.alert_type === "sell_point");
     const others = items.filter((a) => a.alert_type !== "buy_point" && a.alert_type !== "sell_point");
     if (!watchCodesLoaded) {
-      for (const a of items) {
-        if (a.in_watchlist && a.code) watchCodes.add(a.code);
+      for (const r of [...liveBuys, ...liveSells, ...items]) {
+        if (r.in_watchlist && r.code) watchCodes.add(r.code);
       }
     }
-    if (!items.length) {
-      feed.innerHTML = '<div class="empty">暂无提醒，交易时段每10分钟自动扫描</div>';
-      return;
-    }
+    const buyHtml = liveBuys.length ? liveBuys.map((r) => signalItem(r, "buy")).join("") : '<div class="empty">暂无买点</div>';
+    const sellHtml = liveSells.length ? liveSells.map((r) => signalItem(r, "sell")).join("") : '<div class="empty">暂无卖点</div>';
     feed.innerHTML = `
       <div class="alert-cols">
-        <div><div class="alert-col-title">最佳买点</div>${buys.map(item).join("") || '<div class="empty">暂无买点</div>'}</div>
-        <div><div class="alert-col-title">最佳卖点</div>${sells.map(item).join("") || '<div class="empty">暂无卖点</div>'}</div>
+        <div><div class="alert-col-title">最佳买点 <span class="muted">${esc(buyLive.executing || "")}</span></div>${buyHtml}</div>
+        <div><div class="alert-col-title">最佳卖点 <span class="muted">${esc(sellLive.executing || "")}</span></div>${sellHtml}</div>
       </div>
       ${others.length ? `<div class="alert-other">${others.map(item).join("")}</div>` : ""}`;
     syncWatchButtons();
@@ -3350,7 +3381,18 @@ $("#strategyPlans")?.addEventListener("change", (e) => {
     const cb = card.querySelector("input[type=checkbox]");
     card.classList.toggle("on", !!(cb && cb.checked));
   });
+  const msg = $("#strategySaveMsg");
+  if (msg) msg.textContent = "已勾选，正在应用多方案并行…";
+  saveStrategySoon();
 });
+
+const saveStrategySoon = (() => {
+  let t;
+  return () => {
+    clearTimeout(t);
+    t = setTimeout(() => saveStrategyPlans(), 450);
+  };
+})();
 
 window.saveStrategyPlans = async (ids) => {
   const msg = $("#strategySaveMsg");
@@ -3852,11 +3894,17 @@ function bindSoulDrag(el, kind) {
   el.addEventListener("pointercancel", end);
 }
 
+let buyFlashKind = "buy";
+
 async function loadBuyPoints() {
   const body = $("#buyFlashBody");
   const countEl = $("#buyFlashCount");
   const noteEl = $("#buyFlashNote");
   const badge = $("#buyFlashBadge");
+  const kind = buyFlashKind === "sell" ? "sell" : "buy";
+  const kindLabel = kind === "sell" ? "最佳卖点" : "最佳买点";
+  const titleEl = $("#buyFlashKindLabel");
+  if (titleEl) titleEl.textContent = kindLabel;
   const paintEmpty = (text, countText) => {
     if (countEl) countEl.textContent = countText;
     if (noteEl) { noteEl.textContent = text || ""; noteEl.classList.toggle("warn", true); }
@@ -3864,10 +3912,11 @@ async function loadBuyPoints() {
       badge.textContent = "!";
       badge.style.display = "";
     }
-    if (body) body.innerHTML = `<div class="empty">${esc(text || "暂无最佳买点")}</div>`;
+    if (body) body.innerHTML = `<div class="empty">${esc(text || "暂无" + kindLabel)}</div>`;
   };
   try {
-    const d = await api("/api/alerts/buy-points");
+    const path = kind === "sell" ? "/api/alerts/sell-points?limit=16" : "/api/alerts/buy-points?limit=16";
+    const d = await api(path);
     const items = d.items || [];
     const source = d.source || "";
     const note = d.note || "";
@@ -3884,7 +3933,7 @@ async function loadBuyPoints() {
     }
     if (!body) return;
     if (!items.length) {
-      body.innerHTML = `<div class="empty">${esc(note || "暂无最佳买点")}</div>`;
+      body.innerHTML = `<div class="empty">${esc(note || "暂无" + kindLabel)}</div>`;
       return;
     }
     if (!watchCodesLoaded) {
@@ -3897,9 +3946,9 @@ async function loadBuyPoints() {
         <div class="buy-flash-main">
           <span class="hl-name">${esc(r.name)}</span>
           <span class="hl-code">${esc(r.code)}</span>
-          ${planBadgesHtml(r.plans)}
           <span class="num ${cls(r.pct)}">${pct(r.pct)}</span>
         </div>
+        ${planPickedHtml(r)}
         <div class="buy-flash-meta">
           <span>板块 ${esc(r.industry || "—")}</span>
           <span>购买指数 <b>${fmt(r.buy_index, 0)}</b> ${esc(r.buy_level || "")}</span>
@@ -3907,15 +3956,23 @@ async function loadBuyPoints() {
           <span>评级 ${esc(r.finance_grade || "—")}</span>
           <span>情绪 ${fmt(r.sentiment, 0)} ${esc(r.sent_level || "")}</span>
         </div>
-        <div class="buy-flash-advice">${esc(r.advice || "")}</div>
+        <div class="buy-flash-advice">${esc(r.hit_action || r.advice || "")}</div>
         ${watchBtnHtml(r.code, r.name, r.in_watchlist)}
       </div>`).join("");
     syncWatchButtons();
   } catch (err) {
-    paintEmpty("买点加载失败，请检查服务是否在运行", "失败");
+    paintEmpty(kindLabel + "加载失败，请检查服务是否在运行", "失败");
   }
 }
 function bindBuyFlash() {
+  $("#buyFlashKind")?.addEventListener("click", (e) => {
+    const btn = e.target.closest(".opt");
+    if (!btn) return;
+    e.stopPropagation();
+    buyFlashKind = btn.dataset.kind === "sell" ? "sell" : "buy";
+    $$("#buyFlashKind .opt").forEach((b) => b.classList.toggle("active", b === btn));
+    loadBuyPoints();
+  });
   $("#buyFlashMin")?.addEventListener("click", (e) => {
     e.stopPropagation();
     setBuyFlashCollapsed(true);

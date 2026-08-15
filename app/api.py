@@ -1,5 +1,5 @@
 """FastAPI 路由：所有接口为同步函数，由框架线程池执行，保证事件循环不被阻塞。"""
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Body, Query, Request
 from fastapi.responses import HTMLResponse
 
 from . import scheduler
@@ -87,8 +87,13 @@ def get_alerts(limit: int = Query(50, le=100)):
 
 
 @router.get("/alerts/buy-points")
-def alerts_buy_points(limit: int = Query(8, le=20)):
+def alerts_buy_points(limit: int = Query(12, le=40)):
     return alerts.get_buy_points(limit)
+
+
+@router.get("/alerts/sell-points")
+def alerts_sell_points(limit: int = Query(12, le=40)):
+    return alerts.get_sell_points(limit)
 
 
 @router.get("/strategy/plans")
@@ -97,7 +102,7 @@ def strategy_plans():
 
 
 @router.post("/strategy/enable")
-def strategy_enable(payload: dict):
+def strategy_enable(payload: dict = Body(default={})):
     ids = strategy.set_enabled((payload or {}).get("ids"))
     try:
         alerts.scan_all()

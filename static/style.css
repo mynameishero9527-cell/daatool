@@ -482,6 +482,22 @@ tr.score-95 td { background: rgba(255, 60, 60, .30); }
   background: rgba(255,210,122,.16); color: #ffd27a; border: 1px solid rgba(255,210,122,.35);
 }
 .plan-badge.multi { background: rgba(38,194,129,.16); color: #8ef0c4; border-color: rgba(38,194,129,.4); }
+.plan-picked {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  margin: 4px 0 6px;
+}
+.plan-badge-full {
+  display: inline-block; font-size: 12px; line-height: 1.35;
+  padding: 2px 8px; border-radius: 6px; font-weight: 600;
+  background: rgba(255,210,122,.18); color: #ffe3a3;
+  border: 1px solid rgba(255,210,122,.45);
+}
+.plan-badge-full.multi {
+  background: rgba(38,194,129,.18); color: #b7f5d6;
+  border-color: rgba(38,194,129,.45);
+}
+.plan-picked-verb { font-size: 12px; color: var(--muted); }
+.plan-card label input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--down); }
 
 /* 购买指数 / 暗盘力量条 */
 .gauge { margin: 8px 0; }
@@ -590,7 +606,7 @@ tr.score-95 td { background: rgba(255, 60, 60, .30); }
 }
 .buy-flash-head {
   flex: 0 0 auto;
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;
   padding: 8px 12px; border-bottom: 1px solid rgba(255,180,90,.22);
   background: linear-gradient(90deg, rgba(139,26,26,.55), rgba(90,30,10,.25));
   font-weight: 700; cursor: grab; user-select: none;

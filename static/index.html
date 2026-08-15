@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>A股量化工具</title>
-<link rel="stylesheet" href="/static/style.css?v=11.0.17">
-<script src="/static/vendor/echarts.min.js?v=11.0.17"></script>
+<link rel="stylesheet" href="/static/style.css?v=11.0.18">
+<script src="/static/vendor/echarts.min.js?v=11.0.18"></script>
 </head>
 <body>
 <header class="topbar">
@@ -600,7 +600,7 @@
       </div>
       <div class="card">
         <div class="card-title">策略方案
-          <span class="muted">可多选并行，买点/卖点取并集；方案 A 为现行线上逻辑</span>
+          <span class="muted">可多选并行，勾选后立即生效；买点/卖点会标明由哪套方案选出</span>
           <span>
             <button class="btn ghost" type="button" id="btnStrategyReset">仅保留方案A</button>
             <button class="btn" type="button" id="btnSaveStrategy">应用所选方案</button>
@@ -623,8 +623,12 @@
 </div>
 <div id="buyFlash" class="buy-flash soul-win">
   <div class="buy-flash-head" id="buyFlashHead">
-    <span class="soul-title">✦ 最佳买点 <span class="muted" id="buyFlashCount"></span></span>
+    <span class="soul-title">✦ <span id="buyFlashKindLabel">最佳买点</span> <span class="muted" id="buyFlashCount"></span></span>
     <span>
+      <span class="btn-group" id="buyFlashKind">
+        <button class="opt active" type="button" data-kind="buy">买点</button>
+        <button class="opt" type="button" data-kind="sell">卖点</button>
+      </span>
       <button class="btn small ghost" type="button" id="buyFlashReset" title="复位窗口">↺</button>
       <button class="btn small ghost" type="button" id="buyFlashMin" title="缩小成 logo">—</button>
     </span>
@@ -663,6 +667,6 @@
   <div class="ctx-item" id="ctxNewsAi" style="display:none">🤖 发送AI分析（消息）</div>
 </div>
 
-<script src="/static/app.js?v=11.0.17"></script>
+<script src="/static/app.js?v=11.0.18"></script>
 </body>
 </html>

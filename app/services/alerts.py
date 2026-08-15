@@ -29,31 +29,35 @@ def _flow_yi(v) -> str:
 
 def _scan_buy_points() -> None:
     from . import strategy as strategy_svc
-    rows = strategy_svc.collect_hits("buy", limit=5)
+    enabled = strategy_svc.get_enabled()
+    cap = min(18, max(5, 3 * max(1, len(enabled))))
+    rows = strategy_svc.collect_hits("buy", enabled, limit=cap)
     for r in rows:
-        tag = "、".join(r.get("plans") or []) or "A"
+        picked = r.get("picked_text") or "由方案A选出"
         bi = r.get("buy_index")
         bi_txt = f"{bi:.0f}" if bi is not None else "-"
         pos = r.get("pos60")
         pos_txt = f"{pos * 100:.0f}% 分位" if pos is not None else "—"
         _add("buy_point",
-             f"{r['name']}（{r['code']}）【{tag}】购买指数 {bi_txt}，{r.get('hit_action') or '策略买点'}",
-             f"方案 {r.get('plan_names') or tag}；主力净流入 {_flow_yi(r.get('main_net_in'))}，60日区间 {pos_txt}",
+             f"{r['name']}（{r['code']}）{picked}，{r.get('hit_action') or '策略买点'}，购买指数 {bi_txt}",
+             f"{picked}；主力净流入 {_flow_yi(r.get('main_net_in'))}，60日区间 {pos_txt}",
              r.get("plan_id") or "")
 
 
 def _scan_sell_points() -> None:
     from . import strategy as strategy_svc
-    rows = strategy_svc.collect_sell_points(limit=5)
+    enabled = strategy_svc.get_enabled()
+    cap = min(18, max(5, 3 * max(1, len(enabled))))
+    rows, _src, _note = strategy_svc.collect_sell_points(limit=cap)
     for r in rows:
-        tag = "、".join(r.get("plans") or []) or "A"
+        picked = r.get("picked_text") or "由方案A选出"
         bi = r.get("buy_index")
         bi_txt = f"{bi:.0f}" if bi is not None else "-"
         extra = "，情绪过热注意兑现" if (r.get("sentiment") or 0) >= 80 else ""
         net = r.get("main_net_in") or 0
         _add("sell_point",
-             f"{r['name']}（{r['code']}）【{tag}】购买指数 {bi_txt}，{r.get('hit_action') or '策略卖点'}{extra}",
-             f"方案 {r.get('plan_names') or tag}；主力净流{'入' if net > 0 else '出'} {_flow_yi(net)}",
+             f"{r['name']}（{r['code']}）{picked}，{r.get('hit_action') or '策略卖点'}{extra}，购买指数 {bi_txt}",
+             f"{picked}；主力净流{'入' if net > 0 else '出'} {_flow_yi(net)}",
              r.get("plan_id") or "")
 
 
@@ -129,12 +133,16 @@ def scan_all() -> int:
 
 
 def get_alerts(limit: int = 50) -> dict:
+    from . import strategy as strategy_svc
     rows = query("SELECT alert_type, title, detail, created_at, COALESCE(plan_id,'') AS plan_id "
                  "FROM alert_log ORDER BY id DESC LIMIT ?", (limit,))
     for r in rows:
         r["type_name"] = TYPE_NAMES.get(r["alert_type"], r["alert_type"])
         pid = (r.get("plan_id") or "").strip()
-        r["plans"] = [p for p in pid.split(",") if p] if pid else []
+        plans = [p for p in pid.split(",") if p] if pid else []
+        r["plans"] = plans
+        r["plan_labels"] = [strategy_svc.plan_caption(p) for p in plans]
+        r["picked_text"] = f"由{'、'.join(r['plan_labels'])}选出" if r["plan_labels"] else ""
         title = r.get("title") or ""
         m = None
         if "（" in title and "）" in title:
@@ -152,7 +160,7 @@ def get_alerts(limit: int = 50) -> dict:
     return {"items": rows}
 
 
-def _decorate_buy_rows(rows: list[dict]) -> None:
+def _decorate_buy_rows(rows: list[dict], kind: str = "buy") -> None:
     from . import finance as finance_svc
     from . import metrics as metrics_svc
     from . import rating as rating_svc
@@ -169,11 +177,17 @@ def _decorate_buy_rows(rows: list[dict]) -> None:
             r["sent_level"] = sent_lv
             r["sent_desc"] = sent_ds
             r["score"] = _score
-            r["advice"] = f"{buy_lv}，{buy_act}；操作参考：{op}"
+            picked = (r.get("picked_text") or "").strip()
+            hit = (r.get("hit_action") or "").strip()
+            if kind == "sell":
+                bits = [x for x in (picked, hit, f"购买指数 {buy_lv}") if x]
+            else:
+                bits = [x for x in (picked, hit, f"{buy_lv}，{buy_act}", f"操作参考：{op}") if x]
+            r["advice"] = "；".join(bits)
             r["finance_grade"] = r.get("finance_grade") or ""
         except Exception:  # noqa: BLE001
             r["buy_level"] = r.get("buy_level") or ""
-            r["advice"] = r.get("advice") or ""
+            r["advice"] = r.get("advice") or r.get("picked_text") or ""
             r["finance_grade"] = r.get("finance_grade") or ""
     watched = {row["code"] for row in query("SELECT code FROM watchlist")}
     for r in rows:
@@ -188,7 +202,7 @@ def get_buy_points(limit: int = 8) -> dict:
     """
     from . import strategy as strategy_svc
 
-    limit = max(3, min(int(limit or 8), 20))
+    limit = max(3, min(int(limit or 12), 40))
     metric_n = query("SELECT COUNT(*) AS n FROM stock_metrics")[0]["n"]
     snap_n = query("SELECT COUNT(*) AS n FROM stock_snapshot")[0]["n"]
     asof = (query("SELECT MAX(updated_at) AS t FROM stock_snapshot")[0]["t"] or "")[:19]
@@ -223,4 +237,35 @@ def get_buy_points(limit: int = 8) -> dict:
         for r in rows:
             if (r.get("buy_index") or 0) < 80:
                 r["buy_level"] = "较好买点"
+    return {**base, "items": rows, "count": len(rows), "source": source, "note": note}
+
+
+def get_sell_points(limit: int = 12) -> dict:
+    """实时最佳卖点。空结果必须带回原因。每条标明选出方案。"""
+    from . import strategy as strategy_svc
+
+    limit = max(3, min(int(limit or 12), 40))
+    metric_n = query("SELECT COUNT(*) AS n FROM stock_metrics")[0]["n"]
+    snap_n = query("SELECT COUNT(*) AS n FROM stock_snapshot")[0]["n"]
+    asof = (query("SELECT MAX(updated_at) AS t FROM stock_snapshot")[0]["t"] or "")[:19]
+    enabled = strategy_svc.get_enabled()
+    exe = strategy_svc.executing_text(enabled)
+    base = {
+        "metrics_count": metric_n, "snapshot_count": snap_n, "asof": asof,
+        "enabled": enabled, "executing": exe.get("title") or "",
+    }
+    if metric_n == 0:
+        return {**base, "items": [], "count": 0, "source": "empty",
+                "empty_reason": "no_metrics",
+                "note": "暂无指标：请先全量同步行情并重建指标"}
+    if snap_n == 0:
+        return {**base, "items": [], "count": 0, "source": "empty",
+                "empty_reason": "no_snapshot",
+                "note": "暂无行情快照：请先全量同步后再看卖点"}
+    rows, source, note = strategy_svc.collect_sell_points(limit)
+    if not rows:
+        return {**base, "items": [], "count": 0, "source": source or "empty",
+                "empty_reason": "no_candidates",
+                "note": note or "当前启用方案暂无卖点命中"}
+    _decorate_buy_rows(rows, "sell")
     return {**base, "items": rows, "count": len(rows), "source": source, "note": note}
