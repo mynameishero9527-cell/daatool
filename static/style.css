@@ -689,18 +689,26 @@ tr.score-95 td { background: rgba(255, 60, 60, .30); }
 .hot-tile .heat { color: var(--warn); font-weight: 700; }
 .hot-tile .rise { color: var(--up); }
 .hot-tile .fall { color: var(--down); }
-.hot-sec-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-top: 10px; }
-.hot-sec {
-  background: var(--card); border: 1px solid var(--border); border-radius: 8px;
-  padding: 10px 12px; cursor: pointer;
+.hot-chip-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  margin: 8px 0 4px;
 }
-.hot-sec:hover, .hot-sec.active { border-color: var(--accent); }
-.hot-sec .sn { font-weight: 600; margin-bottom: 4px; }
-.hot-sec.bull { border-color: rgba(255,82,82,.45); }
-.hot-sec.bear { border-color: rgba(38,194,129,.45); }
-.hot-group-title { margin: 12px 0 6px; font-weight: 700; font-size: 14px; }
-.hot-group-title.up { color: var(--up); }
-.hot-group-title.down { color: var(--down); }
+.hot-chip-lab {
+  font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 999px;
+  white-space: nowrap;
+}
+.hot-chip-lab.bull { color: #fff; background: var(--up); }
+.hot-chip-lab.bear { color: #fff; background: var(--down); }
+.hot-chip-lab.mid { color: var(--muted); background: var(--bg2); border: 1px solid var(--border); }
+.hot-chip {
+  display: inline-flex; align-items: center;
+  border-radius: 999px; padding: 4px 10px; font-size: 13px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--card); color: var(--text);
+}
+.hot-chip.bull { color: var(--up); border-color: rgba(255,82,82,.55); background: rgba(255,82,82,.12); }
+.hot-chip.bear { color: var(--down); border-color: rgba(38,194,129,.55); background: rgba(38,194,129,.12); }
+.hot-chip.mid { color: var(--muted); }
+.hot-chip:hover, .hot-chip.active { filter: brightness(1.12); box-shadow: 0 0 0 2px var(--accent); }
 .hot-tile .impact { margin-top: 6px; font-size: 11px; line-height: 1.45; color: var(--muted); }
 .hot-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
 .hot-tile .ai-flag, .hot-ai-flag {

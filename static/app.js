@@ -1797,22 +1797,14 @@ window.openHotTerm = async (term, resetSector = true) => {
     const mid = d.neutral_sectors || [];
     const tile = (s, kind) => {
       const dir = s.direction || kind || "";
-      const clsName = dir === "利好" ? "bull" : dir === "利空" ? "bear" : "";
-      const badge = dir === "利好" ? '<span class="badge dir-利好">利好</span>'
-        : dir === "利空" ? '<span class="badge dir-利空">利空</span>'
-          : '<span class="badge">中性</span>';
-      const aiMark = s.ai ? "ai-mark" : "";
-      const aiTag = s.ai ? '<span class="ai-flag">AI</span>' : "";
-      return `<div class="hot-sec ${clsName} ${aiMark} js-hot-sector ${s.name === hotFocus.sector ? "active" : ""}" data-sector="${esc(s.name)}" data-term="${esc(term)}">
-        <div class="sn">${esc(s.name)} ${badge}${aiTag}</div>
-        <div class="muted">热度 ${s.hot_score == null ? "—" : fmt(s.hot_score, 1)}
-          · ${pct(s.pct)} ${s.net_in_yi != null ? `· 净流入 ${fmt(s.net_in_yi, 1)}亿` : ""}</div>
-        ${s.why ? `<div class="muted" style="margin-top:4px;font-size:11px">${esc(s.why)}</div>` : ""}
-      </div>`;
+      const clsName = dir === "利好" ? "bull" : dir === "利空" ? "bear" : "mid";
+      const title = [dir, s.why, s.hot_score != null ? `热度 ${fmt(s.hot_score, 1)}` : ""].filter(Boolean).join(" · ");
+      return `<button type="button" class="hot-chip ${clsName} js-hot-sector ${s.name === hotFocus.sector ? "active" : ""}" data-sector="${esc(s.name)}" data-term="${esc(term)}" data-dir="${esc(dir)}" title="${esc(title)}">${esc(s.name)}</button>`;
     };
-    const group = (title, cls, list, kind) => list.length
-      ? `<div class="hot-group-title ${cls}">${title}（${list.length}）</div><div class="hot-sec-grid">${list.map((s) => tile(s, kind)).join("")}</div>`
-      : "";
+    const chips = [];
+    if (bull.length) chips.push(`<span class="hot-chip-lab bull">利好</span>`, ...bull.map((s) => tile(s, "利好")));
+    if (bear.length) chips.push(`<span class="hot-chip-lab bear">利空</span>`, ...bear.map((s) => tile(s, "利空")));
+    if (mid.length) chips.push(`<span class="hot-chip-lab mid">仅关联</span>`, ...mid.map((s) => tile(s, "中性")));
     box.innerHTML = `
       <div class="outlook-summary" style="border-color:rgba(255,169,64,.4)" data-term="${esc(term)}">
         <b>🔥 热词「${esc(term)}」关联板块${d.ai_applied ? '<span class="hot-ai-flag">AI已回填</span>' : ""}</b>
@@ -1820,10 +1812,7 @@ window.openHotTerm = async (term, resetSector = true) => {
         <div style="margin:8px 0 4px;font-size:14px"><b>${esc(d.impact_summary || "利好 / 利空板块待映射")}</b></div>
         ${d.ai_applied && d.ai_reason ? `<div class="muted" style="margin:4px 0">AI总述：${esc(d.ai_reason)} · ${esc(d.ai_updated_at || "")}</div>` : ""}
         ${(d.samples || []).length ? `<div class="muted" style="margin:6px 0">样例：${d.samples.map((s) => esc(s)).join(" · ")}</div>` : ""}
-        ${group("利好板块", "up", bull, "利好")}
-        ${group("利空板块", "down", bear, "利空")}
-        ${group("仅关联（方向不明）", "", mid, "中性")}
-        ${!bull.length && !bear.length && !mid.length ? `<div class="empty">${esc(d.empty_reason || "无关联板块")}</div>` : ""}
+        ${chips.length ? `<div class="hot-chip-row">${chips.join("")}</div>` : `<div class="empty">${esc(d.empty_reason || "无关联板块")}</div>`}
         <div class="muted" style="margin-top:8px;font-size:12px">${esc(d.note || "")} ${esc(d.disclaimer || "")}</div>
         <div id="hotStockBox"></div>
       </div>`;
@@ -1833,23 +1822,52 @@ window.openHotTerm = async (term, resetSector = true) => {
   }
 };
 
+let hotStockSeq = 0;
 window.openHotSector = async (sector, term) => {
+  const seq = ++hotStockSeq;
   hotFocus.sector = sector || "";
   hotFocus.term = term || hotFocus.term;
   const box = $("#hotStockBox");
   if (!box || !sector) return;
   $$(".js-hot-sector").forEach((el) => el.classList.toggle("active", el.dataset.sector === sector));
-  box.innerHTML = '<div class="empty">加载个股 TOP20…</div>';
+  const dir = document.querySelector(`.js-hot-sector[data-sector="${CSS && CSS.escape ? CSS.escape(sector) : sector}"]`)?.dataset.dir || "";
+  const dirTxt = dir === "利好" ? "利好" : dir === "利空" ? "利空" : "";
+  box.innerHTML = `<div class="empty">正在加载「${esc(sector)}」个股 TOP20…</div>`;
   try {
-    const d = await api(`/api/macro/hot-sector-stocks?sector=${encodeURIComponent(sector)}&limit=20`);
+    const d = await api(`/api/macro/hot-sector-stocks?sector=${encodeURIComponent(sector)}&limit=20&_=${seq}`);
+    if (seq !== hotStockSeq) return;
+    if ((d.sector || sector) !== sector) {
+      box.innerHTML = `<div class="empty">板块串了，已忽略过期结果</div>`;
+      return;
+    }
+    const match = d.match ? ` · ${esc(d.match)}` : "";
     box.innerHTML = `
-      <div class="muted" style="margin:10px 0 6px">板块「${esc(sector)}」个股 TOP20</div>
-      ${d.stocks && d.stocks.length ? renderRelatedStockTable(d.stocks) : `<div class="empty">${esc(d.empty_reason || "无个股")}</div>`}
+      <div class="muted" style="margin:10px 0 6px">${dirTxt ? `<span class="hot-chip-lab ${dir === "利好" ? "bull" : "bear"}">${esc(dirTxt)}</span>` : ""}板块「${esc(sector)}」个股 TOP20${match}</div>
+      ${d.stocks && d.stocks.length ? renderHotSectorStockTable(d.stocks, sector) : `<div class="empty">${esc(d.empty_reason || "无个股")}</div>`}
       <div class="muted" style="font-size:11px;margin-top:4px">${esc(d.disclaimer || "")}</div>`;
   } catch (err) {
-    box.innerHTML = '<div class="empty">个股加载失败</div>';
+    if (seq !== hotStockSeq) return;
+    box.innerHTML = `<div class="empty">「${esc(sector)}」个股加载失败</div>`;
   }
 };
+
+function renderHotSectorStockTable(stocks, sector) {
+  if (!stocks || !stocks.length) return '<div class="muted">未匹配到相关个股</div>';
+  return `<table><thead><tr>
+    <th>名称</th><th>代码</th><th>行业</th><th>财报</th><th>涨跌幅</th><th>量比</th>${flowMetricHeaders()}<th>购买指数</th><th>标签</th>
+  </tr></thead><tbody>${stocks.map((r) => `
+    <tr data-code="${r.code}" data-name="${esc(r.name)}" onclick="openStock('${r.code}','${esc(r.name)}')">
+      <td>${esc(r.name)}</td>
+      <td class="muted">${esc(r.code)}</td>
+      <td class="muted">${esc(r.industry || sector || "-")}</td>
+      <td>${finBadge(r)}</td>
+      <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
+      <td class="num">${fmt(r.volume_ratio)}</td>${flowMetricCells(r)}
+      <td class="num ${buyCls(r.buy_index)}">${r.buy_index !== null && r.buy_index !== undefined ? `<b>${fmt(r.buy_index, 0)}</b>` : "-"}</td>
+      <td>${relatedTags(r, false)}</td>
+    </tr>`).join("")}</tbody></table>
+    <div class="muted" style="margin-top:6px;font-size:12px">「${esc(sector)}」${stocks.length} 只。${FLOW_NOTE} 点击行进入个股分析。</div>`;
+}
 
 function parseSectors(v) {
   if (!v) return [];

@@ -800,14 +800,68 @@ def hot_term_sectors(term: str) -> dict:
 
 
 def hot_sector_stocks(sector: str, limit: int = 20) -> dict:
+    """点击热词板块：优先申万行业精确匹配，不用宽泛概念标签混入同一批热门股。"""
     sector = (sector or "").strip()
     limit = max(20, min(int(limit or 20), 50))
     if not sector:
         return {"sector": "", "stocks": [], "empty_reason": "未指定板块"}
-    stocks = macro._stocks_for_sectors([sector], limit=limit)  # noqa: SLF001
-    empty_reason = "" if stocks else f"板块「{sector}」在本地快照中没有匹配个股。"
+    if sector in ("无明显利空", "未映射影响板块", "政策"):
+        return {
+            "sector": sector, "stocks": [], "match": "",
+            "empty_reason": f"「{sector}」不是可交易板块，不展示个股。",
+            "disclaimer": "个股来自本地行业映射，仅供参考。",
+        }
+    industries, concepts = macro._resolve_sector(sector)  # noqa: SLF001
+    seen: set[str] = set()
+    out: list[dict] = []
+    match = ""
+
+    def take(rows: list[dict], via: str) -> None:
+        nonlocal match
+        for r in macro._annotate_rows(rows, sector):  # noqa: SLF001
+            code = r.get("code")
+            if not code or code in seen:
+                continue
+            seen.add(code)
+            r["match"] = via
+            out.append(r)
+            if not match:
+                match = via
+            if len(out) >= limit:
+                return
+
+    if industries:
+        take(macro._fetch_by_industries(industries, limit, []),  # noqa: SLF001
+             "行业 " + "、".join(industries[:4]))
+    if len(out) < limit and concepts:
+        extra = macro._fetch_by_concepts(concepts, max(limit * 4, 40), list(seen), like=False)  # noqa: SLF001
+        allow = set(industries) if industries else None
+        filtered = []
+        for r in extra:
+            ind = (r.get("industry") or "").strip()
+            if allow and ind not in allow:
+                continue
+            filtered.append(r)
+        if not industries:
+            filtered = extra
+        take(filtered, "概念 " + "、".join(concepts[:4]))
+    if len(out) < limit and not industries:
+        take(macro._fetch_by_concepts([sector], limit, list(seen), like=False),  # noqa: SLF001
+             f"概念 {sector}")
+        if len(out) < limit and query("SELECT 1 FROM stock_list WHERE industry=? LIMIT 1", (sector,)):
+            take(macro._fetch_by_industries([sector], limit, list(seen)), f"行业 {sector}")  # noqa: SLF001
+
+    empty_reason = "" if out else (
+        f"板块「{sector}」在本地快照中没有匹配个股"
+        + (f"（行业 { '、'.join(industries[:4]) }）" if industries else "")
+        + "。不拿其他板块的热门股凑数。"
+    )
     return {
-        "sector": sector, "stocks": stocks[:limit], "count": len(stocks),
+        "sector": sector,
+        "stocks": out[:limit],
+        "count": len(out),
+        "match": match,
+        "industries": industries,
         "empty_reason": empty_reason,
-        "disclaimer": "个股来自本地行业/概念映射，按主力净流入排序，仅供参考。",
+        "disclaimer": "个股按申万行业优先匹配，避免宽泛概念标签把同一批热门股重复展示。按主力净流入排序，仅供参考。",
     }
