@@ -10,7 +10,7 @@ from . import scheduler as sched_mod
 from .services import (
     ai, alerts, announcement, attribution, commodity, cycle, darkpool, finance,
     forecast, global_index, kline, knowledge, macro, market, ranks, rating,
-    recommend, screener, sector, stocklist, wuxing,
+    recommend, screener, sector, smartpick, stocklist, wuxing,
 )
 from .services import metrics as metrics_svc
 from .database import query as db_query
@@ -433,6 +433,35 @@ def ai_wuxing(payload: dict):
     return ai.classify_wuxing(payload.get("code", ""))
 
 
+@router.get("/smartpick/meta")
+def smartpick_meta():
+    return smartpick.meta()
+
+
+@router.post("/smartpick/run")
+def smartpick_run(payload: dict):
+    return smartpick.run(payload or {})
+
+
+@router.get("/smartpick/ai-policy")
+def smartpick_policy_get():
+    return {"ok": True, **smartpick.get_policy(), "usage": smartpick._usage()}
+
+
+@router.post("/smartpick/ai-policy")
+def smartpick_policy_save(payload: dict):
+    return smartpick.save_policy(payload or {})
+
+
+@router.post("/smartpick/ai-comment")
+def smartpick_ai_comment(payload: dict):
+    return smartpick.comment(
+        payload.get("items") or [],
+        payload.get("template_name") or "智能选股",
+        payload.get("summary") or "",
+        force=True)
+
+
 # ---------------- 榜单 / 板块推荐 / 五行 / 语义筛选（8.0） ----------------
 
 @router.get("/ranks")
@@ -516,7 +545,7 @@ def system_metrics_state():
 
 
 @router.post("/system/rebuild-finance-grades")
-def system_rebuild_finance(max_fetch: int = Query(80, le=300)):
+def system_rebuild_finance(max_fetch: int = Query(300, le=800)):
     import threading
     threading.Thread(target=finance.rebuild_all, args=(max_fetch,), daemon=True).start()
     return {"ok": True, "message": "财报评级重建已在后台启动"}

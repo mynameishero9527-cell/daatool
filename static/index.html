@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>A股量化工具</title>
-<link rel="stylesheet" href="/static/style.css?v=10.0.2">
-<script src="/static/vendor/echarts.min.js?v=10.0.2"></script>
+<link rel="stylesheet" href="/static/style.css?v=11.0.0">
+<script src="/static/vendor/echarts.min.js?v=11.0.0"></script>
 </head>
 <body>
 <header class="topbar">
@@ -20,6 +20,7 @@
     <button class="tab" data-tab="commodity">大宗商品</button>
     <button class="tab" data-tab="global">全球指数</button>
     <button class="tab" data-tab="recommend">个股推荐</button>
+    <button class="tab" data-tab="smartpick">智能选股</button>
     <button class="tab" data-tab="aipick">AI选股</button>
     <button class="tab" data-tab="ai">AI分析</button>
     <button class="tab" data-tab="settings">设置</button>
@@ -225,15 +226,45 @@
               <button class="opt" data-sort="outflow">流出最多</button>
               <button class="opt" data-sort="abs">绝对额</button>
             </span></span>
+          <span><span class="g-label muted">方向</span>
+            <span class="btn-group" id="flowBarDir">
+              <button class="opt active" data-dir="all">全部</button>
+              <button class="opt" data-dir="in">仅流入</button>
+              <button class="opt" data-dir="out">仅流出</button>
+            </span></span>
+          <span><span class="g-label muted">成分股</span>
+            <span class="btn-group" id="flowBarMin">
+              <button class="opt active" data-min="0">全部</button>
+              <button class="opt" data-min="10">≥10只</button>
+              <button class="opt" data-min="30">≥30只</button>
+            </span></span>
+          <span><span class="g-label muted">视图</span>
+            <span class="btn-group" id="flowBarView">
+              <button class="opt active" data-view="hbar">直方图</button>
+              <button class="opt" data-view="chart">图表</button>
+            </span></span>
         </div>
-        <div class="muted" style="margin-bottom:8px">只统计板块总体主力净流入/流出。零轴居中：流入向右红、流出向左绿。点选一条后底部才显示该板块个股。</div>
+        <div class="inline-form" style="margin-bottom:8px;width:100%">
+          <input id="flowBarSearch" placeholder="搜索板块名称" style="max-width:260px">
+        </div>
+        <div class="muted" style="margin-bottom:8px">红入绿出 · 零轴居中 · 同一时间只显示一套图 · 点选一条后底部才出个股。</div>
         <div id="flowBarChart">
           <div id="flowBarEchart" class="chart-lg" style="height:520px;display:none"></div>
           <div id="flowBarList"><div class="empty">正在汇总全市场板块资金…</div></div>
         </div>
       </div>
       <div class="card" id="flowBarStocks" style="display:none">
-        <div class="card-title" id="flowBarStocksTitle">个股</div>
+        <div class="card-title" id="flowBarStocksTitle"><span id="flowBarStocksLabel">个股</span>
+          <span class="btn-group" id="flowBarFin" style="margin-left:12px">
+            <button class="opt active" data-fin="">全部</button>
+            <button class="opt" data-fin="A">A</button>
+            <button class="opt" data-fin="B">B</button>
+            <button class="opt" data-fin="C">C</button>
+            <button class="opt" data-fin="D">D</button>
+            <button class="opt" data-fin="AB">A+B</button>
+            <button class="opt" data-fin="none">无评级</button>
+          </span>
+        </div>
         <div id="flowBarStocksTable"></div>
       </div>
     </div>
@@ -367,10 +398,59 @@
     </div>
   </section>
 
+  <!-- 智能选股 -->
+  <section class="page" id="page-smartpick">
+    <div class="card">
+      <div class="card-title">智能选股 <span class="muted">综合本地行情/资金/量化/财报/板块 · 名单不依赖 AI</span></div>
+      <div class="cond-inline" style="margin-bottom:10px;gap:16px">
+        <span><span class="g-label muted">策略模板</span>
+          <span class="btn-group" id="spTemplates"></span></span>
+      </div>
+      <div class="cond-inline" style="margin-bottom:10px;gap:16px">
+        <span><span class="g-label muted">AI 点评</span>
+          <span class="btn-group" id="spAiMode">
+            <button class="opt" data-mode="off">关闭</button>
+            <button class="opt active" data-mode="manual">手动</button>
+            <button class="opt" data-mode="auto">自动</button>
+          </span></span>
+        <span><span class="g-label muted">自动间隔</span>
+          <span class="btn-group" id="spAiInterval">
+            <button class="opt active" data-sec="600">10分钟</button>
+            <button class="opt" data-sec="1800">30分钟</button>
+            <button class="opt" data-sec="3600">60分钟</button>
+          </span></span>
+        <span><span class="g-label muted">日上限</span>
+          <span class="btn-group" id="spAiCap">
+            <button class="opt" data-cap="5">5</button>
+            <button class="opt active" data-cap="12">12</button>
+            <button class="opt" data-cap="20">20</button>
+          </span></span>
+        <span class="muted" id="spAiUsage">今日 0/12</span>
+        <button class="btn" id="spAiBtn" onclick="runSmartpickAi()">生成AI点评</button>
+      </div>
+      <div class="inline-form" style="width:100%;margin-bottom:10px">
+        <input id="spSemantic" placeholder="一句话（可选）：低估值放量的银行股 / 主力流入的绩优电子" style="flex:1">
+        <button class="btn ghost" onclick="parseSmartpickSemantic()">解析到条件</button>
+        <button class="btn" onclick="runSmartpick()">开始选股</button>
+      </div>
+      <div id="spHard" class="cond-inline" style="margin-bottom:10px;gap:16px"></div>
+      <div id="spRanges" class="cond-inline" style="margin-bottom:10px;gap:16px"></div>
+      <div class="muted" style="margin-bottom:6px">权重（只影响综合分，合计会归一）</div>
+      <div id="spWeights" class="sp-weights"></div>
+      <div class="muted" id="spFinNote" style="margin-top:8px;font-size:12px"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">选股结果 <span class="muted" id="spCount"></span></div>
+      <div id="spLocal" class="semantic-rule" style="display:none"></div>
+      <div id="spAiBox"></div>
+      <div id="spTable"><div class="empty">先选模板或条件，本地计算不消耗 AI</div></div>
+    </div>
+  </section>
+
   <!-- AI 选股 -->
   <section class="page" id="page-aipick">
     <div class="card">
-      <div class="card-title">AI 选股 <span class="muted">自然语言描述 → 语义解析 + 本地库筛选</span></div>
+      <div class="card-title">AI 选股 <span class="muted">自然语言描述 → 语义解析 + 本地库筛选 · 综合打分请用「智能选股」</span></div>
       <div class="inline-form" style="width:100%;margin-bottom:10px">
         <input id="aiPickInput" placeholder="如：低估值放量的银行股、华为产业链小市值企稳" style="flex:1">
         <button class="btn" onclick="runAiPick()">开始选股</button>
@@ -441,6 +521,11 @@
         </div>
         <div id="metricsState"></div>
         <div class="card-title" style="margin-top:14px">财报评级（独立维度，不并入购买指数）
+          <span class="btn-group" id="finFetch">
+            <button class="opt" data-n="80">拉80</button>
+            <button class="opt active" data-n="300">拉300</button>
+            <button class="opt" data-n="800">拉800</button>
+          </span>
           <button class="btn" onclick="rebuildFinance()">重建财报评级</button>
         </div>
         <div id="financeState"></div>
@@ -482,6 +567,6 @@
   <div class="ctx-item" id="ctxNewsAi" style="display:none">🤖 发送AI分析（消息）</div>
 </div>
 
-<script src="/static/app.js?v=10.0.2"></script>
+<script src="/static/app.js?v=11.0.0"></script>
 </body>
 </html>

@@ -1514,8 +1514,11 @@ window.drillSector = async (name) => {
 };
 
 /* ---------------- 板块资金分析（FR10-03） ---------------- */
-const flowBarState = { dim: "industry", range: "1d", sort: "inflow", selected: "", limit: 50 };
+const flowBarState = { dim: "industry", range: "1d", sort: "inflow", selected: "", limit: 50,
+  view: "hbar", dir: "", q: "", minStocks: 0, fin: "" };
 let flowBarChart = null;
+let flowBarRawItems = [];
+let flowBarStockRows = [];
 
 for (const [id, key] of [["flowBarDim", "dim"], ["flowBarRange", "range"], ["flowBarSort", "sort"]]) {
   const el = $(`#${id}`);
@@ -1532,6 +1535,48 @@ for (const [id, key] of [["flowBarDim", "dim"], ["flowBarRange", "range"], ["flo
     const stockBox = $("#flowBarStocks");
     if (stockBox) stockBox.style.display = "none";
     loadFlowBar();
+  });
+}
+for (const [id, key] of [["flowBarDir", "dir"], ["flowBarView", "view"]]) {
+  const el = $(`#${id}`);
+  if (!el) continue;
+  el.addEventListener("click", (e) => {
+    const btn = e.target.closest(".opt");
+    if (!btn) return;
+    const raw = btn.getAttribute(`data-${key}`);
+    flowBarState[key] = raw === "all" ? "" : (raw || "");
+    $$(`#${id} .opt`).forEach((b) => b.classList.toggle("active", b === btn));
+    paintFlowBar();
+  });
+}
+$("#flowBarMin")?.addEventListener("click", (e) => {
+  const btn = e.target.closest(".opt");
+  if (!btn) return;
+  flowBarState.minStocks = Number(btn.dataset.min || 0);
+  $$("#flowBarMin .opt").forEach((b) => b.classList.toggle("active", b === btn));
+  paintFlowBar();
+});
+$("#flowBarSearch")?.addEventListener("input", debounce(() => {
+  flowBarState.q = ($("#flowBarSearch").value || "").trim();
+  paintFlowBar();
+}, 200));
+$("#flowBarFin")?.addEventListener("click", (e) => {
+  const btn = e.target.closest(".opt");
+  if (!btn) return;
+  flowBarState.fin = btn.dataset.fin || "";
+  $$("#flowBarFin .opt").forEach((b) => b.classList.toggle("active", b === btn));
+  if (flowBarState.selected) renderFlowBarStockTable(flowBarStockRows);
+});
+
+function filterFlowBarItems(items) {
+  const q = (flowBarState.q || "").toLowerCase();
+  return (items || []).filter((it) => {
+    const v = Number(it.net_in_yi) || 0;
+    if (flowBarState.dir === "in" && v <= 0) return false;
+    if (flowBarState.dir === "out" && v >= 0) return false;
+    if ((flowBarState.minStocks || 0) > 0 && (it.stocks || 0) < flowBarState.minStocks) return false;
+    if (q && !String(it.name || "").toLowerCase().includes(q)) return false;
+    return true;
   });
 }
 
@@ -1597,7 +1642,9 @@ function renderFlowBarEcharts(items) {
       type: "bar", data: values, barMaxWidth: 16,
       itemStyle: { color: (p) => (p.value >= 0 ? "#ff5252" : "#26c281") },
       label: {
-        show: true, position: "right", color: "#9aa8bc", fontSize: 11,
+        show: true,
+        position: (p) => (p.value >= 0 ? "right" : "left"),
+        color: "#9aa8bc", fontSize: 11,
         formatter: (p) => `${p.value > 0 ? "+" : ""}${Number(p.value).toFixed(1)}`,
       },
     }],
@@ -1607,30 +1654,51 @@ function renderFlowBarEcharts(items) {
   requestAnimationFrame(() => flowBarChart?.resize());
 }
 
+function paintFlowBar(note) {
+  const box = $("#flowBarList");
+  const chart = $("#flowBarEchart");
+  const items = filterFlowBarItems(flowBarRawItems);
+  const dimLabel = flowBarState.dim === "concept" ? "题材概念" : "行业板块";
+  const noteEl = $("#flowBarNote");
+  if (noteEl) {
+    const extra = noteEl.dataset.base || "";
+    noteEl.textContent = `${extra} · 当前显示 ${items.length} 个${dimLabel}`;
+  }
+  if (!flowBarRawItems.length) {
+    if (box) box.innerHTML = `<div class="empty">${esc(note) || "暂无板块资金（请先在设置页执行全量同步）"}</div>`;
+    if (chart) chart.style.display = "none";
+    return;
+  }
+  if (flowBarState.view === "chart") {
+    if (box) box.innerHTML = "";
+    if (chart) chart.style.display = "";
+    renderFlowBarEcharts(items);
+  } else {
+    if (chart) chart.style.display = "none";
+    try { flowBarChart?.dispose(); } catch { /* ignore */ }
+    flowBarChart = null;
+    if (box) {
+      box.innerHTML = renderFlowBarHtml(items, note);
+      bindFlowBarClicks(box);
+    }
+  }
+}
+
 async function loadFlowBar() {
   const box = $("#flowBarList");
-  const host = $("#flowBarChart");
-  if (!box && !host) return;
+  if (!box && !$("#flowBarChart")) return;
   if (box) box.innerHTML = '<div class="empty">正在汇总全市场板块资金…</div>';
   try {
     const d = await api(`/api/sector/flow-bar?dim=${encodeURIComponent(flowBarState.dim)}&range=${encodeURIComponent(flowBarState.range)}&sort=${encodeURIComponent(flowBarState.sort)}`);
     const cov = d.coverage || {};
     const note = d.note || "";
     const noteEl = $("#flowBarNote");
+    const dimLabel = flowBarState.dim === "concept" ? "题材概念" : "行业板块";
     if (noteEl) {
-      noteEl.textContent = `${d.range_label || ""} · ${d.count || (d.items || []).length} 个板块 · 已累计 ${cov.have || 0}/${cov.target || 0} 个交易日`;
+      noteEl.dataset.base = `${d.range_label || "当天"} · 共 ${d.count || (d.items || []).length} 个${dimLabel} · 已累计 ${cov.have || 0}/${cov.target || 0} 个交易日`;
     }
-    const items = d.items || [];
-    if (!items.length) {
-      if (box) box.innerHTML = `<div class="empty">${esc(note) || "暂无板块资金（请先在设置页执行全量同步）"}</div>`;
-      if ($("#flowBarEchart")) $("#flowBarEchart").style.display = "none";
-      return;
-    }
-    if (box) {
-      box.innerHTML = renderFlowBarHtml(items, note);
-      bindFlowBarClicks(box);
-    }
-    renderFlowBarEcharts(items);
+    flowBarRawItems = d.items || [];
+    paintFlowBar(note);
     if (flowBarState.selected) loadFlowBarStocks(flowBarState.selected);
   } catch (err) {
     const msg = err && err.message ? err.message : String(err);
@@ -1656,17 +1724,35 @@ async function loadFlowBarStocks(name) {
   const wrap = $("#flowBarStocks");
   if (!wrap) return;
   wrap.style.display = "";
-  const title = $("#flowBarStocksTitle");
-  if (title) title.textContent = `「${name}」个股（按资金贡献）`;
+  const label = $("#flowBarStocksLabel");
+  const dimLabel = flowBarState.dim === "concept" ? "题材" : "行业";
+  if (label) label.textContent = `「${name}」个股 · ${dimLabel} · 加载中`;
   const table = $("#flowBarStocksTable");
   if (table) table.innerHTML = '<div class="empty">加载中…</div>';
   try {
     const d = await api(`/api/sector/flow-bar/stocks?dim=${flowBarState.dim}&name=${encodeURIComponent(name)}&range=${flowBarState.range}&limit=${flowBarState.limit}`);
-    const rows = d.items || [];
-    if (!table) return;
-    table.innerHTML = rows.length ? `<table><thead><tr>
+    flowBarStockRows = d.items || [];
+    flowBarStockNote = d.note || "";
+    if (label) label.textContent = `「${name}」个股 · ${dimLabel} · ${flowBarStockRows.length} 只`;
+    renderFlowBarStockTable(flowBarStockRows);
+    wrap.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  } catch (err) { if (table) table.innerHTML = `<div class="empty">个股加载失败：${esc(err.message || err)}</div>`; }
+}
+let flowBarStockNote = "";
+function renderFlowBarStockTable(rows) {
+  const table = $("#flowBarStocksTable");
+  if (!table) return;
+  const fin = flowBarState.fin;
+  const filtered = (rows || []).filter((r) => {
+    const g = r.finance_grade || "";
+    if (!fin) return true;
+    if (fin === "none") return !g;
+    if (fin === "AB") return g === "A" || g === "B";
+    return g === fin;
+  });
+  table.innerHTML = filtered.length ? `<table><thead><tr>
       <th>名称</th><th>代码</th><th>涨跌幅</th><th>量比</th>${flowMetricHeaders()}<th>购买指数</th><th>财报</th><th>标签</th><th>区间贡献(万)</th>
-    </tr></thead><tbody>${rows.map((r) => `
+    </tr></thead><tbody>${filtered.map((r) => `
       <tr data-code="${r.code}" data-name="${esc(r.name)}" onclick="openStock('${r.code}','${esc(r.name)}')">
         <td>${esc(r.name)}</td>
         <td class="muted">${esc(r.code)}</td>
@@ -1677,12 +1763,10 @@ async function loadFlowBarStocks(name) {
         <td>${relatedTags(r, false)}</td>
         <td class="num ${cls(r.contrib)}">${fmt(r.contrib, 0)}</td>
       </tr>`).join("")}</tbody></table>
-      <div class="muted" style="margin-top:6px;font-size:12px">${esc(d.note || "")} ${FLOW_NOTE}
+      <div class="muted" style="margin-top:6px;font-size:12px">${esc(flowBarStockNote || "")} ${FLOW_NOTE}
         ${flowBarState.limit < 200 && rows.length >= flowBarState.limit
           ? ` <button class="btn small ghost" onclick="flowBarMore()">显示更多</button>` : ""}</div>`
-      : '<div class="empty">该板块暂无个股</div>';
-    wrap.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  } catch (err) { if (table) table.innerHTML = `<div class="empty">个股加载失败：${esc(err.message || err)}</div>`; }
+    : `<div class="empty">${rows && rows.length ? "该财报筛选下无个股" : "该板块暂无个股"}</div>`;
 }
 window.flowBarMore = () => { flowBarState.limit = 200; if (flowBarState.selected) loadFlowBarStocks(flowBarState.selected); };
 
@@ -2501,8 +2585,15 @@ function loadFinanceState(fin, flow) {
     ${f.running ? `<div class="progress"><div class="p" style="width:${f.total ? f.progress / f.total * 100 : 30}%"></div></div>` : ""}`;
 }
 
+let finFetchN = 300;
+$("#finFetch")?.addEventListener("click", (e) => {
+  const btn = e.target.closest(".opt");
+  if (!btn) return;
+  finFetchN = Number(btn.dataset.n || 300);
+  $$("#finFetch .opt").forEach((b) => b.classList.toggle("active", b === btn));
+});
 window.rebuildFinance = async () => {
-  await post("/api/system/rebuild-finance-grades");
+  await post(`/api/system/rebuild-finance-grades?max_fetch=${finFetchN}`);
   const poll = setInterval(async () => {
     const m = await api("/api/system/finance-state");
     loadFinanceState(m, null);
@@ -2542,6 +2633,212 @@ window.fullSync = async () => {
   }, 2000);
 };
 
+/* ---------------- 智能选股（FR11-01） ---------------- */
+const SP_HARD = [
+  { key: "exclude_st", label: "剔除ST/退市", def: true },
+  { key: "need_main_in", label: "必须主力净流入>0", def: false },
+  { key: "need_finance", label: "必须已有财报评级", def: false },
+  { key: "need_stabilize", label: "必须有企稳分", def: false },
+  { key: "need_volume", label: "必须量比≥1.5", def: false },
+  { key: "need_sector_in", label: "必须行业当日净流入>0", def: false },
+];
+const spState = {
+  template: "balanced",
+  hard: { exclude_st: true },
+  weights: {},
+  ranges: { buy_index_min: "", main_buy_ratio_min: "", volume_ratio_min: "" },
+  last: null,
+};
+let spMeta = null;
+
+function spSyncPolicyButtons(p) {
+  if (!p) return;
+  $$("#spAiMode .opt").forEach((b) => b.classList.toggle("active", b.dataset.mode === p.mode));
+  $$("#spAiInterval .opt").forEach((b) => b.classList.toggle("active", String(b.dataset.sec) === String(p.min_interval_sec)));
+  $$("#spAiCap .opt").forEach((b) => b.classList.toggle("active", String(b.dataset.cap) === String(p.daily_cap)));
+}
+function spUsageText(u, p) {
+  const cap = (p && p.daily_cap) || 12;
+  const n = (u && u.count) || 0;
+  return `今日 ${n}/${cap}`;
+}
+function renderSpControls() {
+  if (!spMeta) return;
+  const tpls = spMeta.templates || {};
+  $("#spTemplates").innerHTML = Object.entries(tpls).map(([id, t]) =>
+    `<button class="opt ${spState.template === id ? "active" : ""}" data-id="${id}">${esc(t.name)}</button>`).join("");
+  const labels = spMeta.weight_labels || {};
+  const w = spState.weights;
+  $("#spWeights").innerHTML = Object.keys(spMeta.weights || {}).map((k) =>
+    `<label class="sp-w">${esc(labels[k] || k)} <b id="spw_${k}">${w[k] ?? 0}</b>
+      <input type="range" min="0" max="40" step="1" data-w="${k}" value="${w[k] ?? 0}"></label>`).join("");
+  $("#spHard").innerHTML = `<span class="g-label muted">硬性条件</span>` + SP_HARD.map((h) =>
+    `<label class="muted" style="font-size:13px"><input type="checkbox" data-hard="${h.key}" ${spState.hard[h.key] ? "checked" : ""}> ${h.label}</label>`).join("");
+  const r = spState.ranges;
+  $("#spRanges").innerHTML = `
+    <span><span class="g-label muted">购买指数≥</span><input id="spBuyMin" value="${esc(r.buy_index_min)}" placeholder="不限" style="width:70px"></span>
+    <span><span class="g-label muted">主力买比≥</span><input id="spRatioMin" value="${esc(r.main_buy_ratio_min)}" placeholder="%" style="width:70px"></span>
+    <span><span class="g-label muted">量比≥</span><input id="spVolMin" value="${esc(r.volume_ratio_min)}" placeholder="不限" style="width:70px"></span>`;
+  const note = $("#spFinNote");
+  if (note) note.textContent = `已评级 ${spMeta.finance_graded || 0}/${spMeta.finance_universe || 0} · 未评级为 —，综合分不奖不罚。筛绩优为空请先重建财报或改「均衡综合」。`;
+  const usage = $("#spAiUsage");
+  if (usage) usage.textContent = spUsageText(spMeta.usage, spMeta.policy);
+  spSyncPolicyButtons(spMeta.policy);
+}
+
+async function loadSmartpick() {
+  try {
+    spMeta = await api("/api/smartpick/meta");
+    if (!Object.keys(spState.weights).length) spState.weights = { ...(spMeta.weights || {}) };
+    renderSpControls();
+  } catch (err) { console.warn(err); }
+}
+
+$("#spTemplates")?.addEventListener("click", (e) => {
+  const btn = e.target.closest(".opt");
+  if (!btn) return;
+  spState.template = btn.dataset.id;
+  const t = (spMeta && spMeta.templates || {})[spState.template];
+  if (t) {
+    spState.weights = { ...(t.weights || spMeta.weights) };
+    spState.hard = { exclude_st: true, ...(t.hard || {}) };
+  }
+  renderSpControls();
+});
+$("#spWeights")?.addEventListener("input", (e) => {
+  const inp = e.target.closest("input[type=range]");
+  if (!inp) return;
+  spState.weights[inp.dataset.w] = Number(inp.value);
+  const lab = $(`#spw_${inp.dataset.w}`);
+  if (lab) lab.textContent = inp.value;
+});
+$("#spHard")?.addEventListener("change", (e) => {
+  const inp = e.target.closest("input[data-hard]");
+  if (!inp) return;
+  spState.hard[inp.dataset.hard] = inp.checked;
+});
+function readSpRanges() {
+  spState.ranges.buy_index_min = $("#spBuyMin")?.value.trim() || "";
+  spState.ranges.main_buy_ratio_min = $("#spRatioMin")?.value.trim() || "";
+  spState.ranges.volume_ratio_min = $("#spVolMin")?.value.trim() || "";
+  return spState.ranges;
+}
+async function saveSpPolicy(patch) {
+  const d = await api("/api/smartpick/ai-policy", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (spMeta) { spMeta.policy = { mode: d.mode, min_interval_sec: d.min_interval_sec, daily_cap: d.daily_cap }; spMeta.usage = d.usage; }
+  const usage = $("#spAiUsage");
+  if (usage) usage.textContent = spUsageText(d.usage, d);
+  spSyncPolicyButtons(d);
+}
+$("#spAiMode")?.addEventListener("click", (e) => {
+  const btn = e.target.closest(".opt");
+  if (!btn) return;
+  saveSpPolicy({ mode: btn.dataset.mode });
+});
+$("#spAiInterval")?.addEventListener("click", (e) => {
+  const btn = e.target.closest(".opt");
+  if (!btn) return;
+  saveSpPolicy({ min_interval_sec: Number(btn.dataset.sec) });
+});
+$("#spAiCap")?.addEventListener("click", (e) => {
+  const btn = e.target.closest(".opt");
+  if (!btn) return;
+  saveSpPolicy({ daily_cap: Number(btn.dataset.cap) });
+});
+
+function renderSpResult(d) {
+  spState.last = d;
+  $("#spCount").textContent = `共 ${d.total || 0} 只`;
+  $("#spLocal").style.display = "";
+  $("#spLocal").textContent = d.local_summary || "";
+  const ai = d.ai || {};
+  const box = $("#spAiBox");
+  if (ai.text) {
+    box.innerHTML = `<div class="outlook-summary" style="white-space:pre-wrap">${esc(ai.text)}</div>`;
+  } else if (ai.error) {
+    box.innerHTML = `<div class="offline-banner">AI点评失败：${esc(ai.error)}</div>`;
+  } else if (ai.skipped && ai.reason && ai.reason !== "not_requested" && ai.reason !== "manual") {
+    const why = { off: "已关闭 AI", cap: "今日次数已用完", interval: "未到自动间隔", duplicate: "相同名单间隔内不重复调用", unconfigured: "未配置大模型", empty: "名单为空" }[ai.reason] || ai.reason;
+    box.innerHTML = `<div class="muted" style="margin-bottom:8px">未调用 AI：${esc(why)}。名单仍为本地结果。</div>`;
+  } else {
+    box.innerHTML = "";
+  }
+  const items = d.items || [];
+  $("#spTable").innerHTML = items.length ? `<table><thead><tr>
+    <th>#</th><th>名称</th><th>财报</th><th>行业</th><th>现价</th><th>涨跌幅</th><th>综合分</th>
+    <th>购买指数</th><th>量比</th>${flowMetricHeaders()}<th>提示</th><th>本地理由</th>
+  </tr></thead><tbody>${items.map((r, i) => `
+    <tr class="${scoreRowClass(r.smart_score || r.score)}" data-code="${r.code}" data-name="${esc(r.name)}" onclick="openStock('${r.code}','${esc(r.name)}')">
+      <td>${i + 1}</td><td>${esc(r.name)} <span class="muted">${r.code}</span></td>
+      <td>${finBadge(r)}</td>
+      <td>${esc(r.industry || "-")}</td>
+      <td class="num ${cls(r.pct)}">${fmt(r.price)}</td>
+      <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
+      <td class="num"><b>${fmt(r.smart_score, 1)}</b></td>
+      <td class="num">${r.buy_index != null ? `<b>${fmt(r.buy_index, 0)}</b>` : "-"}</td>
+      <td class="num">${fmt(r.volume_ratio)}</td>${flowMetricCells(r)}
+      <td><span class="badge ${r.advice === "增持" ? "advice-buy" : r.advice === "减持" ? "advice-sell" : "advice-hold"}" style="font-size:11px;padding:2px 7px">${esc(r.advice || "-")}</span></td>
+      <td class="desc-hl" style="white-space:normal;min-width:200px">${esc(r.local_reason || "")}</td>
+    </tr>`).join("")}</tbody></table>
+    <div class="muted" style="margin-top:6px;font-size:12px">${FLOW_NOTE} 综合分为本地加权，不构成投资建议。</div>`
+    : `<div class="empty">${esc(d.local_summary || "无命中个股")}</div>`;
+  if (d.usage) {
+    const el = $("#spAiUsage");
+    if (el) el.textContent = spUsageText(d.usage, d.policy || (spMeta && spMeta.policy));
+  }
+}
+
+window.parseSmartpickSemantic = async () => {
+  /* 解析在 run 时服务端完成，这里只提示已填入 */
+  const t = ($("#spSemantic")?.value || "").trim();
+  if (!t) return;
+  $("#spLocal").style.display = "";
+  $("#spLocal").textContent = "已记录一句话，将在「开始选股」时解析为条件。";
+};
+
+window.runSmartpick = async () => {
+  $("#spTable").innerHTML = '<div class="empty">本地综合计算中…</div>';
+  try {
+    const d = await api("/api/smartpick/run", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        template: spState.template,
+        hard: spState.hard,
+        weights: spState.weights,
+        ranges: readSpRanges(),
+        semantic: ($("#spSemantic")?.value || "").trim(),
+      }),
+    });
+    renderSpResult(d);
+  } catch (err) {
+    $("#spTable").innerHTML = `<div class="empty">选股失败：${esc(err.message || err)}</div>`;
+  }
+};
+
+window.runSmartpickAi = async () => {
+  if (!spState.last || !(spState.last.items || []).length) {
+    $("#spAiBox").innerHTML = '<div class="muted">请先开始选股得到名单。</div>';
+    return;
+  }
+  $("#spAiBox").innerHTML = '<div class="empty">正在生成点评（受日上限与间隔约束）…</div>';
+  try {
+    const d = await api("/api/smartpick/ai-comment", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        items: spState.last.items,
+        template_name: spState.last.template_name,
+        summary: spState.last.local_summary,
+      }),
+    });
+    renderSpResult({ ...spState.last, ai: d, usage: d.usage || spState.last.usage, policy: spState.last.policy });
+  } catch (err) {
+    $("#spAiBox").innerHTML = `<div class="offline-banner">点评失败：${esc(err.message || err)}</div>`;
+  }
+};
+
 /* ---------------- 工具与启动 ---------------- */
 function debounce(fn, ms) {
   let t;
@@ -2557,6 +2854,7 @@ loaders.commodity = loadCommodities;
 loaders.global = loadGlobal;
 loaders.recommend = loadRecommend;
 loaders.ranks = loadRanks;
+loaders.smartpick = loadSmartpick;
 loaders.aipick = loadAiPick;
 loaders.ai = loadAiConfig;
 loaders.settings = loadSettings;
