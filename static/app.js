@@ -1583,12 +1583,13 @@ const kindBadge = (kind) => {
   return `<span class="badge ${css}">${esc(k)}</span>`;
 };
 function holderTable(title, rows, floatHolder) {
+  const head = title ? `<div class="hold-sub">${esc(title)}</div>` : "";
   if (!rows || !rows.length) {
-    return `<div><div class="hold-sub">${esc(title)}</div><div class="muted" style="font-size:calc(12px * var(--font-scale))">暂无披露</div></div>`;
+    return `<div>${head}<div class="muted" style="font-size:calc(12px * var(--font-scale));margin-top:8px">暂无披露</div></div>`;
   }
   const ratioHead = floatHolder ? "占流通比" : "占总股本";
-  return `<div>
-    <div class="hold-sub">${esc(title)}</div>
+  return `<div class="hold-one">
+    ${head}
     <table><thead><tr>
       <th>名次</th><th>股东</th><th>类型</th><th>${ratioHead}</th><th>持股</th><th>变动</th>
     </tr></thead><tbody>${rows.map((r) => `
@@ -1660,6 +1661,7 @@ function holdTabBtns(h) {
 function structurePane(h) {
   const subs = [
     ["top10", "十大股东"],
+    ["float10", "十大流通股东"],
     ["org", "机构持仓"],
     ["counts", "股东变化"],
     ["funds", "基金持股"],
@@ -1670,10 +1672,8 @@ function structurePane(h) {
   if (holdStructSub === "funds") return bar + fundsPane(h);
   if (holdStructSub === "org") return bar + orgHoldPane(h);
   if (holdStructSub === "counts") return bar + countsPane(h);
-  return bar + `<div class="hold-tables">
-    ${holderTable("十大股东", h.top10, false)}
-    ${holderTable("十大流通股东", h.top10_float, true)}
-  </div>`;
+  if (holdStructSub === "float10") return bar + holderTable("", h.top10_float, true);
+  return bar + holderTable("", h.top10, false);
 }
 
 function ratingsPane() {

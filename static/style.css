@@ -432,6 +432,7 @@ input:focus { border-color: var(--accent); }
 .hold-legend .person { background: #8a5a1a; }
 .hold-tables { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 8px; }
 @media (max-width: 1100px) { .hold-tables { grid-template-columns: 1fr; } }
+.hold-one { margin-top: 8px; overflow-x: auto; }
 .hold-sub { font-size: calc(13px * var(--font-scale)); font-weight: 600; margin: 10px 0 6px; }
 .kind-org { background: var(--accent-soft); color: var(--accent); }
 .kind-person { background: rgba(138,90,26,.28); color: #ffe0b3; }
