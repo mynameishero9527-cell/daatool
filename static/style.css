@@ -909,6 +909,22 @@ tr.score-95 td { background: rgba(255, 60, 60, .30); }
   border-radius: 8px; background: rgba(74,158,255,.18); color: var(--accent); vertical-align: middle;
 }
 .hot-sec.ai-mark { box-shadow: inset 0 0 0 1px rgba(74,158,255,.35); }
+.intel-card {
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px 12px 10px; cursor: pointer;
+}
+.intel-card:hover, .intel-card.active { border-color: var(--accent); background: var(--card-hover); }
+.intel-card .ic-title { font-weight: 700; font-size: calc(15px * var(--font-scale)); margin-bottom: 6px; line-height: 1.4; }
+.intel-card .ic-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; align-items: center; }
+.intel-card .ic-kws { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
+.intel-card .ic-src { color: var(--muted); font-size: calc(11px * var(--font-scale)); }
+.intel-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+.js-intel-row { position: relative; }
+.kw-chip {
+  display: inline-block; padding: 1px 7px; border-radius: 8px;
+  background: rgba(74,158,255,.12); color: var(--accent);
+  font-size: calc(11px * var(--font-scale));
+}
 .policy-item { padding: 10px 4px; border-bottom: 1px solid rgba(42,53,72,.5); }
 .policy-item .p-sum { color: var(--muted); font-size: calc(13px * var(--font-scale)); line-height: 1.55; margin-top: 4px; }
 .policy-item .p-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 4px; }

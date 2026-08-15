@@ -40,11 +40,13 @@ def get_announcements(code: str = "", limit: int = 60) -> dict:
             anns = []
 
     items = [{
+        "id": n.get("id") or "",
         "text": n["text"], "time": n.get("time", ""),
         "tag": _classify(n["text"]),
         "direction": n["impact_direction"], "impact_desc": n["impact_desc"],
         "impact_level": n["impact_level"], "brief": n.get("brief", ""),
         "affected_sectors": n.get("affected_sectors", []),
+        "score": n.get("score"),
     } for n in anns[:limit]]
     return {
         "items": items, "target_name": target_name, "ratings": ratings,

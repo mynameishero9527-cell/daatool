@@ -753,6 +753,7 @@ def get_sector_intel(months: int = 12) -> dict:
         if it["kind"] not in ("news", "policy") or not it.get("affected_sectors"):
             continue
         news_ev.append({
+            "id": it.get("id") or "",
             "date": it["date"] or "",
             "title": it["title"],
             "city": it.get("region") or "",
@@ -765,6 +766,9 @@ def get_sector_intel(months: int = 12) -> dict:
     for ev in events:
         ev.setdefault("source", "板块周期")
         ev.setdefault("kind", "sector_event")
+        if not ev.get("id"):
+            key = hashlib.md5(f"{ev.get('date') or ''}{ev.get('title') or ''}".encode()).hexdigest()[:12]
+            ev["id"] = key
     merged = events + news_ev
     merged.sort(key=lambda e: e.get("date") or "", reverse=True)
     return {"items": merged, "count": len(merged), "stats": intel_stats(),

@@ -281,6 +281,22 @@ CREATE TABLE IF NOT EXISTS stock_holder_ai (
     payload    TEXT NOT NULL,            -- JSON：text/source/asof/analyzed_at
     updated_at TEXT NOT NULL
 );
+
+-- 12.0.9：宏观情报条目的 AI 利好/利空、解读、关键词（失败不覆盖）
+CREATE TABLE IF NOT EXISTS intel_item_ai (
+    item_key      TEXT PRIMARY KEY,      -- source:ident
+    source        TEXT NOT NULL,         -- news/policy/official/calendar/...
+    source_label  TEXT,
+    ident         TEXT,
+    title         TEXT,
+    text_excerpt  TEXT,
+    attention     REAL,                  -- 关注度，缺则 NULL
+    heat          REAL,                  -- 热度，缺则 NULL
+    event_time    TEXT,
+    payload       TEXT NOT NULL,         -- JSON：bull/bear/reading/keywords/...
+    updated_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_intel_item_ai_src ON intel_item_ai(source, updated_at);
 """
 
 # 已有表的增量列迁移（幂等）

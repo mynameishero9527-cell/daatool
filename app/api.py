@@ -9,7 +9,7 @@ from .datasources.base import HEALTH
 from . import scheduler as sched_mod
 from .services import (
     ai, alerts, announcement, attribution, commodity, cycle, darkpool, finance,
-    forecast, global_index, holders, hot_terms, kline, knowledge, macro, market, ranks, rating,
+    forecast, global_index, holders, hot_terms, intel_ai, kline, knowledge, macro, market, ranks, rating,
     recommend, screener, sector, smartpick, stocklist, strategy, wuxing,
 )
 from .services import metrics as metrics_svc
@@ -343,6 +343,30 @@ def macro_hot_terms_ai_batch(payload: dict = Body(default={})):
     """一键回填当前热词列表的利好/利空。未配置或解析失败不覆盖。"""
     body = payload or {}
     return hot_terms.analyze_hot_terms_ai_batch(body.get("kind") or "", body.get("terms"))
+
+
+@router.get("/macro/intel-ai/index")
+def macro_intel_ai_index():
+    """宏观条目已分析徽章索引。"""
+    return intel_ai.index()
+
+
+@router.get("/macro/intel-ai")
+def macro_intel_ai_get(item_key: str = ""):
+    """读取已保存的情报 AI 分析，不调用大模型。"""
+    return intel_ai.get_detail(item_key)
+
+
+@router.post("/macro/intel-ai")
+def macro_intel_ai_analyze(payload: dict = Body(default={})):
+    """右键：利好/利空回填、解读保存、或提取关键词。失败不覆盖。"""
+    return intel_ai.analyze(payload or {})
+
+
+@router.get("/macro/hot-intel")
+def macro_hot_intel(source: str = "", limit: int = Query(80, le=200)):
+    """热门信息：全部已落库 AI 词库/板块。"""
+    return intel_ai.list_hot_intel(source, limit)
 
 
 @router.post("/commodities/watch")

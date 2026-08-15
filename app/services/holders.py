@@ -432,6 +432,7 @@ def _empty_ai() -> dict:
     return {
         "applied": False, "text": "", "source": "", "updated_at": "",
         "analyzed_at": "", "asof": "", "error": "", "hint": "", "kept": False,
+        "keywords": [],
     }
 
 
@@ -449,7 +450,9 @@ def load_holder_ai(code: str) -> dict | None:
         data = json.loads(rows[0].get("payload") or "{}")
     except Exception:  # noqa: BLE001
         return None
-    if not isinstance(data, dict) or not (data.get("text") or "").strip():
+    kws = data.get("keywords") if isinstance(data.get("keywords"), list) else []
+    kws = [str(x).strip() for x in kws if str(x).strip()]
+    if not isinstance(data, dict) or (not (data.get("text") or "").strip() and not kws):
         return None
     stamp = rows[0].get("updated_at") or data.get("analyzed_at") or data.get("updated_at") or ""
     return {
@@ -462,6 +465,7 @@ def load_holder_ai(code: str) -> dict | None:
         "error": "",
         "hint": "",
         "kept": False,
+        "keywords": kws[:16],
     }
 
 
@@ -635,6 +639,7 @@ def analyze_holder_ai(code: str) -> dict:
         "source": f"AI大模型（{cfg.get('model') or '默认'}）",
         "model": cfg.get("model") or "",
         "asof": snap.get("asof") or "",
+        "keywords": (prev or {}).get("keywords") or [],
     })
     return {
         **saved,

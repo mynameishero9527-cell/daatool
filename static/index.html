@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>A股量化工具</title>
-<link rel="stylesheet" href="/static/style.css?v=12.0.8">
+<link rel="stylesheet" href="/static/style.css?v=12.0.9">
 <script>
 (function () {
   try {
@@ -317,6 +317,7 @@
       <button class="opt" data-sub="policy">政策追踪</button>
       <button class="opt" data-sub="official">官方政策信息</button>
       <button class="opt" data-sub="hotwords">热度词汇</button>
+      <button class="opt" data-sub="hotintel">热门信息</button>
       <button class="opt" data-sub="major">影响评估</button>
       <button class="opt" data-sub="announce">公司公告</button>
       <button class="opt" data-sub="knowledge">股票常识</button>
@@ -763,10 +764,13 @@
   </div>
   <div class="ctx-item" id="ctxWxAi">✨ 发送AI五行分类</div>
   <div class="ctx-item" id="ctxNewsAi" style="display:none">🤖 发送AI分析（消息）</div>
+  <div class="ctx-item" id="ctxIntelBoards" style="display:none">🤖 AI 分析利好/利空并回填</div>
+  <div class="ctx-item" id="ctxIntelReading" style="display:none">📖 AI 解读并保存</div>
+  <div class="ctx-item" id="ctxHolderKw" style="display:none">🔑 AI 提取关键信息词库</div>
   <div class="ctx-item" id="ctxHotAi" style="display:none">🤖 AI 分析利好/利空并回填</div>
   <div class="ctx-item" id="ctxHotRevert" style="display:none">↩ 还原词库利好/利空</div>
 </div>
 
-<script src="/static/app.js?v=12.0.8"></script>
+<script src="/static/app.js?v=12.0.9"></script>
 </body>
 </html>
