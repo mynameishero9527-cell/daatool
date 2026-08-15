@@ -3,7 +3,11 @@
 干支锚点：1949-10-01 为甲子日（史实锚点）；年干支以春节为界。
 节气/农历节日日期采用 2026-2027 通用日期表（±1日近似，界面标注）。
 """
-from datetime import date, timedelta
+import json
+import logging
+from datetime import date, datetime, timedelta
+
+log = logging.getLogger("almanac")
 
 GAN = "甲乙丙丁戊己庚辛壬癸"
 ZHI = "子丑寅卯辰巳午未申酉戌亥"
@@ -108,6 +112,13 @@ JIUGONG = [
     ("震·正东", "中宫", "兑·正西"),
     ("艮·东北", "坎·正北", "乾·西北"),
 ]
+# 日支对应方位（与时辰方位同一套民俗口诀，不编造飞星）
+ZHI_DIR = {
+    "子": "正北", "丑": "东北", "寅": "东北",
+    "卯": "正东", "辰": "东南", "巳": "东南",
+    "午": "正南", "未": "西南", "申": "西南",
+    "酉": "正西", "戌": "西北", "亥": "西北",
+}
 
 # 季节 → 五行旺相休囚死（春木夏火秋金冬水，土旺四季末）
 _WANGXIANG = {
@@ -129,22 +140,6 @@ def _season_of(d: date) -> str:
     return "冬"
 
 
-def _day_summary(d: date) -> dict:
-    """某日的干支/节气/节日速览（用于明日预览）。"""
-    dgz = day_ganzhi(d)
-    term = next((n for n, m, dd in SOLAR_TERMS if m == d.month and dd == d.day), None)
-    festival = None
-    for name, md, *_ in FESTIVALS_FIXED:
-        if (d.month, d.day) == md:
-            festival = name
-    for name, fd, *_ in FESTIVALS_LUNAR.get(d.year, []):
-        if fd == d:
-            festival = name
-    return {"date": d.isoformat(), "weekday": "周" + "一二三四五六日"[d.weekday()],
-            "day_ganzhi": f"{dgz}日", "solar_term": term, "festival": festival,
-            "caishen": CAISHEN[dgz[0]]}
-
-
 # 建除十二神（黄道/黑道）：寅月青龙起子，每月顺移两位
 _SHEN = ["青龙", "明堂", "天刑", "朱雀", "金匮", "天德", "白虎", "玉堂", "天牢", "玄武", "司命", "勾陈"]
 _HUANGDAO = {"青龙", "明堂", "金匮", "天德", "玉堂", "司命"}
@@ -162,6 +157,43 @@ def huangdao_of(d: date) -> dict:
             "text": f"{shen}（{'黄道吉日' if is_huang else '黑道日'}）"}
 
 
+def jiugong_cells(d: date) -> list[list[dict]]:
+    """九宫格按当日日干财神、日支方位打标，格子本身仍是洛书后天八卦。"""
+    dgz = day_ganzhi(d)
+    cai = CAISHEN[dgz[0]]
+    zhi_dir = ZHI_DIR[dgz[1]]
+    rows = []
+    for row in JIUGONG:
+        cells = []
+        for label in row:
+            marks = []
+            direc = label.split("·")[-1] if "·" in label else ""
+            if direc and direc == cai:
+                marks.append("caishen")
+            if direc and direc == zhi_dir:
+                marks.append("zhi")
+            cells.append({"label": label, "mark": marks})
+        rows.append(cells)
+    return rows
+
+
+def _day_summary(d: date) -> dict:
+    """某日的干支/节气/节日速览（用于次日预览）。"""
+    dgz = day_ganzhi(d)
+    term = next((n for n, m, dd in SOLAR_TERMS if m == d.month and dd == d.day), None)
+    festival = None
+    for name, md, *_ in FESTIVALS_FIXED:
+        if (d.month, d.day) == md:
+            festival = name
+    for name, fd, *_ in FESTIVALS_LUNAR.get(d.year, []):
+        if fd == d:
+            festival = name
+    return {"date": d.isoformat(), "weekday": "周" + "一二三四五六日"[d.weekday()],
+            "day_ganzhi": f"{dgz}日", "solar_term": term, "festival": festival,
+            "caishen": CAISHEN[dgz[0]], "huangdao": huangdao_of(d),
+            "zhi_dir": ZHI_DIR[dgz[1]]}
+
+
 def resolve_almanac_date(raw: str | None):
     """解析 YYYY-MM-DD；空则今天。格式非法返回 None，不猜日期。"""
     s = (raw or "").strip()
@@ -174,7 +206,37 @@ def resolve_almanac_date(raw: str | None):
         return None
 
 
-def get_almanac(d: date | None = None) -> dict:
+def _store_almanac(payload: dict) -> bool:
+    """把当日黄历 JSON 写入本地 SQLite；失败不阻断查询。"""
+    day = payload.get("date")
+    if not day:
+        return False
+    try:
+        from ..database import execute
+        body = {k: v for k, v in payload.items() if k not in ("stored", "stored_days")}
+        execute(
+            "INSERT INTO almanac_day(day, payload, updated_at) VALUES(?,?,?) "
+            "ON CONFLICT(day) DO UPDATE SET payload=excluded.payload, updated_at=excluded.updated_at",
+            (day, json.dumps(body, ensure_ascii=False),
+             datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001
+        log.debug("黄历本地写入失败: %s", exc)
+        return False
+
+
+def prefetch_almanac_range(center: date, span: int = 7) -> list[str]:
+    """把中心日前后 span 天写入本地（纯历法推算，不请求外网）。"""
+    span = max(0, min(int(span or 0), 31))
+    stored = []
+    for i in range(-span, span + 1):
+        payload = get_almanac(center + timedelta(days=i), persist=True)
+        stored.append(payload["date"])
+    return stored
+
+
+def get_almanac(d: date | None = None, persist: bool = True) -> dict:
     d = d or date.today()
     ygz, zodiac = year_ganzhi(d)
     dgz = day_ganzhi(d)
@@ -184,7 +246,8 @@ def get_almanac(d: date | None = None) -> dict:
     season = _season_of(d)
     wx = _WANGXIANG[season]
     today = date.today()
-    return {
+    hd = huangdao_of(d)
+    payload = {
         "ok": True,
         "date": d.isoformat(),
         "is_today": d == today,
@@ -193,16 +256,22 @@ def get_almanac(d: date | None = None) -> dict:
         "month_ganzhi": f"{mgz}月", "day_ganzhi": f"{dgz}日",
         "wuxing": f"日干{day_gan}属{GAN_WUXING[day_gan]}，日支{dgz[1]}属{ZHI_WUXING[dgz[1]]}",
         "caishen": CAISHEN[day_gan],
+        "zhi_dir": ZHI_DIR[dgz[1]],
         "shichen": [{"name": n, "direction": dr} for n, dr in SHICHEN],
         "solar_term": term_today,
         "season": season,
         "wangxiang": wx,
         "wangxiang_text": f"{season}季：{wx['旺']}旺、{wx['相']}相、{wx['休']}休、{wx['囚']}囚、{wx['死']}死",
         "jiugong": [list(row) for row in JIUGONG],
-        "huangdao": huangdao_of(d),
+        "jiugong_cells": jiugong_cells(d),
+        "huangdao": hd,
         "tomorrow": _day_summary(d + timedelta(days=1)),
+        "stored": False,
         "note": "干支按1949-10-01甲子日推算；节气/农历为通用近似日期；方位五行为民俗文化参考",
     }
+    if persist:
+        payload["stored"] = _store_almanac(payload)
+    return payload
 
 
 def get_festival_events(start: date, end: date) -> list[dict]:

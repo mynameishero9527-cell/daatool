@@ -526,6 +526,7 @@ async function loadTopAlmanac() {
 }
 
 let almanacPick = "";
+let almanacLoadSeq = 0;
 function almanacTodayStr() {
   const n = new Date();
   const p = (x) => String(x).padStart(2, "0");
@@ -538,9 +539,28 @@ function shiftAlmanacDate(base, delta) {
   const p = (x) => String(x).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
+function renderJiugong(a) {
+  const cells = (a.jiugong_cells && a.jiugong_cells.length)
+    ? a.jiugong_cells.flat()
+    : (a.jiugong || []).flat().map((label) => ({ label, mark: [] }));
+  return cells.map((c) => {
+    const label = typeof c === "string" ? c : (c.label || "");
+    const marks = (c && c.mark) || [];
+    const cls = [
+      label === "中宫" ? "center" : "",
+      marks.includes("caishen") ? "caishen" : "",
+      marks.includes("zhi") ? "zhi" : "",
+    ].filter(Boolean).join(" ");
+    const tags = [];
+    if (marks.includes("caishen")) tags.push("财神");
+    if (marks.includes("zhi")) tags.push("日支");
+    return `<div class="${cls}">${esc(label)}${tags.length ? `<div class="jg-mark">${esc(tags.join(" · "))}</div>` : ""}</div>`;
+  }).join("");
+}
 async function loadDashAlmanac(forceDate) {
   const host = $("#ipAlmanac");
   if (!host) return;
+  const seq = ++almanacLoadSeq;
   const inp = $("#almanacDate");
   let day = "";
   if (forceDate) day = String(forceDate).slice(0, 10);
@@ -550,43 +570,66 @@ async function loadDashAlmanac(forceDate) {
     host.innerHTML = '<div class="empty">日期格式无效，请用日历选择</div>';
     return;
   }
-  host.innerHTML = '<div class="empty">加载中…</div>';
+  const had = host.childElementCount && !host.querySelector(".empty");
+  if (!had) host.innerHTML = '<div class="empty">加载中…</div>';
   try {
     const q = day ? `?date=${encodeURIComponent(day)}` : "";
     const a = await api(`/api/macro/almanac${q}`);
+    if (seq !== almanacLoadSeq) return;
     if (a && a.ok === false) {
       host.innerHTML = `<div class="empty">${esc(a.error || "日期无效")}</div>`;
       return;
     }
     const t = a.tomorrow || {};
+    const h = a.huangdao || {};
+    const th = t.huangdao || {};
+    const wx = a.wangxiang || {};
     if (a.date) {
       almanacPick = a.date;
       if (inp) inp.value = a.date;
     }
     const title = $("#ipAlmanacTitle");
     if (title) title.textContent = a.is_today ? "今日黄历 · 九宫方位" : "黄历 · 九宫方位";
+    const storedEl = $("#almanacStored");
+    if (storedEl) {
+      storedEl.textContent = a.stored
+        ? (a.stored_days ? `已存本地 ${a.stored_days} 日` : "已存本地")
+        : "";
+    }
     const nextLab = a.is_today ? "明日预览" : "次日预览";
+    const wxCompact = wx["旺"] ? `${wx["旺"]}旺 ${wx["相"] || ""}相` : (a.wangxiang_text || "—");
     host.innerHTML = `
-      <div style="font-size:calc(15px * var(--font-scale))">${esc(a.date)}（${esc(a.weekday)}）${a.is_today ? '<span class="badge level-3">今天</span>' : ""}</div>
-      <div class="desc-hl">${esc(a.year_ganzhi)}【${esc(a.zodiac)}年】${esc(a.month_ganzhi)} ${esc(a.day_ganzhi)}
+      <div class="almanac-head">${esc(a.date)}（${esc(a.weekday)}）${a.is_today ? '<span class="badge level-3">今天</span>' : ""}
         ${a.solar_term ? `<span class="badge level-3">${esc(a.solar_term)}</span>` : ""}
-        ${a.huangdao ? `<span class="badge ${a.huangdao.is_huangdao ? "level-3" : "level-2"}">${esc(a.huangdao.text)}</span>` : ""}</div>
-      <div class="muted" style="font-size:calc(12px * var(--font-scale));margin:4px 0">${esc(a.wuxing)} ｜ 财神：${esc(a.caishen)}</div>
-      <div class="kv"><span class="k">旺相休囚</span><span style="color:#e8c46b">${esc(a.wangxiang_text)}</span></div>
-      <div class="jiugong">${(a.jiugong || []).flat().map((c) =>
-        `<div class="${c === "中宫" ? "center" : ""}">${esc(c)}</div>`).join("")}</div>
+        ${a.stored ? '<span class="badge level-2">已存本地</span>' : ""}</div>
+      <div class="almanac-kpi">
+        <div class="kpi"><span class="k">年柱</span><span class="v">${esc(a.year_ganzhi)}【${esc(a.zodiac)}】</span></div>
+        <div class="kpi"><span class="k">月柱</span><span class="v">${esc(a.month_ganzhi)}</span></div>
+        <div class="kpi"><span class="k">日柱</span><span class="v">${esc(a.day_ganzhi)}</span></div>
+        <div class="kpi ${h.is_huangdao ? "hd" : "bd"}"><span class="k">黄道</span><span class="v">${esc(h.text || "—")}</span></div>
+        <div class="kpi caishen"><span class="k">财神</span><span class="v">${esc(a.caishen || "—")}${a.zhi_dir ? ` · 日支${esc(a.zhi_dir)}` : ""}</span></div>
+        <div class="kpi"><span class="k">旺相</span><span class="v">${esc(wxCompact)}</span></div>
+      </div>
+      <div class="muted" style="font-size:calc(12px * var(--font-scale));margin:4px 0">${esc(a.wuxing)} ｜ ${esc(a.wangxiang_text || "")}</div>
+      <div class="jiugong">${renderJiugong(a)}</div>
       <div class="kv"><span class="k">${nextLab}</span>
         <span>${esc(t.date || "")}（${esc(t.weekday || "")}）${esc(t.day_ganzhi || "")}
+        ${th.text ? `<span class="badge ${th.is_huangdao ? "level-3" : "level-2"}">${esc(th.text)}</span>` : ""}
         ${t.solar_term ? `<span class="badge level-3">${esc(t.solar_term)}</span>` : ""}
         ${t.festival ? `<span class="badge level-4">${esc(t.festival)}</span>` : ""}
         <span class="muted">财神${esc(t.caishen || "")}</span></span></div>
       <div class="muted" style="font-size:calc(11px * var(--font-scale));margin-top:4px">${esc(a.note)}</div>`;
-  } catch (err) { console.warn(err); }
+  } catch (err) {
+    if (seq !== almanacLoadSeq) return;
+    console.warn(err);
+  }
 }
-$("#almanacDate")?.addEventListener("change", () => {
+function onAlmanacDateInput() {
   const v = $("#almanacDate") && $("#almanacDate").value;
   if (v) loadDashAlmanac(v);
-});
+}
+$("#almanacDate")?.addEventListener("change", onAlmanacDateInput);
+$("#almanacDate")?.addEventListener("input", onAlmanacDateInput);
 $("#almanacPrev")?.addEventListener("click", () => {
   loadDashAlmanac(shiftAlmanacDate(almanacPick || almanacTodayStr(), -1));
 });

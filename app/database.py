@@ -322,6 +322,7 @@ CREATE TABLE IF NOT EXISTS stock_ai_brief (
 -- 13.0.17：持股构成下十大股东与十大流通股东分 tab 显示
 -- 13.0.18：今日黄历·九宫方位从自选移到智能选股页
 -- 13.0.19：黄历九宫可按日期查询（干支按甲子日推算，不编造官方黄历）
+-- 13.0.20：切换日期时同步更新干支/黄道等，并写入本地 almanac_day
 -- intel_item_ai / hot_term_ai 表结构不变，失败仍不覆盖已保存结果
 
 CREATE TABLE IF NOT EXISTS knowledge_ai (
@@ -428,6 +429,13 @@ CREATE TABLE IF NOT EXISTS signal_task (
 );
 CREATE INDEX IF NOT EXISTS idx_signal_task_open ON signal_task(status, asof);
 CREATE INDEX IF NOT EXISTS idx_signal_task_code ON signal_task(code, asof);
+
+-- 13.0.20：黄历按日缓存（始终重算后再写入，库内不是黄道/干支的权威源）
+CREATE TABLE IF NOT EXISTS almanac_day (
+    day        TEXT PRIMARY KEY,
+    payload    TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 # 已有表的增量列迁移（幂等）

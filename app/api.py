@@ -278,12 +278,41 @@ def macro_event_detail(title: str, bull: str = "", bear: str = "",
 
 
 @router.get("/macro/almanac")
-def macro_almanac(day: str = Query("", alias="date")):
+def macro_almanac(day: str = Query("", alias="date"), span: int = Query(7, ge=0, le=31)):
     from .services import almanac
     d = almanac.resolve_almanac_date(day)
     if d is None:
         return {"ok": False, "error": "日期格式无效，请用 YYYY-MM-DD"}
-    return almanac.get_almanac(d)
+    payload = almanac.get_almanac(d, persist=True)
+    try:
+        stored = almanac.prefetch_almanac_range(d, span)
+        payload["stored"] = True
+        payload["stored_days"] = len(stored)
+    except Exception:
+        payload["stored_days"] = 1 if payload.get("stored") else 0
+    return payload
+
+
+@router.post("/macro/almanac/sync")
+def macro_almanac_sync(day: str = Query("", alias="date"), span: int = Query(7, ge=0, le=31)):
+    """把选定日及前后 span 天的干支/黄道写入本地 SQLite。"""
+    from .services import almanac
+    d = almanac.resolve_almanac_date(day)
+    if d is None:
+        return {"ok": False, "error": "日期格式无效，请用 YYYY-MM-DD"}
+    stored = almanac.prefetch_almanac_range(d, span)
+    payload = almanac.get_almanac(d, persist=True)
+    return {
+        "ok": True,
+        "date": payload["date"],
+        "stored": True,
+        "stored_days": len(stored),
+        "span": span,
+        "year_ganzhi": payload["year_ganzhi"],
+        "month_ganzhi": payload["month_ganzhi"],
+        "day_ganzhi": payload["day_ganzhi"],
+        "huangdao": payload["huangdao"],
+    }
 
 
 @router.get("/macro/sector-events")
