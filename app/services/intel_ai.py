@@ -1,7 +1,7 @@
 """宏观情报条目的 AI 回填：利好/利空板块、解读、关键词词库。
 
-热度词汇 / 股票常识不走本模块（热词已有 hot_term_ai）。
-失败回退本地规则，不假装成功、不编造板块或热度。
+宏观情报全部二级菜单均可右键分析（含热度词汇、股票常识、热门信息卡片）。
+热词同时写入 hot_term_ai，失败回退本地规则，不假装成功、不编造板块或热度。
 """
 from __future__ import annotations
 
@@ -26,10 +26,11 @@ SOURCE_LABELS = {
     "announce": "公司公告",
     "holders": "持股情况",
     "hot_term": "热度词汇",
+    "knowledge": "股票常识",
 }
 
 ALLOWED_SOURCES = set(SOURCE_LABELS)
-SKIP_MENUS = {"hotwords", "knowledge"}  # 产品：这两项不走本模块
+SKIP_MENUS: set[str] = set()
 MODES = {"boards", "reading", "keywords"}
 
 
@@ -143,6 +144,7 @@ def _row_public(rec: dict) -> dict:
     kws = rec.get("keywords") or []
     return {
         "item_key": rec["item_key"],
+        "ident": rec.get("ident") or "",
         "source": rec.get("source") or "",
         "source_label": rec.get("source_label") or "",
         "title": rec.get("title") or "",
@@ -240,16 +242,18 @@ def index() -> dict:
         payload = _parse_payload(r.get("payload"))
         bull = hot_terms._norm_ai_side(payload.get("bull") or [])  # noqa: SLF001
         bear = hot_terms._norm_ai_side(payload.get("bear") or [])  # noqa: SLF001
-        if not bull and not bear:
+        reading = str(payload.get("reading") or "").strip()
+        kws = _norm_keywords(payload.get("keywords") or [term])
+        if not bull and not bear and not reading and not kws:
             continue
         items[key] = {
-            "item_key": key, "source": "hot_term", "source_label": "热度词汇",
+            "item_key": key, "ident": term, "source": "hot_term", "source_label": "热度词汇",
             "title": term, "attention": None, "heat": None,
             "event_time": "", "updated_at": r.get("updated_at") or "",
             "bull": [x["name"] for x in bull], "bear": [x["name"] for x in bear],
             "bull_detail": bull, "bear_detail": bear,
-            "keywords": [term], "reason": str(payload.get("reason") or "")[:120],
-            "has_boards": True, "has_reading": bool(payload.get("text")),
+            "keywords": kws or [term], "reason": str(payload.get("reason") or "")[:120],
+            "has_boards": bool(bull or bear), "has_reading": bool(reading or payload.get("text")),
             "has_keywords": True, "ai_source": payload.get("source") or "",
         }
     return {"ok": True, "count": len(items), "items": items}
@@ -287,8 +291,8 @@ def list_hot_intel(source: str = "", limit: int = 80) -> dict:
         "count": min(len(cards), limit),
         "total": len(cards),
         "sources": [{"id": k, "name": v} for k, v in SOURCE_LABELS.items()],
-        "note": "仅展示已成功落库的 AI 分析。失败未写入的条目不会出现。点击板块看相关个股 TOP20。",
-        "empty_reason": "" if cards else "尚无已保存的 AI 分析词库。请在快讯/政策/日历/公告/持股上右键分析。",
+        "note": "仅展示已成功落库的 AI 分析。失败未写入的条目不会出现。点击卡片看板块，再点板块看个股，默认 TOP20，可选 TOP30/TOP50。",
+        "empty_reason": "" if cards else "尚无已保存的 AI 分析词库。请在宏观情报各栏目或持股上右键分析利好/利空、解读或提取词库。",
     }
 
 
@@ -301,16 +305,17 @@ def get_detail(item_key: str) -> dict:
         term = item_key.split(":", 1)[-1]
         detail = hot_terms.hot_term_sectors(term)
         if detail.get("ai_applied"):
+            reading = str(detail.get("ai_reading") or detail.get("ai_reason") or "").strip()
             return {
-                "ok": True, "item_key": item_key, "source": "hot_term",
+                "ok": True, "item_key": item_key, "ident": term, "source": "hot_term",
                 "source_label": "热度词汇", "title": term,
                 "bull": detail.get("bull_sectors") or [],
                 "bear": detail.get("bear_sectors") or [],
-                "keywords": [term],
-                "reading": detail.get("ai_reason") or "",
+                "keywords": detail.get("ai_keywords") or [term],
+                "reading": reading,
                 "reason": detail.get("impact_summary") or "",
-                "text": detail.get("ai_reason") or "",
-                "has_boards": True, "has_reading": bool(detail.get("ai_reason")),
+                "text": reading or detail.get("ai_reason") or "",
+                "has_boards": True, "has_reading": bool(reading),
                 "applied": True, "ai_source": detail.get("ai_source") or "",
                 "updated_at": detail.get("ai_updated_at") or "",
                 "error": "", "hint": "",
@@ -339,8 +344,8 @@ def analyze(body: dict) -> dict:
     if mode not in MODES:
         mode = "boards"
     source = (body.get("source") or "news").strip()
-    if source not in ALLOWED_SOURCES or source == "hot_term":
-        return {"ok": False, "applied": False, "error": "该菜单不走本接口（热词请用热度词汇右键）"}
+    if source not in ALLOWED_SOURCES:
+        return {"ok": False, "applied": False, "error": "不支持的情报来源"}
     ident = str(body.get("ident") or "").strip()
     title = str(body.get("title") or "").strip()[:160]
     text = str(body.get("text") or body.get("summary") or "").strip()[:1200]
@@ -352,6 +357,25 @@ def analyze(body: dict) -> dict:
             extra = holders_svc._holder_ai_context(snap)  # noqa: SLF001
             text = (text + "\n" + extra).strip()[:1200]
             title = title or ident
+        except Exception:  # noqa: BLE001
+            pass
+    if source == "hot_term":
+        ident = ident or title
+        title = title or ident
+        try:
+            detail = hot_terms.hot_term_sectors(ident)
+            samples = detail.get("samples") or []
+            summary = detail.get("impact_summary") or ""
+            extra = "；".join(str(s) for s in samples[:4] if s)
+            bits = [text, summary, extra]
+            text = "\n".join(b for b in bits if b).strip()[:1200]
+            if body.get("heat") in (None, ""):
+                rows = query(
+                    "SELECT heat FROM hot_term WHERE term=? ORDER BY window_end DESC LIMIT 1",
+                    (ident,))
+                if rows:
+                    body = dict(body)
+                    body["heat"] = rows[0].get("heat")
         except Exception:  # noqa: BLE001
             pass
     key = make_key(source, ident, title, when)
@@ -497,6 +521,16 @@ def analyze(body: dict) -> dict:
     saved = save(meta, patch)
     if source == "holders" and ident:
         _merge_holder_keywords(ident, keywords, reading, model_src)
+    if source == "hot_term" and ident:
+        _merge_hot_term_overlay(ident, {
+            "bull": bull if ok_boards else None,
+            "bear": bear if ok_boards else None,
+            "reason": reason,
+            "reading": reading if ok_reading else None,
+            "keywords": keywords if ok_kw else None,
+            "text": raw,
+            "source": model_src,
+        })
     return {
         **saved,
         "ok": True, "applied": True, "ai": True, "kept": False,
@@ -521,5 +555,25 @@ def _merge_holder_keywords(code: str, keywords: list[str], reading: str, source:
         return
     try:
         holders.save_holder_ai(code, payload)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _merge_hot_term_overlay(term: str, patch: dict) -> None:
+    """解读/板块写入 hot_term_ai，空字段不冲掉已回填。"""
+    prev = hot_terms._ai_overlay(term) or {}  # noqa: SLF001
+    body = dict(prev)
+    for k, v in (patch or {}).items():
+        if v is None:
+            continue
+        if k in ("bull", "bear", "keywords") and not v:
+            continue
+        if k in ("reading", "reason", "text") and not str(v).strip():
+            continue
+        body[k] = v
+    if not (body.get("bull") or body.get("bear") or body.get("reading") or body.get("keywords")):
+        return
+    try:
+        hot_terms.save_hot_term_ai(term, body)
     except Exception:  # noqa: BLE001
         pass

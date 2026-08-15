@@ -573,13 +573,21 @@ def _apply_ai_overlay(term: str, packed: list[dict]) -> list[dict]:
 
 def _with_ai_overlay(term: str, packed: list[dict]) -> tuple[list[dict], dict]:
     packed = _apply_ai_overlay(term, packed)
-    ov = _ai_overlay(term)
-    applied = bool(ov) and any(x.get("ai") for x in packed)
+    ov = _ai_overlay(term) or {}
+    reading = str(ov.get("reading") or "").strip()
+    kws = ov.get("keywords") if isinstance(ov.get("keywords"), list) else []
+    kws = [str(x).strip() for x in kws if str(x).strip()]
+    applied = bool(ov) and (
+        any(x.get("ai") for x in packed) or bool(reading) or bool(kws)
+        or bool(ov.get("bull") or ov.get("bear"))
+    )
     return packed, {
         "ai_applied": applied,
-        "ai_reason": (ov or {}).get("reason") or "",
-        "ai_updated_at": (ov or {}).get("updated_at") or "",
-        "ai_source": (ov or {}).get("source") or "",
+        "ai_reason": ov.get("reason") or "",
+        "ai_reading": reading,
+        "ai_keywords": kws,
+        "ai_updated_at": ov.get("updated_at") or "",
+        "ai_source": ov.get("source") or "",
     }
 
 
@@ -597,6 +605,11 @@ def revert_hot_term_ai(term: str) -> dict:
     if not term:
         return {"ok": False, "error": "未指定热词"}
     execute("DELETE FROM hot_term_ai WHERE term=?", (term,))
+    try:
+        from . import intel_ai
+        execute("DELETE FROM intel_item_ai WHERE item_key=?", (intel_ai.make_key("hot_term", term),))
+    except Exception:  # noqa: BLE001
+        pass
     detail = hot_term_sectors(term)
     return {**detail, "ok": True, "applied": False, "reverted": True}
 
@@ -672,10 +685,22 @@ def analyze_hot_term_ai(term: str) -> dict:
             "hint": "可再试一次，或换更明确的热词。",
         }
     reason = str((parsed or {}).get("reason") or "")[:80]
+    reading = str((parsed or {}).get("reading") or "").strip()
+    src_label = f"AI大模型（{cfg.get('model') or '默认'}）"
     save_hot_term_ai(term, {
         "bull": bull, "bear": bear, "reason": reason, "text": raw,
-        "source": f"AI大模型（{cfg.get('model') or '默认'}）",
+        "reading": reading, "source": src_label,
     })
+    try:
+        from . import intel_ai
+        intel_ai.save(
+            {"source": "hot_term", "ident": term, "title": term,
+             "text": "；".join(str(s) for s in samples[:4] if s), "heat": None},
+            {"bull": bull, "bear": bear, "reason": reason, "reading": reading or None,
+             "keywords": [term], "text": raw, "source": src_label},
+        )
+    except Exception:  # noqa: BLE001
+        pass
     detail = hot_term_sectors(term)
     return {
         **detail,
@@ -781,9 +806,9 @@ def hot_term_sectors(term: str) -> dict:
     empty_reason = ""
     if not packed:
         empty_reason = f"「{term}」暂未映射到可交易板块（本地行业/概念无匹配）。"
-    note = ("利好/利空来自 AI 回填（右键可还原词库），不是预测。点击板块查看个股 TOP20。"
+    note = ("利好/利空来自 AI 回填（右键可还原词库），不是预测。点击板块查看个股，默认 TOP20，可选 TOP30/TOP50。"
             if meta.get("ai_applied")
-            else "利好/利空来自规则词库与近两周快讯方向统计，不是预测。右键热词可让 AI 分析并回填。点击板块查看个股 TOP20。")
+            else "利好/利空来自规则词库与近两周快讯方向统计，不是预测。右键热词可 AI 回填利好/利空或解读。点击板块查看个股，默认 TOP20。")
     return {
         "term": term,
         "impact_summary": _impact_summary([x["name"] for x in bull], [x["name"] for x in bear]),

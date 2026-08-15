@@ -1696,6 +1696,25 @@ let intelAiIndex = {};
 let ctxIntel = null;
 const hotIntelFocus = { key: "", sector: "" };
 let hotIntelSource = "";
+let hotStockLimit = 20;
+
+function hotStockLimitBtns(active) {
+  const cur = Number(active) || hotStockLimit || 20;
+  return `<span class="btn-group" id="hotStockLimitBtns" style="margin-left:8px">
+    ${[20, 30, 50].map((n) =>
+      `<button type="button" class="opt ${cur === n ? "active" : ""}" data-n="${n}">TOP${n}</button>`).join("")}
+  </span>`;
+}
+function bindHotStockLimit(reload) {
+  $("#hotStockLimitBtns")?.addEventListener("click", (e) => {
+    const btn = e.target.closest(".opt");
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    hotStockLimit = Number(btn.dataset.n) || 20;
+    if (typeof reload === "function") reload();
+  });
+}
 
 function intelKey(source, ident) {
   return `${source}:${String(ident || "").trim()}`;
@@ -1798,7 +1817,7 @@ async function almanacCard() {
 async function loadMacro() {
   const box = $("#macroContent");
   try {
-    if (macroSub !== "knowledge") await refreshIntelAiIndex();
+    if (macroSub) await refreshIntelAiIndex();
     if (macroSub === "hotintel") {
       await renderHotIntel(box);
       return;
@@ -2110,8 +2129,8 @@ async function renderHotWords(box) {
   box.innerHTML = `
     <div class="muted" style="margin-bottom:8px">
       近两周热门词汇（板块区域）· ${esc(d.update || "可手动更新")}
-      · 上次 ${esc(d.last_sync || "从未")} · 点击热词看利好/利空板块，再点板块看个股 TOP20
-      · 右键单词回填；也可用下方按钮一键更新全部热词或 AI 回填当前列表
+      · 上次 ${esc(d.last_sync || "从未")} · 点击热词看利好/利空板块，再点板块看个股（默认 TOP20）
+      · 右键可 AI 回填利好/利空、解读并保存；点击「AI已分析」回显
     </div>
     <div class="hot-toolbar">
       <div class="btn-group" id="hotKindBtns">
@@ -2126,8 +2145,12 @@ async function renderHotWords(box) {
     ${rows.length ? `<div class="hot-grid">${rows.map((t) => {
       const clsName = t.trend === "上升" ? "rising" : t.trend === "下降" ? "falling" : "";
       const on = t.term === hotFocus.term ? "active" : "";
-      return `<div class="hot-tile ${clsName} ${on} js-hot-term" data-term="${esc(t.term)}" data-ai="${t.ai_applied ? "1" : ""}">
-        <div class="term">${esc(t.term)}${t.ai_applied ? '<span class="ai-flag">AI已回填</span>' : ""}</div>
+      const key = intelKey("hot_term", t.term);
+      return `<div class="hot-tile ${clsName} ${on} js-hot-term js-intel-row" data-term="${esc(t.term)}" data-ai="${t.ai_applied ? "1" : ""}"
+        data-intel-source="hot_term" data-intel-id="${esc(t.term)}" data-intel-key="${esc(key)}"
+        data-intel-title="${esc(t.term)}" data-intel-text="${esc((t.impact_summary || t.term || "").slice(0, 400))}"
+        data-heat="${esc(t.heat ?? "")}">
+        <div class="term">${esc(t.term)}${intelFlagHtml(key) || (t.ai_applied ? '<span class="ai-flag">AI已分析</span>' : "")}</div>
         <div class="metrics">
           <span class="heat">热度 ${fmt(t.heat, 0)}</span>
           <span class="rise">↑${fmt(t.rise, 0)}</span>
@@ -2158,8 +2181,8 @@ async function renderHotIntel(box) {
   const srcs = [["", "全部来源"], ...((d.sources || []).map((s) => [s.id, s.name]))];
   box.innerHTML = `
     <div class="muted" style="margin-bottom:8px">
-      热门信息：汇总已保存的 AI 分析词库（快讯/政策/日历/公告/持股/热词）。
-      ${esc(d.note || "")} 共 ${d.total || 0} 条。点击卡片看板块，再点板块看个股 TOP20。
+      热门信息：汇总已保存的 AI 分析词库（快讯/政策/日历/公告/持股/热词/常识）。
+      ${esc(d.note || "")} 共 ${d.total || 0} 条。点击卡片看板块，再点板块看个股（默认 TOP20，可选 TOP30/TOP50）。右键可再次分析。
     </div>
     <div class="btn-group" style="margin-bottom:10px" id="hotIntelSrc">
       ${srcs.map(([v, t]) =>
@@ -2173,8 +2196,13 @@ async function renderHotIntel(box) {
       const kws = (it.keywords || []).slice(0, 8);
       const bull = it.bull || [];
       const bear = it.bear || [];
-      return `<div class="intel-card ${on} js-hot-intel" data-key="${esc(it.item_key)}" data-source="${esc(it.source || "")}">
-        <div class="ic-title">${esc(it.title || "未命名")}${it.has_reading || it.has_boards ? '<span class="ai-flag">AI已分析</span>' : ""}</div>
+      const ident = it.ident || String(it.item_key || "").split(":").slice(1).join(":");
+      const key = it.item_key || intelKey(it.source || "news", ident);
+      return `<div class="intel-card ${on} js-hot-intel js-intel-row" data-key="${esc(key)}" data-source="${esc(it.source || "")}"
+        data-intel-source="${esc(it.source || "")}" data-intel-id="${esc(ident)}" data-intel-key="${esc(key)}"
+        data-intel-title="${esc(it.title || "")}" data-intel-text="${esc((it.reason || it.title || "").slice(0, 400))}"
+        data-intel-time="${esc(it.event_time || "")}" data-attention="${esc(it.attention ?? "")}" data-heat="${esc(it.heat ?? "")}">
+        <div class="ic-title">${esc(it.title || "未命名")} ${intelFlagHtml(key)}</div>
         <div class="ic-meta">
           <span class="badge level-3">${esc(it.source_label || it.source || "")}</span>
           <span class="badge level-2">${esc(att)}</span>
@@ -2242,14 +2270,16 @@ window.openHotIntelSector = async (sector, key) => {
   hotIntelFocus.key = key || hotIntelFocus.key;
   const box = $("#hotIntelStockBox") || $("#hotStockBox");
   if (!box || !sector) return;
-  box.innerHTML = '<div class="empty">加载相关个股 TOP20…</div>';
+  box.innerHTML = '<div class="empty">加载相关个股…</div>';
   try {
-    const d = await api(`/api/macro/hot-sector-stocks?sector=${encodeURIComponent(sector)}&limit=20`);
+    const d = await api(`/api/macro/hot-sector-stocks?sector=${encodeURIComponent(sector)}&limit=${hotStockLimit || 20}`);
     const stocks = d.stocks || [];
     box.innerHTML = `
-      <div class="muted" style="margin:8px 0 4px">板块「${esc(sector)}」相关个股 TOP20${d.match ? " · " + esc(d.match) : ""}</div>
+      <div class="muted" style="margin:8px 0 4px">板块「${esc(sector)}」相关个股
+        ${hotStockLimitBtns(hotStockLimit)}${d.match ? " · " + esc(d.match) : ""}</div>
       ${stocks.length ? renderRelatedStockTable(stocks) : `<div class="empty">${esc(d.empty_reason || "无相关个股")}</div>`}
       <div class="muted" style="font-size:calc(11px * var(--font-scale))">${esc(d.disclaimer || "")}</div>`;
+    bindHotStockLimit(() => openHotIntelSector(sector, key));
   } catch (err) {
     box.innerHTML = '<div class="empty">个股加载失败</div>';
   }
@@ -2382,10 +2412,11 @@ window.openHotTerm = async (term, resetSector = true) => {
     if (mid.length) chips.push(`<span class="hot-chip-lab mid">仅关联</span>`, ...mid.map((s) => tile(s, "中性")));
     box.innerHTML = `
       <div class="outlook-summary" style="border-color:rgba(255,169,64,.4)" data-term="${esc(term)}">
-        <b>🔥 热词「${esc(term)}」关联板块${d.ai_applied ? '<span class="hot-ai-flag">AI已回填</span>' : ""}</b>
+        <b>🔥 热词「${esc(term)}」关联板块${d.ai_applied ? (intelFlagHtml(intelKey("hot_term", term)) || '<span class="hot-ai-flag">AI已分析</span>') : ""}</b>
         <button class="btn small ghost" style="float:right" onclick="hotFocus.term='';hotFocus.sector='';this.closest('#hotDetailBox').innerHTML=''">收起</button>
         <div style="margin:8px 0 4px;font-size:calc(14px * var(--font-scale))"><b>${esc(d.impact_summary || "利好 / 利空板块待映射")}</b></div>
         ${d.ai_applied && d.ai_reason ? `<div class="muted" style="margin:4px 0">AI总述：${esc(d.ai_reason)} · ${esc(d.ai_updated_at || "")}</div>` : ""}
+        ${d.ai_reading ? `<div class="hold-ai-text" style="margin:8px 0">${esc(d.ai_reading).replace(/\n/g, "<br>")}</div>` : ""}
         ${(d.samples || []).length ? `<div class="muted" style="margin:6px 0">样例：${d.samples.map((s) => esc(s)).join(" · ")}</div>` : ""}
         ${chips.length ? `<div class="hot-chip-row">${chips.join("")}</div>` : `<div class="empty">${esc(d.empty_reason || "无关联板块")}</div>`}
         <div class="muted" style="margin-top:8px;font-size:calc(12px * var(--font-scale))">${esc(d.note || "")} ${esc(d.disclaimer || "")}</div>
@@ -2407,9 +2438,9 @@ window.openHotSector = async (sector, term) => {
   $$(".js-hot-sector").forEach((el) => el.classList.toggle("active", el.dataset.sector === sector));
   const dir = document.querySelector(`.js-hot-sector[data-sector="${CSS && CSS.escape ? CSS.escape(sector) : sector}"]`)?.dataset.dir || "";
   const dirTxt = dir === "利好" ? "利好" : dir === "利空" ? "利空" : "";
-  box.innerHTML = `<div class="empty">正在加载「${esc(sector)}」个股 TOP20…</div>`;
+  box.innerHTML = `<div class="empty">正在加载「${esc(sector)}」个股 TOP${hotStockLimit || 20}…</div>`;
   try {
-    const d = await api(`/api/macro/hot-sector-stocks?sector=${encodeURIComponent(sector)}&limit=20&_=${seq}`);
+    const d = await api(`/api/macro/hot-sector-stocks?sector=${encodeURIComponent(sector)}&limit=${hotStockLimit || 20}&_=${seq}`);
     if (seq !== hotStockSeq) return;
     if ((d.sector || sector) !== sector) {
       box.innerHTML = `<div class="empty">板块串了，已忽略过期结果</div>`;
@@ -2417,9 +2448,11 @@ window.openHotSector = async (sector, term) => {
     }
     const match = d.match ? ` · ${esc(d.match)}` : "";
     box.innerHTML = `
-      <div class="muted" style="margin:10px 0 6px">${dirTxt ? `<span class="hot-chip-lab ${dir === "利好" ? "bull" : "bear"}">${esc(dirTxt)}</span>` : ""}板块「${esc(sector)}」个股 TOP20${match}</div>
+      <div class="muted" style="margin:10px 0 6px">${dirTxt ? `<span class="hot-chip-lab ${dir === "利好" ? "bull" : "bear"}">${esc(dirTxt)}</span>` : ""}板块「${esc(sector)}」个股
+        ${hotStockLimitBtns(hotStockLimit)}${match}</div>
       ${d.stocks && d.stocks.length ? renderHotSectorStockTable(d.stocks, sector) : `<div class="empty">${esc(d.empty_reason || "无个股")}</div>`}
       <div class="muted" style="font-size:calc(11px * var(--font-scale));margin-top:4px">${esc(d.disclaimer || "")}</div>`;
+    bindHotStockLimit(() => openHotSector(sector, term));
   } catch (err) {
     if (seq !== hotStockSeq) return;
     box.innerHTML = `<div class="empty">「${esc(sector)}」个股加载失败</div>`;
@@ -2455,7 +2488,7 @@ function sectorBadges(sectors, title) {
   ).join("");
 }
 
-const relatedQuery = { title: "", sectors: "", limit: 30 };
+const relatedQuery = { title: "", sectors: "", limit: 20 };
 
 function buyCls(v) {
   if (v === null || v === undefined || Number.isNaN(Number(v))) return "flat";
@@ -3994,13 +4027,22 @@ async function loadKnowledge() {
   const kw = inp ? inp.value.trim() : "";
   const box = $("#kbContent");
   if (!box) return;
+  await refreshIntelAiIndex();
   try {
     const groups = await api(`/api/knowledge?q=${encodeURIComponent(kw)}`);
     box.innerHTML = groups.length ? groups.map((g) => `
       <div class="region-title">${esc(g.group)}（${g.items.length}）</div>
-      ${g.items.map((it) => `<div class="kb-item">
-        <div class="term">${esc(it.term)}</div>
-        <div class="desc">${esc(it.desc)}</div></div>`).join("")}`).join("")
+      ${g.items.map((it) => {
+        const ident = it.term;
+        const key = intelKey("knowledge", ident);
+        return `<div class="kb-item js-intel-row" data-intel-source="knowledge" data-intel-id="${esc(ident)}" data-intel-key="${esc(key)}"
+          data-intel-title="${esc(it.term)}" data-intel-text="${esc(((it.term || "") + "：" + (it.desc || "")).slice(0, 500))}">
+        <div class="term">${esc(it.term)} ${intelFlagHtml(key)}</div>
+        <div class="desc">${esc(it.desc)}</div>
+        ${intelReasonLine(key)}
+        <div class="meta">${intelSectorBadges(key, "", it.term)}</div>
+        </div>`;
+      }).join("")}`).join("")
       : '<div class="empty">未找到相关词条</div>';
   } catch (err) { console.warn(err); }
 }
@@ -4214,9 +4256,10 @@ function showStockCtxItems(show) {
   const sep = $("#ctxSep"); if (sep) sep.style.display = show ? "" : "none";
 }
 function showHotCtxItems(show) {
-  ["ctxHotAi", "ctxHotRevert"].forEach((id) => {
-    const el = $(`#${id}`); if (el) el.style.display = show ? "" : "none";
-  });
+  const revert = $("#ctxHotRevert");
+  if (revert) revert.style.display = show ? "" : "none";
+  const ai = $("#ctxHotAi");
+  if (ai) ai.style.display = "none";
 }
 function showIntelCtxItems(show) {
   ["ctxIntelBoards", "ctxIntelReading"].forEach((id) => {
@@ -4249,10 +4292,16 @@ document.addEventListener("contextmenu", async (e) => {
     if (!term) { hideCtxMenu(); return; }
     ctxStock = null;
     ctxNews = null;
-    ctxIntel = null;
     ctxHot = { term };
+    ctxIntel = {
+      source: "hot_term", ident: term, title: term,
+      text: (hotEl.dataset && hotEl.dataset.intelText) || term,
+      time: "", heat: (hotEl.dataset && hotEl.dataset.heat) || "",
+      key: intelKey("hot_term", term),
+    };
     showStockCtxItems(false);
     showHotCtxItems(true);
+    showIntelCtxItems(true);
     return;
   }
   ctxHot = null;
@@ -4437,6 +4486,7 @@ async function runIntelAi(mode, title) {
       await refreshIntelAiIndex();
       if (payload.source === "holders" && currentStock) loadHolders();
       else if (macroSub === "announce") loadAnnouncements();
+      else if (macroSub === "knowledge") loadKnowledge();
       else loadMacro();
     }
   } catch (err) {

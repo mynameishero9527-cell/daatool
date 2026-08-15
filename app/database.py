@@ -291,6 +291,9 @@ CREATE TABLE IF NOT EXISTS stock_ai_brief (
     PRIMARY KEY (code, kind)
 );
 
+-- 13.0.2：宏观情报全部二级菜单（含热词/常识）右键 AI 解读与词库；热门信息块展示
+-- intel_item_ai / hot_term_ai 表结构不变，失败仍不覆盖已保存结果
+
 -- 12.0.9：宏观情报条目的 AI 利好/利空、解读、关键词（失败不覆盖）
 CREATE TABLE IF NOT EXISTS intel_item_ai (
     item_key      TEXT PRIMARY KEY,      -- source:ident
