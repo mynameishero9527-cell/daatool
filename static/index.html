@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>A股量化工具</title>
-<link rel="stylesheet" href="/static/style.css?v=11.0.8">
-<script src="/static/vendor/echarts.min.js?v=11.0.8"></script>
+<link rel="stylesheet" href="/static/style.css?v=11.0.9">
+<script src="/static/vendor/echarts.min.js?v=11.0.9"></script>
 </head>
 <body>
 <header class="topbar">
@@ -263,7 +263,7 @@
         </div>
         <div id="flowTrendKpis" class="flow-kpis"></div>
         <div id="flowTrendChart" class="chart-lg" style="height:440px"></div>
-        <div class="muted" style="margin-top:6px;font-size:12px">折线=每个板块一条，横轴按上方「日 / 5日 / 周 / 12日 / 20日 / 月」切换，纵轴=该周期主力净流入（亿）。与上方直方图的「当天/过去N天」合计范围互相独立。点折线可选中该板块。</div>
+        <div class="muted" style="margin-top:6px;font-size:12px">折线来自<strong>新浪板块资金独立源</strong>（已缓存本地）。横轴按「日 / 5日 / 周 / 12日 / 20日 / 月」切换，纵轴=该周期主力净流入（亿）。直方图仍用本地成分股汇总，两者分开。点折线可尝试联动选中。</div>
       </div>
       <div class="card" id="flowBarStocks" style="display:none">
         <div class="card-title" id="flowBarStocksTitle"><span id="flowBarStocksLabel">个股</span>
@@ -560,6 +560,11 @@
           <button class="btn" onclick="rebuildFinance()">重建财报评级</button>
         </div>
         <div id="financeState"></div>
+        <div class="card-title" style="margin-top:14px">板块资金独立源 / 宏观情报缓存
+          <button class="btn" onclick="syncSectorFlow()">拉取板块资金</button>
+          <button class="btn" onclick="syncIntel()">缓存宏观情报</button>
+        </div>
+        <div id="intelState"></div>
         <div class="card-title" style="margin-top:14px">数据校验（K线 vs 实时行情）
           <button class="btn" onclick="verifyKline()">执行校验</button>
         </div>
@@ -584,7 +589,10 @@
 <div id="buyFlash" class="buy-flash soul-win">
   <div class="buy-flash-head" id="buyFlashHead">
     <span class="soul-title">✦ 最佳买点 <span class="muted" id="buyFlashCount"></span></span>
-    <button class="btn small ghost" type="button" id="buyFlashMin" title="缩小成 logo">—</button>
+    <span>
+      <button class="btn small ghost" type="button" id="buyFlashReset" title="复位窗口">↺</button>
+      <button class="btn small ghost" type="button" id="buyFlashMin" title="缩小成 logo">—</button>
+    </span>
   </div>
   <div id="buyFlashNote" class="buy-flash-note"></div>
   <div id="buyFlashBody" class="buy-flash-body"><div class="empty">加载中…</div></div>
@@ -620,6 +628,6 @@
   <div class="ctx-item" id="ctxNewsAi" style="display:none">🤖 发送AI分析（消息）</div>
 </div>
 
-<script src="/static/app.js?v=11.0.8"></script>
+<script src="/static/app.js?v=11.0.9"></script>
 </body>
 </html>

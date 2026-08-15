@@ -579,3 +579,180 @@ def add_custom_event(day: str, title: str, level: int = 3, note: str = "",
 def delete_custom_event(event_id: int) -> dict:
     execute("DELETE FROM custom_event WHERE event_id=?", (event_id,))
     return {"ok": True}
+
+
+def _save_intel_rows(rows: list[tuple]) -> None:
+    if not rows:
+        return
+    executemany(
+        """INSERT OR REPLACE INTO intel_cache(
+             item_id,kind,title,summary,event_time,region,category,impact_level,
+             impact_direction,affected_sectors,source,raw_json,fetched_at)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""", rows)
+    links = []
+    for rec in rows:
+        item_id, _kind, _title, _summary, event_time = rec[0], rec[1], rec[2], rec[3], rec[4]
+        try:
+            sectors = json.loads(rec[9] or "[]")
+        except Exception:  # noqa: BLE001
+            sectors = []
+        for s in sectors:
+            if s:
+                links.append((str(s), item_id, event_time))
+    if links:
+        executemany(
+            "INSERT OR REPLACE INTO intel_sector(sector,item_id,event_time) VALUES(?,?,?)",
+            links)
+
+
+def sync_intel() -> dict:
+    """拉取快讯/日历/板块事件写入本地情报库，供离线分析。"""
+    now = datetime.now().isoformat(timespec="seconds")
+    news_n = 0
+    db_news = []
+    for page in range(1, 5):
+        try:
+            items = sina.fetch_news(page=page, size=50)
+        except Exception:  # noqa: BLE001
+            break
+        if not items:
+            break
+        rows = []
+        for it in items:
+            impact = assess_impact(it["text"])
+            kind = "policy" if impact["is_policy"] else "news"
+            rows.append((
+                f"news_{it['id']}", kind, (it["text"] or "")[:80], it["text"],
+                it["time"], impact["region"],
+                "政策" if impact["is_policy"] else "快讯",
+                impact["impact_level"], impact["impact_direction"],
+                json.dumps(impact["affected_sectors"], ensure_ascii=False),
+                "新浪财经", json.dumps({"tags": it.get("tags") or []}, ensure_ascii=False), now,
+            ))
+            db_news.append((
+                f"news_{it['id']}", (it["text"] or "")[:80], it["text"],
+                "政策" if impact["is_policy"] else "快讯", impact["region"],
+                impact["impact_level"], impact["impact_direction"],
+                json.dumps(impact["affected_sectors"], ensure_ascii=False),
+                it["time"], it["time"], "新浪财经",
+            ))
+        _save_intel_rows(rows)
+        news_n += len(rows)
+    if db_news:
+        executemany(
+            "INSERT OR REPLACE INTO macro_event(event_id,title,summary,category,region,"
+            "impact_level,impact_direction,affected_sectors,event_time,publish_time,source)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?)", db_news)
+
+    cal_n = 0
+    cal_rows = []
+    for ev in _generate_events(93):
+        sectors = []
+        if ev.get("sectors"):
+            sectors = [s.strip() for s in str(ev["sectors"]).replace("、", ",").split(",") if s.strip()]
+        cal_rows.append((
+            f"cal_{ev['id']}", "calendar", ev["title"], ev.get("note") or "",
+            ev["date"], ev.get("region") or "", ev.get("category") or "",
+            ev.get("impact_level") or 3, "", json.dumps(sectors, ensure_ascii=False),
+            "本地日历", json.dumps(ev, ensure_ascii=False, default=str), now,
+        ))
+        cal_n += 1
+    _save_intel_rows(cal_rows)
+
+    from . import almanac
+    sec_rows = []
+    for ev in almanac.get_sector_events(12):
+        sectors = [s.strip() for s in str(ev.get("sectors") or "").replace("、", ",").split(",") if s.strip()]
+        key = hashlib.md5(f"{ev['date']}{ev['title']}".encode()).hexdigest()[:16]
+        sec_rows.append((
+            f"sev_{key}", "sector_event", ev["title"], ev.get("cycle_desc") or "",
+            ev["date"], ev.get("city") or "", "板块事件",
+            ev.get("impact_level") or 3, "", json.dumps(sectors, ensure_ascii=False),
+            "板块周期", json.dumps(ev, ensure_ascii=False, default=str), now,
+        ))
+    _save_intel_rows(sec_rows)
+    from ..database import set_meta
+    set_meta("intel_last_sync", now)
+    return {"ok": True, "news": news_n, "calendar": cal_n,
+            "sector_events": len(sec_rows), "stats": intel_stats()}
+
+
+def intel_stats() -> dict:
+    try:
+        rows = query("SELECT kind, COUNT(*) AS n FROM intel_cache GROUP BY kind")
+        total = query("SELECT COUNT(*) AS n FROM intel_cache")[0]["n"]
+        sectors = query("SELECT COUNT(DISTINCT sector) AS n FROM intel_sector")[0]["n"]
+    except Exception:  # noqa: BLE001
+        return {"total": 0, "by_kind": {}, "sectors": 0}
+    from ..database import get_meta
+    return {
+        "total": total, "by_kind": {r["kind"]: r["n"] for r in rows},
+        "sectors": sectors, "last_sync": get_meta("intel_last_sync", "从未"),
+    }
+
+
+def list_intel(kind: str = "", sector: str = "", days: int = 0, limit: int = 80) -> dict:
+    limit = max(10, min(int(limit or 80), 200))
+    where = ["1=1"]
+    params: list = []
+    if kind:
+        where.append("kind=?")
+        params.append(kind)
+    if days:
+        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        where.append("event_time>=?")
+        params.append(cutoff)
+    if sector:
+        rows = query(
+            f"""SELECT c.* FROM intel_cache c JOIN intel_sector s ON s.item_id=c.item_id
+                WHERE {' AND '.join(where)} AND s.sector=?
+                ORDER BY c.event_time DESC LIMIT ?""",
+            (*params, sector, limit))
+    else:
+        rows = query(
+            f"SELECT * FROM intel_cache WHERE {' AND '.join(where)} "
+            "ORDER BY event_time DESC LIMIT ?", (*params, limit))
+    items = []
+    for r in rows:
+        try:
+            sectors = json.loads(r.get("affected_sectors") or "[]")
+        except Exception:  # noqa: BLE001
+            sectors = []
+        items.append({
+            "id": r["item_id"], "kind": r["kind"], "title": r["title"],
+            "summary": r["summary"], "time": r["event_time"], "date": (r["event_time"] or "")[:10],
+            "region": r["region"], "category": r["category"],
+            "impact_level": r["impact_level"] or 1,
+            "impact_direction": r["impact_direction"] or "",
+            "sectors": "、".join(sectors), "affected_sectors": sectors,
+            "source": r["source"], "cached": True,
+        })
+    return {"items": items, "count": len(items), "stats": intel_stats()}
+
+
+def get_sector_intel(months: int = 12) -> dict:
+    """板块事件 = 周期大事件 + 本地缓存里带板块标签的快讯/政策。"""
+    from . import almanac
+    events = almanac.get_sector_events(months)
+    cached = list_intel(limit=100)
+    news_ev = []
+    for it in cached["items"]:
+        if it["kind"] not in ("news", "policy") or not it.get("affected_sectors"):
+            continue
+        news_ev.append({
+            "date": it["date"] or "",
+            "title": it["title"],
+            "city": it.get("region") or "",
+            "sectors": it.get("sectors") or "",
+            "cycle_desc": it.get("summary") or "",
+            "impact_level": it.get("impact_level") or 2,
+            "source": "本地情报缓存",
+            "kind": it["kind"],
+        })
+    for ev in events:
+        ev.setdefault("source", "板块周期")
+        ev.setdefault("kind", "sector_event")
+    merged = events + news_ev
+    merged.sort(key=lambda e: e.get("date") or "", reverse=True)
+    return {"items": merged, "count": len(merged), "stats": intel_stats(),
+            "note": "周期大事件与已缓存快讯均来自本地库，断网也可回看"}

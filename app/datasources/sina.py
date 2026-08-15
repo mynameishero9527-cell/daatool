@@ -185,6 +185,46 @@ def fetch_finance_reports(code: str, num: int = 6) -> list[dict]:
     return out
 
 
+_BKZJ_URL = (
+    "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/"
+    "MoneyFlow.ssl_bkzj_bk?page={page}&num={num}&sort=netamount&asc=0&fenlei={fenlei}"
+)
+_BKZJ_HEADERS = {"Referer": "https://vip.stock.finance.sina.com.cn/moneyflow/"}
+
+
+def fetch_board_moneyflow(fenlei: int = 0, pages: int = 3, num: int = 80) -> list[dict]:
+    """新浪板块资金流向（独立源）。fenlei=0 行业，1 概念。net_in 单位：万元。"""
+    out: list[dict] = []
+    seen: set[str] = set()
+    for page in range(1, max(1, pages) + 1):
+        resp = tracked_get(
+            SOURCE, _BKZJ_URL.format(page=page, num=num, fenlei=int(fenlei)),
+            headers=_BKZJ_HEADERS)
+        rows = resp.json()
+        if not isinstance(rows, list) or not rows:
+            break
+        for r in rows:
+            name = (r.get("name") or "").strip()
+            cat = (r.get("category") or "").strip()
+            key = cat or name
+            if not name or key in seen:
+                continue
+            seen.add(key)
+            net = _f(r.get("netamount"))
+            turnover = _f(r.get("turnover"))
+            # netamount 为元；turnover 约为亿元
+            out.append({
+                "name": name,
+                "board_code": cat,
+                "net_in": round(net / 10000.0, 2) if net is not None else 0.0,
+                "amount": round(turnover * 10000.0, 2) if turnover is not None else 0.0,
+                "leader": r.get("ts_name") or "",
+            })
+        if len(rows) < num:
+            break
+    return out
+
+
 def fetch_news(page: int = 1, size: int = 50) -> list[dict]:
     """新浪财经 7x24 快讯。"""
     resp = tracked_get(SOURCE, _NEWS_URL.format(page=page, size=size))

@@ -67,6 +67,16 @@ def _job_refresh_medium():
 def _job_refresh_news():
     cache.delete("macro:news")
     macro.get_news()
+    try:
+        macro.sync_intel()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("情报缓存失败: %s", exc)
+
+
+def _job_sector_flow():
+    from .services import sector as sector_svc
+    sector_svc.record_daily_flow()
+    sector_svc.pull_remote_flow()
 
 
 def _job_snapshot_sync():
@@ -101,7 +111,8 @@ def _job_metrics_recompute():
 from .database import get_meta_json, set_meta_json
 
 # 间隔型任务（可调频率，分钟）
-INTERVAL_JOBS = {"medium": 1, "news": 1, "snapshot": 5, "metrics_recompute": 10, "alerts": 10}
+INTERVAL_JOBS = {"medium": 1, "news": 1, "snapshot": 5, "metrics_recompute": 10, "alerts": 10,
+                 "sector_flow": 5}
 ALLOWED_MINUTES = [1, 5, 10, 15, 30, 60, 120, 180]
 
 
@@ -180,6 +191,8 @@ def start() -> None:
                   "interval", minutes=10, id="metrics_recompute")
     sched.add_job(_run("智能提醒扫描(10分钟)", alerts.scan_all, only_trading=True),
                   "interval", minutes=10, id="alerts")
+    sched.add_job(_run("板块资金独立源", _job_sector_flow),
+                  "interval", minutes=5, id="sector_flow")
     sched.add_job(_run("每日维护", _job_daily_maintain), "cron", hour=2, minute=0, id="maintain")
     sched.add_job(_run("财报评级重建", _job_finance_rebuild), "cron", hour=3, minute=0, id="finance_rebuild")
     sched.start()
@@ -198,6 +211,7 @@ def status() -> list[dict]:
                     "metrics_rebuild": "盘后指标重建(K线+四大指标)",
                     "metrics_recompute": "盘中指标轻量重算",
                     "alerts": "智能提醒扫描(10分钟)",
+                    "sector_flow": "板块资金独立源",
                     "finance_rebuild": "财报评级重建"}.get(job.id, job.id)
             st = JOB_STATUS.get(name, {})
             overrides = get_meta_json("job_overrides", {}) or {}

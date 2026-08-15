@@ -155,17 +155,25 @@ def _decorate_buy_rows(rows: list[dict]) -> None:
     from . import finance as finance_svc
     from . import metrics as metrics_svc
     from . import rating as rating_svc
-    finance_svc.attach_grades(rows)
+    try:
+        finance_svc.attach_grades(rows)
+    except Exception:  # noqa: BLE001
+        pass
     for r in rows:
-        buy_lv, buy_act = metrics_svc.buy_index_level(r.get("buy_index") or 0)
-        sent_lv, sent_ds = metrics_svc.sentiment_level(r.get("sentiment") or 50)
-        _score, op = rating_svc.quick_score(r)
-        r["buy_level"] = buy_lv
-        r["sent_level"] = sent_lv
-        r["sent_desc"] = sent_ds
-        r["score"] = _score
-        r["advice"] = f"{buy_lv}，{buy_act}；操作参考：{op}"
-        r["finance_grade"] = r.get("finance_grade") or ""
+        try:
+            buy_lv, buy_act = metrics_svc.buy_index_level(r.get("buy_index") or 0)
+            sent_lv, sent_ds = metrics_svc.sentiment_level(r.get("sentiment") or 50)
+            _score, op = rating_svc.quick_score(r)
+            r["buy_level"] = buy_lv
+            r["sent_level"] = sent_lv
+            r["sent_desc"] = sent_ds
+            r["score"] = _score
+            r["advice"] = f"{buy_lv}，{buy_act}；操作参考：{op}"
+            r["finance_grade"] = r.get("finance_grade") or ""
+        except Exception:  # noqa: BLE001
+            r["buy_level"] = r.get("buy_level") or ""
+            r["advice"] = r.get("advice") or ""
+            r["finance_grade"] = r.get("finance_grade") or ""
 
 
 def get_buy_points(limit: int = 8) -> dict:

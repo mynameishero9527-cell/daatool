@@ -914,7 +914,9 @@ async function loadMacro() {
   const box = $("#macroContent");
   try {
     if (macroSub === "sectorEvents") {
-      const rows = await api("/api/macro/sector-events");
+      const d = await api("/api/macro/sector-events");
+      const rows = d.items || d || [];
+      const st = d.stats || {};
       const groups = {};
       for (const ev of rows) {
         let key = ev.date;
@@ -931,14 +933,14 @@ async function loadMacro() {
           ${stars(ev.impact_level)}
           <span class="flag">${esc(ev.city)}</span>
           <span style="flex:1">${esc(ev.title)} ${sectorBadges(ev.sectors, ev.title)}</span>
-          <span class="muted">${esc(ev.cycle_desc)}</span>
+          <span class="muted">${esc(ev.cycle_desc || ev.source || "")}</span>
         </div>`;
       box.innerHTML = (await almanacCard()) + '<div id="eventDetailBox"></div>' +
         `<div class="btn-group" style="margin-bottom:10px" id="seGroupBtns">
           ${[["day", "按日"], ["week", "按周"], ["month", "按月"]].map(([v, t]) =>
             `<button class="opt ${v === sectorEvGroup ? "active" : ""}" data-v="${v}">${t}</button>`).join("")}
         </div>
-        <div class="muted" style="margin-bottom:8px">板块周期大事件：点击查看影响板块与相关个股 · 日期为完整年月日</div>` +
+        <div class="muted" style="margin-bottom:8px">板块情报已缓存本地 ${st.total || rows.length} 条 · 点击查看影响板块与相关个股 · ${esc(d.note || "")}</div>` +
         (rows.length ? Object.entries(groups).map(([k, list]) =>
           `<div class="outlook-group">${esc(k)}（${list.length}）</div>` + list.map(evRow).join("")).join("")
           : '<div class="empty">暂无板块事件</div>');
@@ -2031,7 +2033,9 @@ function paintFlowTrend(d) {
   }, true);
   flowTrendChart.off("click");
   flowTrendChart.on("click", (p) => {
-    if (p && p.seriesName) selectFlowBar(p.seriesName);
+    if (!p || !p.seriesName) return;
+    const hit = lines.find((l) => l.name === p.seriesName);
+    selectFlowBar((hit && hit.local_name) || p.seriesName);
   });
   requestAnimationFrame(() => flowTrendChart?.resize());
   const noteEl = $("#flowTrendNote");
@@ -2846,7 +2850,7 @@ async function loadSettings() {
       <div class="kv"><span class="k">状态</span><span>${esc(sync.message)}</span></div>
       ${sync.running ? '<div class="progress"><div class="p" style="width:60%"></div></div>' : ""}`;
     loadMetricsState();
-    loadFinanceState(d.finance, d.sector_flow);
+    loadFinanceState(d.finance, d.sector_flow, d.intel);
     const freqOpts = [1, 5, 10, 15, 30, 60, 120, 180];
     const freqLabel = (m) => m >= 60 ? `${m / 60}小时` : `${m}分钟`;
     $("#jobTable").innerHTML = `<table><thead><tr>
@@ -2895,7 +2899,7 @@ window.verifyKline = async () => {
   } catch (err) { $("#verifyResult").innerHTML = '<div class="empty">校验失败</div>'; }
 };
 
-function loadFinanceState(fin, flow) {
+function loadFinanceState(fin, flow, intel) {
   const box = $("#financeState");
   if (!box) return;
   const f = fin || {};
@@ -2904,10 +2908,46 @@ function loadFinanceState(fin, flow) {
     <div class="kv"><span class="k">已评级股票</span><span class="num">${f.graded || 0} / ${f.universe || 0}</span></div>
     <div class="kv"><span class="k">评级分布</span><span>${["A","B","C","D"].map((g) => `${g} ${(f.distribution || {})[g] || 0}`).join(" · ") || "-"}</span></div>
     <div class="kv"><span class="k">上次重建</span><span>${esc(f.last_rebuild || "从未")}</span></div>
-    <div class="kv"><span class="k">板块资金已落库交易日</span><span>行业 ${fl.industry_days || 0} · 概念 ${fl.concept_days || 0}${fl.last_date ? `（至 ${esc(fl.last_date)}）` : ""}</span></div>
+    <div class="kv"><span class="k">本地资金账本</span><span>行业 ${fl.industry_days || 0} · 概念 ${fl.concept_days || 0}${fl.last_date ? `（至 ${esc(fl.last_date)}）` : ""}</span></div>
+    <div class="kv"><span class="k">独立源账本</span><span>行业 ${fl.remote_hy_days || 0} · 概念 ${fl.remote_gn_days || 0}${fl.remote_last ? `（至 ${esc(fl.remote_last)}）` : ""}</span></div>
     <div class="kv"><span class="k">状态</span><span>${f.running ? `${esc(f.stage)} ${f.progress}/${f.total}` : esc(f.stage || "未开始")}</span></div>
     ${f.running ? `<div class="progress"><div class="p" style="width:${f.total ? f.progress / f.total * 100 : 30}%"></div></div>` : ""}`;
+  const ib = $("#intelState");
+  if (ib) {
+    const it = intel || {};
+    const by = it.by_kind || {};
+    ib.innerHTML = `
+      <div class="kv"><span class="k">情报缓存</span><span class="num">${it.total || 0} 条</span></div>
+      <div class="kv"><span class="k">分类</span><span>快讯 ${by.news || 0} · 政策 ${by.policy || 0} · 日历 ${by.calendar || 0} · 板块事件 ${by.sector_event || 0}</span></div>
+      <div class="kv"><span class="k">涉及板块</span><span>${it.sectors || 0}</span></div>
+      <div class="kv"><span class="k">上次缓存</span><span>${esc(it.last_sync || "从未")}</span></div>`;
+  }
 }
+
+window.syncSectorFlow = async () => {
+  const ib = $("#intelState");
+  if (ib) ib.innerHTML = '<div class="muted">正在拉取新浪板块资金…</div>';
+  try {
+    const d = await post("/api/sector/flow-sync");
+    const st = d.stats || {};
+    if (ib) ib.innerHTML = `<div class="muted">独立源已写入 ${d.remote?.industry || 0} 个行业、${d.remote?.concept || 0} 个概念（账本日 ${esc(d.remote?.date || st.last_date || "")}）</div>`;
+    loadSettings();
+  } catch (err) {
+    if (ib) ib.innerHTML = `<div class="empty">拉取失败：${esc(err.message || err)}</div>`;
+  }
+};
+
+window.syncIntel = async () => {
+  const ib = $("#intelState");
+  if (ib) ib.innerHTML = '<div class="muted">正在缓存宏观情报…</div>';
+  try {
+    const d = await post("/api/macro/intel-sync");
+    if (ib) ib.innerHTML = `<div class="muted">已缓存快讯 ${d.news || 0} · 日历 ${d.calendar || 0} · 板块事件 ${d.sector_events || 0}</div>`;
+    loadSettings();
+  } catch (err) {
+    if (ib) ib.innerHTML = `<div class="empty">缓存失败：${esc(err.message || err)}</div>`;
+  }
+};
 
 let finFetchN = 300;
 $("#finFetch")?.addEventListener("click", (e) => {
@@ -3166,7 +3206,7 @@ window.runSmartpickAi = async () => {
 };
 
 /* ---------------- 全局最佳买点灵魂窗 ---------------- */
-const BUY_FLASH_KEY = "daatool_buy_flash";
+const BUY_FLASH_KEY = "daatool_buy_flash_v11";
 function readBuyFlashState() {
   try { return JSON.parse(localStorage.getItem(BUY_FLASH_KEY) || "") || {}; }
   catch { return {}; }
@@ -3174,7 +3214,7 @@ function readBuyFlashState() {
 const buyFlashState = (() => {
   const s = readBuyFlashState();
   return {
-    collapsed: !!s.collapsed,
+    collapsed: false,
     win: s.win && Number.isFinite(s.win.left) ? s.win : null,
     logo: s.logo && Number.isFinite(s.logo.left) ? s.logo : null,
   };
@@ -3236,7 +3276,7 @@ function bindSoulDrag(el, kind) {
   el.addEventListener("pointermove", (e) => {
     if (!start) return;
     const dx = e.clientX - start.x, dy = e.clientY - start.y;
-    if (Math.abs(dx) + Math.abs(dy) > 5) moved = true;
+    if (Math.abs(dx) + Math.abs(dy) > 12) moved = true;
     if (!moved) return;
     const pos = clampSoulPos(start.left + dx, start.top + dy, el.offsetWidth, el.offsetHeight);
     el.style.left = pos.left + "px";
@@ -3297,6 +3337,7 @@ async function loadBuyPoints() {
       body.innerHTML = `<div class="empty">${esc(note || "暂无最佳买点")}</div>`;
       return;
     }
+    if (buyFlashState.collapsed) setBuyFlashCollapsed(false);
     body.innerHTML = items.map((r) => `
       <div class="buy-flash-row" data-code="${esc(r.code)}" data-name="${esc(r.name)}">
         <div class="buy-flash-main">
@@ -3322,6 +3363,21 @@ function bindBuyFlash() {
   $("#buyFlashMin")?.addEventListener("click", (e) => {
     e.stopPropagation();
     setBuyFlashCollapsed(true);
+  });
+  $("#buyFlashReset")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    buyFlashState.win = null;
+    buyFlashState.logo = null;
+    const panel = $("#buyFlash");
+    if (panel) {
+      panel.style.left = "";
+      panel.style.top = "";
+      panel.style.right = "18px";
+      panel.style.bottom = "auto";
+    }
+    setBuyFlashCollapsed(false);
+    saveBuyFlashState();
+    loadBuyPoints();
   });
   $("#buyFlashBody")?.addEventListener("dblclick", (e) => {
     const row = e.target.closest("[data-code]");

@@ -172,7 +172,7 @@ CREATE TABLE IF NOT EXISTS stock_finance_grade (
 
 -- 10.0：板块资金日频（行业/概念），供多日区间累加
 CREATE TABLE IF NOT EXISTS sector_flow_daily (
-    dim         TEXT NOT NULL,          -- industry / concept
+    dim         TEXT NOT NULL,          -- industry / concept / remote_hy / remote_gn
     name        TEXT NOT NULL,
     trade_date  TEXT NOT NULL,          -- 快照 asof 日 YYYY-MM-DD，不是日历今天
     net_in      REAL,                   -- 主力净流入（万元）
@@ -181,6 +181,32 @@ CREATE TABLE IF NOT EXISTS sector_flow_daily (
     PRIMARY KEY (dim, name, trade_date)
 );
 CREATE INDEX IF NOT EXISTS idx_sector_flow_date ON sector_flow_daily(dim, trade_date);
+
+-- 11.0.9：宏观/板块情报本地缓存，供离线回看与后续分析
+CREATE TABLE IF NOT EXISTS intel_cache (
+    item_id           TEXT PRIMARY KEY,
+    kind              TEXT NOT NULL,     -- news/policy/calendar/sector_event
+    title             TEXT NOT NULL,
+    summary           TEXT,
+    event_time        TEXT,
+    region            TEXT,
+    category          TEXT,
+    impact_level      INTEGER,
+    impact_direction  TEXT,
+    affected_sectors  TEXT,              -- JSON 数组
+    source            TEXT,
+    raw_json          TEXT,
+    fetched_at        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_intel_time ON intel_cache(event_time);
+CREATE INDEX IF NOT EXISTS idx_intel_kind ON intel_cache(kind);
+CREATE TABLE IF NOT EXISTS intel_sector (
+    sector     TEXT NOT NULL,
+    item_id    TEXT NOT NULL,
+    event_time TEXT,
+    PRIMARY KEY (sector, item_id)
+);
+CREATE INDEX IF NOT EXISTS idx_intel_sector ON intel_sector(sector, event_time);
 """
 
 # 已有表的增量列迁移（幂等）
@@ -188,6 +214,8 @@ MIGRATIONS = [
     "ALTER TABLE stock_list ADD COLUMN industry TEXT DEFAULT ''",
     "ALTER TABLE stock_snapshot ADD COLUMN amplitude REAL",
     "ALTER TABLE custom_event ADD COLUMN sectors TEXT DEFAULT ''",
+    "ALTER TABLE sector_flow_daily ADD COLUMN source TEXT DEFAULT ''",
+    "ALTER TABLE sector_flow_daily ADD COLUMN board_code TEXT DEFAULT ''",
 ]
 
 

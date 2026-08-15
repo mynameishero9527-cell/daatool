@@ -8,8 +8,8 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from ..cache import cached
-from ..database import execute, executemany, query
-from ..datasources import tencent
+from ..database import execute, executemany, query, set_meta
+from ..datasources import sina, tencent
 from . import metrics as metrics_svc
 from . import rating
 
@@ -357,12 +357,67 @@ def flow_history_stats() -> dict:
         "SELECT dim, COUNT(DISTINCT trade_date) AS days, MIN(trade_date) AS first_d, "
         "MAX(trade_date) AS last_d FROM sector_flow_daily GROUP BY dim")
     by_dim = {r["dim"]: r for r in rows}
+    lasts = [r["last_d"] for r in rows if r.get("last_d")]
+    firsts = [r["first_d"] for r in rows if r.get("first_d")]
     return {
         "industry_days": (by_dim.get("industry") or {}).get("days", 0),
         "concept_days": (by_dim.get("concept") or {}).get("days", 0),
-        "last_date": max((r["last_d"] for r in rows if r.get("last_d")), default=""),
-        "first_date": min((r["first_d"] for r in rows if r.get("first_d")), default=""),
+        "remote_hy_days": (by_dim.get("remote_hy") or {}).get("days", 0),
+        "remote_gn_days": (by_dim.get("remote_gn") or {}).get("days", 0),
+        "last_date": max(lasts, default=""),
+        "first_date": min(firsts, default=""),
+        "remote_last": max(
+            ((by_dim.get("remote_hy") or {}).get("last_d") or "",
+             (by_dim.get("remote_gn") or {}).get("last_d") or ""),
+            default=""),
     }
+
+
+# 新浪旧行业分类 → 本地申万一级，供点折线联动直方图
+REMOTE_TO_SW = {
+    "电子信息": "电子", "电子器件": "电子", "有色金属": "有色金属",
+    "机械行业": "机械设备", "仪器仪表": "机械设备", "纺织机械": "机械设备",
+    "食品行业": "食品饮料", "玻璃行业": "建筑材料", "水泥行业": "建筑材料",
+    "建筑建材": "建筑材料", "钢铁行业": "钢铁", "煤炭行业": "煤炭",
+    "房地产": "房地产", "汽车制造": "汽车", "摩托车": "汽车",
+    "家电行业": "家用电器", "电器行业": "家用电器",
+    "化工行业": "基础化工", "化纤行业": "基础化工", "农药化肥": "基础化工",
+    "塑料制品": "基础化工", "环保行业": "环保", "石油行业": "石油石化",
+    "综合行业": "综合", "纺织行业": "纺织服饰", "服装鞋类": "纺织服饰",
+    "公路桥梁": "交通运输", "船舶制造": "交通运输", "飞机制造": "国防军工",
+    "医疗器械": "医药生物", "酒店旅游": "社会服务",
+    "供水供气": "公用事业", "发电设备": "电力设备",
+    "造纸行业": "轻工制造", "家具行业": "轻工制造", "印刷包装": "轻工制造",
+    "陶瓷行业": "轻工制造",
+}
+
+
+def pull_remote_flow() -> dict:
+    """独立数据源：拉取新浪板块资金并写入 remote_hy / remote_gn，不覆盖本地成分股账本。"""
+    asof = snapshot_asof_date()
+    hy = sina.fetch_board_moneyflow(0, pages=1, num=80)
+    gn = sina.fetch_board_moneyflow(1, pages=3, num=80)
+    pairs = [("remote_hy", r) for r in hy] + [("remote_gn", r) for r in gn]
+    if pairs:
+        payload = [(dim, r["name"], asof, r["net_in"], r["amount"], 0, "sina", r.get("board_code") or "")
+                   for dim, r in pairs]
+        try:
+            executemany(
+                """INSERT INTO sector_flow_daily(dim,name,trade_date,net_in,amount,stocks,source,board_code)
+                   VALUES(?,?,?,?,?,?,?,?)
+                   ON CONFLICT(dim,name,trade_date) DO UPDATE SET
+                     net_in=excluded.net_in, amount=excluded.amount,
+                     source=excluded.source, board_code=excluded.board_code""",
+                payload)
+        except Exception:  # noqa: BLE001
+            executemany(
+                """INSERT INTO sector_flow_daily(dim,name,trade_date,net_in,amount,stocks)
+                   VALUES(?,?,?,?,?,?)
+                   ON CONFLICT(dim,name,trade_date) DO UPDATE SET
+                     net_in=excluded.net_in, amount=excluded.amount""",
+                [(dim, r["name"], asof, r["net_in"], r["amount"], 0) for dim, r in pairs])
+    set_meta("sector_flow_remote_sync", datetime.now(_FLOW_TZ).isoformat(timespec="seconds"))
+    return {"date": asof, "industry": len(hy), "concept": len(gn), "source": "sina", "rows": len(pairs)}
 
 
 def _flow_from_snapshot(dim: str, field: str) -> list[dict]:
@@ -611,12 +666,22 @@ def get_flow_trend(dim: str = "industry", name: str = "",
     min_stocks = max(0, min(int(min_stocks or 0), 200))
     q = (q or "").strip().lower()
     spec = TREND_GRAINS[grain]
-    default_n = 40 if dim == "industry" else 24
+    default_n = 48 if dim == "industry" else 24
     top_n = max(3, min(int(top_n or default_n), 80))
     asof = _ensure_ledger()
+    remote_dim = "remote_hy" if dim == "industry" else "remote_gn"
+    remote_n = query("SELECT COUNT(*) AS n FROM sector_flow_daily WHERE dim=?", (remote_dim,))[0]["n"]
+    if not remote_n:
+        try:
+            pull_remote_flow()
+            remote_n = query("SELECT COUNT(*) AS n FROM sector_flow_daily WHERE dim=?", (remote_dim,))[0]["n"]
+        except Exception:  # noqa: BLE001
+            remote_n = 0
+    use_dim = remote_dim if remote_n else dim
+    source_name = "sina" if use_dim.startswith("remote") else "local_ledger"
     dates = query(
         "SELECT DISTINCT trade_date FROM sector_flow_daily WHERE dim=? AND trade_date<=? "
-        "ORDER BY trade_date DESC LIMIT ?", (dim, asof, spec["lookback"]))
+        "ORDER BY trade_date DESC LIMIT ?", (use_dim, asof, spec["lookback"]))
     date_list = [d["trade_date"] for d in dates]
     date_list.reverse()
     buckets = _bucket_trade_dates(date_list, grain)
@@ -629,7 +694,7 @@ def get_flow_trend(dim: str = "industry", name: str = "",
         rows = query(
             f"""SELECT name, trade_date, net_in, stocks FROM sector_flow_daily
                 WHERE dim=? AND trade_date IN ({ph})""",
-            (dim, *date_list))
+            (use_dim, *date_list))
         by_name: dict[str, dict] = {}
         stocks_map: dict[str, int] = {}
         for r in rows:
@@ -661,7 +726,9 @@ def get_flow_trend(dim: str = "industry", name: str = "",
                 vals = [pts[d] for d in b["days"] if d in pts]
                 data.append(round(sum(vals), 2) if vals else None)
             ssum = round(sum(v for v in data if v is not None), 2)
-            lines.append({"name": nm, "data": data, "sum_yi": ssum, "selected": nm == name})
+            local_name = REMOTE_TO_SW.get(nm, "") if use_dim.startswith("remote") else nm
+            lines.append({"name": nm, "data": data, "sum_yi": ssum, "selected": nm == name,
+                          "local_name": local_name or nm})
     kpis = {
         "sum_net_yi": round(sum(l["sum_yi"] for l in lines), 2) if lines else 0,
         "last_date": date_list[-1] if date_list else "",
@@ -673,14 +740,16 @@ def get_flow_trend(dim: str = "industry", name: str = "",
         "grain_label": spec["label"],
     }
     y_desc = "当日主力净流入（亿）" if grain == "1d" else f"该{spec['label']}周期内主力净流入合计（亿）"
+    src_label = "新浪板块资金独立源" if source_name == "sina" else "本地成分股账本"
     title = f"「{name}」及对照板块 · 横轴{spec['label']}" if name else f"{dim_label}资金走势 · 横轴{spec['label']}"
     notes = [
+        f"折线数据源：{src_label}（与直方图的本地成分股汇总分开）",
         f"折线=每个{dim_label}一条，横轴={spec['label']}，纵轴={y_desc}",
         f"账本覆盖 {have} 个交易日（最多取近 {spec['lookback']} 日再按{spec['label']}重采样）",
         "缺日不填 0、不用涨跌幅冒充资金；点折线可选中该板块",
     ]
     if have < 2:
-        notes.append("目前只有 1 个交易日点，同步更多交易日后日/5日/周/月折线才会拉长")
+        notes.append("目前只有 1 个交易日点，独立源会按交易日继续落库，折线随后拉长")
     return {
         "dim": dim, "name": name, "title": title,
         "grain": grain, "grain_label": spec["label"],
@@ -692,7 +761,7 @@ def get_flow_trend(dim: str = "industry", name: str = "",
                                        "days": len(b["days"])} for b in buckets],
         "lines": lines, "kpis": kpis, "y_name": y_desc,
         "note": "。".join(notes) + "。",
-        "source": "sector_flow_daily",
+        "source": source_name, "ledger_dim": use_dim,
     }
 
 

@@ -243,8 +243,17 @@ def macro_almanac():
 
 @router.get("/macro/sector-events")
 def macro_sector_events(months: int = Query(12, le=12)):
-    from .services import almanac
-    return almanac.get_sector_events(months)
+    return macro.get_sector_intel(months)
+
+
+@router.get("/macro/intel")
+def macro_intel(kind: str = "", sector: str = "", days: int = 0, limit: int = Query(80, le=200)):
+    return macro.list_intel(kind, sector, days, limit)
+
+
+@router.post("/macro/intel-sync")
+def macro_intel_sync():
+    return macro.sync_intel()
 
 
 @router.post("/commodities/watch")
@@ -310,6 +319,13 @@ def sector_flow_trend(dim: str = "industry", name: str = "",
                       q: str = ""):
     return sector.get_flow_trend(dim, name, grain, top_n, direction, min_stocks, q,
                                  range_key=span)
+
+
+@router.post("/sector/flow-sync")
+def sector_flow_sync():
+    local = sector.record_daily_flow()
+    remote = sector.pull_remote_flow()
+    return {"ok": True, "local": local, "remote": remote, "stats": sector.flow_history_stats()}
 
 
 @router.get("/sector/flow-bar/stocks")
@@ -534,6 +550,7 @@ def system_status():
         "last_realtime_refresh": get_meta("last_realtime_refresh", "-"),
         "finance": finance.stats(),
         "sector_flow": sector.flow_history_stats(),
+        "intel": macro.intel_stats(),
     }
 
 

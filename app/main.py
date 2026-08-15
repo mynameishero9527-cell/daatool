@@ -40,7 +40,7 @@ h1{font-size:22px;margin:0 0 8px} p{margin:8px 0} .muted{color:#8b9bb4;font-size
 </body></html>
 """
 
-app = FastAPI(title="A股量化工具", version="11.0.8", docs_url="/docs", redoc_url="/redoc")
+app = FastAPI(title="A股量化工具", version="11.0.9", docs_url="/docs", redoc_url="/redoc")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -118,6 +118,15 @@ def startup() -> None:
             finance_svc.rebuild_all(max_fetch=0)
             if stocklist.snapshot_count():
                 sector_svc.record_daily_flow()
+                try:
+                    sector_svc.pull_remote_flow()
+                except Exception as exc2:  # noqa: BLE001
+                    log.warning("板块资金独立源拉取失败: %s", exc2)
+            try:
+                from .services import macro as macro_svc
+                macro_svc.sync_intel()
+            except Exception as exc3:  # noqa: BLE001
+                log.warning("宏观情报缓存失败: %s", exc3)
         except Exception as exc:  # noqa: BLE001
             log.warning("财报评级/板块资金落库跳过: %s", exc)
     threading.Thread(target=bootstrap, daemon=True).start()
