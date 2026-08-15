@@ -155,23 +155,11 @@ def _parse_fflow_klines(klines: list) -> list[dict]:
     return out
 
 
-_STOCK_FFLOW_DAY = (
-    "/api/qt/stock/fflow/daykline/get?lmt={lmt}&klt={klt}&secid={secid}"
-    "&fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65"
-    "&ut=b2884a393a59ad64002292a3e90d46a5"
-)
-_STOCK_FFLOW_MIN = (
-    "/api/qt/stock/fflow/kline/get?lmt=0&klt=1&secid={secid}"
-    "&fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56"
-    "&ut=b2884a393a59ad64002292a3e90d46a5"
-)
-_STOCK_FFLOW_HOSTS = (
-    "https://push2delay.eastmoney.com",
-    "https://push2his.eastmoney.com",
-    "https://94.push2his.eastmoney.com",
-    "https://88.push2his.eastmoney.com",
-    "https://push2.eastmoney.com",
-)
+_STOCK_FFLOW_UT = "b2884a393a59ad64002292a3e90d46a5"
+_STOCK_FFLOW_DAY_PATH = "/api/qt/stock/fflow/daykline/get"
+_STOCK_FFLOW_MIN_PATH = "/api/qt/stock/fflow/kline/get"
+_STOCK_FFLOW_FIELDS_DAY = "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65"
+_STOCK_FFLOW_FIELDS_MIN = "f51,f52,f53,f54,f55,f56"
 
 
 def em_stock_secid(code: str) -> str | None:
@@ -228,6 +216,19 @@ def _parse_stock_fflow_klines(klines: list, minute: bool = False) -> list[dict]:
     return out
 
 
+def _stock_fflow_get(host: str, path: str, params: dict) -> dict:
+    """个股资金K：单次短超时，参数用 dict，避免预拼 URL 被对端判无效。"""
+    try:
+        with httpx.Client(timeout=6.0, headers=_HEADERS, follow_redirects=True) as client:
+            resp = client.get(host + path, params={**params, "cb": "jQuery"})
+            resp.raise_for_status()
+            data = _parse_json_maybe_jsonp(resp.text)
+            return data if data else {}
+    except Exception as exc:  # noqa: BLE001
+        log.debug("个股资金K 拉取失败 %s: %s", host + path, exc)
+        return {}
+
+
 def fetch_stock_fflow(code: str, period: str = "day", lookback: int = 120) -> list[dict]:
     """个股主力资金流向。minute 为分时累计序列；day/week/month 为对应周期净流入。"""
     secid = em_stock_secid(code)
@@ -235,19 +236,35 @@ def fetch_stock_fflow(code: str, period: str = "day", lookback: int = 120) -> li
         return []
     minute = period == "minute"
     if minute:
-        path = _STOCK_FFLOW_MIN.format(secid=secid)
+        path = _STOCK_FFLOW_MIN_PATH
+        params = {
+            "lmt": "0", "klt": "1", "secid": secid,
+            "fields1": "f1,f2,f3,f7", "fields2": _STOCK_FFLOW_FIELDS_MIN,
+            "ut": _STOCK_FFLOW_UT,
+        }
+        hosts = (
+            "https://push2delay.eastmoney.com",
+            "https://push2.eastmoney.com",
+            "https://push2his.eastmoney.com",
+        )
     else:
         klt = {"day": 101, "5day": 101, "week": 102, "month": 103}.get(period, 101)
         lmt = 5 if period == "5day" else max(5, min(int(lookback or 120), 240))
-        path = _STOCK_FFLOW_DAY.format(lmt=lmt, klt=klt, secid=secid)
+        path = _STOCK_FFLOW_DAY_PATH
+        params = {
+            "lmt": str(lmt), "klt": str(klt), "secid": secid,
+            "fields1": "f1,f2,f3,f7", "fields2": _STOCK_FFLOW_FIELDS_DAY,
+            "ut": _STOCK_FFLOW_UT,
+        }
+        hosts = (
+            "https://push2delay.eastmoney.com",
+            "https://push2his.eastmoney.com",
+            "https://94.push2his.eastmoney.com",
+            "https://88.push2his.eastmoney.com",
+        )
     seen: dict[str, dict] = {}
-    last_exc: Exception | None = None
-    for host in _STOCK_FFLOW_HOSTS:
-        try:
-            body = _his_get(host + path)
-        except Exception as exc:  # noqa: BLE001
-            last_exc = exc
-            continue
+    for host in hosts:
+        body = _stock_fflow_get(host, path, params)
         parsed = _parse_stock_fflow_klines(
             ((body.get("data") or {}).get("klines") or []), minute=minute)
         for row in parsed:
@@ -256,8 +273,6 @@ def fetch_stock_fflow(code: str, period: str = "day", lookback: int = 120) -> li
             break
         if (not minute) and len(seen) >= (4 if period == "5day" else 8):
             break
-    if not seen and last_exc:
-        log.warning("个股资金K %s %s 失败: %s", code, period, last_exc)
     return [seen[k] for k in sorted(seen.keys())]
 
 
