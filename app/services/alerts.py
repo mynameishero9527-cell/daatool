@@ -134,6 +134,9 @@ def get_alerts(limit: int = 50) -> dict:
             r["name"], r["code"] = m[0], m[1]
         else:
             r["name"], r["code"] = "", ""
+    watched = {row["code"] for row in query("SELECT code FROM watchlist")}
+    for r in rows:
+        r["in_watchlist"] = bool(r.get("code") and r["code"] in watched)
     return {"items": rows}
 
 
@@ -174,6 +177,9 @@ def _decorate_buy_rows(rows: list[dict]) -> None:
             r["buy_level"] = r.get("buy_level") or ""
             r["advice"] = r.get("advice") or ""
             r["finance_grade"] = r.get("finance_grade") or ""
+    watched = {row["code"] for row in query("SELECT code FROM watchlist")}
+    for r in rows:
+        r["in_watchlist"] = bool(r.get("code") and r["code"] in watched)
 
 
 def get_buy_points(limit: int = 8) -> dict:

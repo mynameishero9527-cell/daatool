@@ -113,6 +113,70 @@ function flowMetricCells(r) {
 }
 const FLOW_NOTE = "散户买入/卖出为成交额与主力差额估算，非逐笔；主力买比=买入/(买入+卖出)。";
 let watchCodes = new Set();
+let watchCodesLoaded = false;
+
+function isWatched(code, hint) {
+  if (!code) return false;
+  if (watchCodes.has(code)) return true;
+  if (watchCodesLoaded) return false;
+  return !!hint;
+}
+
+function watchBtnHtml(code, name, hint) {
+  if (!code) return "";
+  const on = isWatched(code, hint);
+  const label = on ? "已加自选" : "+自选";
+  return `<button class="btn small js-watch-btn" type="button" data-watched="${on ? "1" : "0"}" title="${on ? "已在自选，点击可移出" : "加入自选"}" onclick="event.stopPropagation(); toggleWatchCode('${esc(code)}','${esc(name || "")}')">${label}</button>`;
+}
+
+function paintWatchBtn(btn, code) {
+  if (!btn || !code) return;
+  const on = isWatched(code);
+  btn.dataset.watched = on ? "1" : "0";
+  btn.textContent = on ? "已加自选" : "+自选";
+  btn.title = on ? "已在自选，点击可移出" : "加入自选";
+  btn.classList.toggle("ghost", on);
+}
+
+function refreshWatchTabCount() {
+  const tab = $("#dashWatchTab");
+  if (!tab || !watchCodesLoaded) return;
+  tab.textContent = watchCodes.size ? `自选（${watchCodes.size}）` : "自选";
+}
+
+function syncWatchButtons() {
+  $$(".js-watch-btn").forEach((btn) => {
+    const row = btn.closest("[data-code]");
+    const code = btn.dataset.code || (row && row.dataset.code) || "";
+    paintWatchBtn(btn, code);
+  });
+  const ctx = $("#ctxWatchItem");
+  if (ctx && ctxStock) {
+    ctx.textContent = watchCodes.has(ctxStock.code) ? "☆ 移出自选" : "⭐ 加入自选";
+  }
+  refreshWatchTabCount();
+}
+
+window.toggleWatchCode = async (code, name) => {
+  if (!code) return;
+  try {
+    if (watchCodes.has(code)) {
+      await post(`/api/watchlist/remove?code=${encodeURIComponent(code)}`);
+      watchCodes.delete(code);
+    } else {
+      const res = await post(`/api/watchlist/add?code=${encodeURIComponent(code)}`);
+      if (!res.ok) { alert(res.error || "添加失败"); return; }
+      watchCodes.add(res.code || code);
+    }
+    watchCodesLoaded = true;
+  } catch (err) {
+    alert((err && err.message) ? err.message : "自选操作失败");
+    return;
+  }
+  syncWatchButtons();
+  if (activeTab === "dashboard") loadDashboard();
+};
+window.addWatchCode = (code, name) => window.toggleWatchCode(code, name);
 
 /* ---------------- 主选项卡 ---------------- */
 let activeTab = "dashboard";
@@ -340,9 +404,7 @@ async function loadAlerts() {
       const code = a.code || "";
       const name = a.name || "";
       const canStock = !!(code && a.alert_type === "buy_point");
-      const watchBtn = canStock
-        ? `<button class="btn small" type="button" onclick="event.stopPropagation(); addWatchCode('${esc(code)}','${esc(name)}')">+自选</button>`
-        : "";
+      const watchBtn = canStock ? watchBtnHtml(code, name, a.in_watchlist) : "";
       const attrs = canStock ? ` data-code="${esc(code)}" data-name="${esc(name)}"` : "";
       return `
       <div class="alert-item"${attrs}>
@@ -357,6 +419,11 @@ async function loadAlerts() {
     const buys = items.filter((a) => a.alert_type === "buy_point");
     const sells = items.filter((a) => a.alert_type === "sell_point");
     const others = items.filter((a) => a.alert_type !== "buy_point" && a.alert_type !== "sell_point");
+    if (!watchCodesLoaded) {
+      for (const a of items) {
+        if (a.in_watchlist && a.code) watchCodes.add(a.code);
+      }
+    }
     if (!items.length) {
       feed.innerHTML = '<div class="empty">暂无提醒，交易时段每10分钟自动扫描</div>';
       return;
@@ -367,18 +434,9 @@ async function loadAlerts() {
         <div><div class="alert-col-title">最佳卖点</div>${sells.map(item).join("") || '<div class="empty">暂无卖点</div>'}</div>
       </div>
       ${others.length ? `<div class="alert-other">${others.map(item).join("")}</div>` : ""}`;
+    syncWatchButtons();
   } catch (err) { console.warn(err); }
 }
-
-window.addWatchCode = async (code, name) => {
-  if (!code) return;
-  const res = await post(`/api/watchlist/add?code=${encodeURIComponent(code)}`);
-  if (!res.ok) { alert(res.error || "添加失败"); return; }
-  watchCodes.add(res.code || code);
-  $$(`[data-code="${code}"] button`).forEach((b) => {
-    if ((b.textContent || "").includes("自选")) b.textContent = "已加自选";
-  });
-};
 
 async function loadMarketSentiment() {
   try {
@@ -451,10 +509,14 @@ function renderMovers(m) {
 }
 
 function renderWatchlist(list) {
-  watchCodes = new Set(list.map((r) => r.code));
-  const tab = $("#dashWatchTab");
-  if (tab) tab.textContent = list.length ? `自选（${list.length}）` : "自选";
-  if (!list.length) { $("#watchTable").innerHTML = '<div class="empty">暂无自选股</div>'; return; }
+  watchCodes = new Set((list || []).map((r) => r.code).filter(Boolean));
+  watchCodesLoaded = true;
+  refreshWatchTabCount();
+  if (!list.length) {
+    $("#watchTable").innerHTML = '<div class="empty">暂无自选股</div>';
+    syncWatchButtons();
+    return;
+  }
   $("#watchTable").innerHTML = `<table><thead><tr>
     <th>代码</th><th>名称</th><th>五行</th><th>财报</th><th>最新价</th><th>涨跌幅</th><th>涨跌额</th>
     <th>成交量(手)</th><th>成交额(万)</th><th>量比</th>${flowMetricHeaders()}<th>换手%</th><th>振幅%</th><th>操作</th>
@@ -476,6 +538,7 @@ function renderWatchlist(list) {
       </td>
     </tr>`).join("")}</tbody></table>
     <div class="muted" style="margin-top:6px;font-size:12px">${FLOW_NOTE}</div>`;
+  syncWatchButtons();
 }
 
 window.addWatch = async () => {
@@ -484,9 +547,17 @@ window.addWatch = async () => {
   const res = await post(`/api/watchlist/add?code=${encodeURIComponent(code)}`);
   if (!res.ok) { alert(res.error); return; }
   $("#watchInput").value = "";
+  watchCodes.add(res.code || code);
+  watchCodesLoaded = true;
+  syncWatchButtons();
   loadDashboard();
 };
-window.removeWatch = async (code) => { await post(`/api/watchlist/remove?code=${code}`); loadDashboard(); };
+window.removeWatch = async (code) => {
+  await post(`/api/watchlist/remove?code=${encodeURIComponent(code)}`);
+  watchCodes.delete(code);
+  syncWatchButtons();
+  loadDashboard();
+};
 window.pinWatch = async (code) => { await post(`/api/watchlist/pin?code=${code}`); loadDashboard(); };
 
 /* ---------------- 个股分析 ---------------- */
@@ -2788,13 +2859,16 @@ $("#ctxOpenItem").addEventListener("click", () => {
 $("#ctxWatchItem").addEventListener("click", async () => {
   if (!ctxStock) return;
   if (watchCodes.has(ctxStock.code)) {
-    await post(`/api/watchlist/remove?code=${ctxStock.code}`);
+    await post(`/api/watchlist/remove?code=${encodeURIComponent(ctxStock.code)}`);
     watchCodes.delete(ctxStock.code);
   } else {
-    await post(`/api/watchlist/add?code=${encodeURIComponent(ctxStock.code)}`);
-    watchCodes.add(ctxStock.code);
+    const res = await post(`/api/watchlist/add?code=${encodeURIComponent(ctxStock.code)}`);
+    if (res && res.ok === false) { alert(res.error || "添加失败"); hideCtxMenu(); return; }
+    watchCodes.add((res && res.code) || ctxStock.code);
   }
+  watchCodesLoaded = true;
   hideCtxMenu();
+  syncWatchButtons();
   if (activeTab === "dashboard") loadDashboard();
 });
 $("#ctxWx").addEventListener("click", (e) => e.stopPropagation());
@@ -3403,6 +3477,11 @@ async function loadBuyPoints() {
       return;
     }
     if (buyFlashState.collapsed) setBuyFlashCollapsed(false);
+    if (!watchCodesLoaded) {
+      for (const r of items) {
+        if (r.in_watchlist && r.code) watchCodes.add(r.code);
+      }
+    }
     body.innerHTML = items.map((r) => `
       <div class="buy-flash-row" data-code="${esc(r.code)}" data-name="${esc(r.name)}">
         <div class="buy-flash-main">
@@ -3418,8 +3497,9 @@ async function loadBuyPoints() {
           <span>情绪 ${fmt(r.sentiment, 0)} ${esc(r.sent_level || "")}</span>
         </div>
         <div class="buy-flash-advice">${esc(r.advice || "")}</div>
-        <button class="btn small" type="button" onclick="event.stopPropagation(); addWatchCode('${esc(r.code)}','${esc(r.name)}')">+自选</button>
+        ${watchBtnHtml(r.code, r.name, r.in_watchlist)}
       </div>`).join("");
+    syncWatchButtons();
   } catch (err) {
     paintEmpty("买点加载失败，请检查服务是否在运行", "失败");
   }

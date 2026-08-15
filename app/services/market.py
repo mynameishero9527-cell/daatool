@@ -167,8 +167,12 @@ def add_watch(code: str) -> dict:
 
 
 def remove_watch(code: str) -> dict:
-    execute("DELETE FROM watchlist WHERE code=?", (code,))
-    return {"ok": True}
+    norm = normalize_code(code) or (code or "").strip().lower()
+    if not norm:
+        return {"ok": False, "error": "无效代码"}
+    execute("DELETE FROM watchlist WHERE code=?", (norm,))
+    cache.delete("watchlist")
+    return {"ok": True, "code": norm}
 
 
 def toggle_pin(code: str) -> dict:
