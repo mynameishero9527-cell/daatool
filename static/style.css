@@ -377,6 +377,8 @@ input:focus { border-color: var(--accent); }
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
   margin: 8px 0 4px; font-size: calc(13px * var(--font-scale)); font-weight: 600;
 }
+.fund-kline-actions { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; font-weight: 400; }
+.fund-kline-actions .muted { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chart-fund { height: 168px; }
 .fund-flow-strip {
   display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));

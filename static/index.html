@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>A股量化工具</title>
-<link rel="stylesheet" href="/static/style.css?v=13.0.20">
+<link rel="stylesheet" href="/static/style.css?v=13.0.21">
 <script>
 (function () {
   try {
@@ -149,7 +149,10 @@
         <div id="klineChart" class="chart-lg"></div>
         <div class="fund-kline-head">
           <span>主力资金</span>
-          <span class="muted" id="fundKlineMeta"></span>
+          <span class="fund-kline-actions">
+            <button type="button" class="btn small ghost" id="fundKlineSync">同步历史</button>
+            <span class="muted" id="fundKlineMeta"></span>
+          </span>
         </div>
         <div id="fundKlineChart" class="chart-fund"></div>
         <div id="fundFlowStrip" class="fund-flow-strip"></div>
@@ -819,6 +822,6 @@
   <div class="ctx-item" id="ctxKbRevert" style="display:none">↩ 还原内置解释</div>
 </div>
 
-<script src="/static/app.js?v=13.0.20"></script>
+<script src="/static/app.js?v=13.0.21"></script>
 </body>
 </html>

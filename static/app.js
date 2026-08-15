@@ -1261,8 +1261,16 @@ function renderFundKline(d) {
   const cum = d.cumulative_yi || [];
   const pal = cp();
   if (meta) {
-    const src = [d.source, d.note].filter(Boolean).join(" · ");
-    meta.textContent = d.empty_reason || src || "";
+    const bits = [];
+    if (d.empty_reason) bits.push(d.empty_reason);
+    else {
+      if (d.source) bits.push(d.source);
+      if (d.stored_days) bits.push(`已存${d.stored_days}日`);
+      else if (d.bars) bits.push(`${d.bars}根`);
+      if (d.note) bits.push(d.note);
+    }
+    meta.textContent = bits.join(" · ");
+    meta.title = bits.join("\n");
   }
   if (!dates.length) {
     fundKlineChart.clear();
@@ -1385,6 +1393,25 @@ async function loadFundKline(nPrice) {
     console.warn(err);
   }
 }
+
+$("#fundKlineSync")?.addEventListener("click", async () => {
+  if (!currentStock || isIndexCode(currentStock.code)) return;
+  const meta = $("#fundKlineMeta");
+  const code = currentStock.code;
+  if (meta) meta.textContent = "正在同步历史资金…";
+  try {
+    const r = await post(`/api/kline/fund/sync?code=${encodeURIComponent(code)}&lookback=240`);
+    if (!currentStock || currentStock.code !== code) return;
+    if (r && r.ok === false) {
+      if (meta) meta.textContent = r.error || "同步失败";
+      return;
+    }
+    await loadFundKline();
+  } catch (err) {
+    if (meta) meta.textContent = "同步失败。未用涨跌幅代替资金。";
+    console.warn(err);
+  }
+});
 
 function gaugeHtml(label, value, levelText, extra = "") {
   if (value === null || value === undefined) return "";

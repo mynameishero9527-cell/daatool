@@ -181,9 +181,17 @@ def get_kline(code: str, period: str = "day", count: int = Query(320, le=800)):
 
 
 @router.get("/kline/fund")
-def get_fund_kline(code: str, period: str = "day"):
+def get_fund_kline(code: str, period: str = "day", refresh: int = 0):
     """个股主力资金K。缺数返回 empty_reason，不用涨跌幅冒充。"""
+    if refresh:
+        kline.invalidate_fund_cache(code)
     return kline.get_fund_kline(code, period)
+
+
+@router.post("/kline/fund/sync")
+def sync_fund_kline(code: str, lookback: int = Query(240, ge=20, le=500)):
+    """多源拉取个股主力资金历史并写入本地 SQLite。"""
+    return kline.sync_fund_history(code, lookback)
 
 
 @router.get("/analysis")

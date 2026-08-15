@@ -249,7 +249,7 @@ def fetch_stock_fflow(code: str, period: str = "day", lookback: int = 120) -> li
         )
     else:
         klt = {"day": 101, "5day": 101, "week": 102, "month": 103}.get(period, 101)
-        lmt = 5 if period == "5day" else max(5, min(int(lookback or 120), 240))
+        lmt = 5 if period == "5day" else max(20, min(int(lookback or 240), 500))
         path = _STOCK_FFLOW_DAY_PATH
         params = {
             "lmt": str(lmt), "klt": str(klt), "secid": secid,
@@ -271,7 +271,8 @@ def fetch_stock_fflow(code: str, period: str = "day", lookback: int = 120) -> li
             seen[row["date"]] = row
         if minute and len(seen) >= 20:
             break
-        if (not minute) and len(seen) >= (4 if period == "5day" else 8):
+        # 日K：各主机可能只有最近 1 根，必须继续合并，不能凑满 8 根就停
+        if (not minute) and len(seen) >= lmt:
             break
     return [seen[k] for k in sorted(seen.keys())]
 

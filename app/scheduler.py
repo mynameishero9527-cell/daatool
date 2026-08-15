@@ -147,6 +147,18 @@ def _job_engine_intraday():
     engine_svc.maybe_auto_run("intraday")
 
 
+def _job_fund_kline():
+    """盘中：自选股主力资金日K增量写入本地。"""
+    from .services import kline as kline_svc
+    kline_svc.sync_watchlist_fund(lookback=40)
+
+
+def _job_fund_kline_backfill():
+    """盘后：自选股主力资金历史回补到本地。"""
+    from .services import kline as kline_svc
+    kline_svc.sync_watchlist_fund(lookback=240)
+
+
 def _job_metrics_recompute():
     """盘中：仅基于最新快照重算指标（不重拉K线，轻量）。"""
     metrics_svc.compute_all_metrics()
@@ -156,7 +168,8 @@ from .database import get_meta_json, set_meta_json
 
 # 间隔型任务（可调频率，分钟）
 INTERVAL_JOBS = {"medium": 1, "news": 1, "snapshot": 5, "metrics_recompute": 10, "alerts": 10,
-                 "sector_flow": 5, "hot_terms": 60, "official_policy": 240, "engine_intraday": 10}
+                 "sector_flow": 5, "hot_terms": 60, "official_policy": 240, "engine_intraday": 10,
+                 "fund_kline": 5}
 ALLOWED_MINUTES = [1, 5, 10, 15, 30, 60, 120, 180, 240]
 
 
@@ -249,6 +262,10 @@ def start() -> None:
                   day_of_week="mon-fri", hour=15, minute=50, id="engine_eod")
     sched.add_job(_run("策略引擎盘中增量", _job_engine_intraday, only_trading=True),
                   "interval", minutes=10, id="engine_intraday")
+    sched.add_job(_run("个股主力资金增量", _job_fund_kline, only_trading=True),
+                  "interval", minutes=5, id="fund_kline")
+    sched.add_job(_run("个股主力资金历史回补", _job_fund_kline_backfill), "cron",
+                  day_of_week="mon-fri", hour=15, minute=32, id="fund_kline_backfill")
     sched.start()
     _scheduler = sched
     _apply_overrides(sched)
@@ -271,7 +288,9 @@ def status() -> list[dict]:
                     "official_policy_backfill": "官方政策半年回补",
                     "hot_terms": "热度词汇重算",
                     "engine_eod": "策略引擎日终快照",
-                    "engine_intraday": "策略引擎盘中增量"}.get(job.id, job.id)
+                    "engine_intraday": "策略引擎盘中增量",
+                    "fund_kline": "个股主力资金增量",
+                    "fund_kline_backfill": "个股主力资金历史回补"}.get(job.id, job.id)
             st = JOB_STATUS.get(name, {})
             overrides = get_meta_json("job_overrides", {}) or {}
             minutes = (overrides.get(job.id, {}) or {}).get("minutes") or INTERVAL_JOBS.get(job.id)

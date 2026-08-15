@@ -190,6 +190,70 @@ _BKZJ_URL = (
     "MoneyFlow.ssl_bkzj_bk?page={page}&num={num}&sort=netamount&asc=0&fenlei={fenlei}"
 )
 _BKZJ_HEADERS = {"Referer": "https://vip.stock.finance.sina.com.cn/moneyflow/"}
+_STOCK_MF_URL = (
+    "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/"
+    "MoneyFlow.ssl_qsfx_lscjfb?page={page}&num={num}&sort=opendate&asc=0&daima={code}"
+)
+
+
+def _yuan_to_yi(v: float | None) -> float | None:
+    if v is None:
+        return None
+    return round(v / 1e8, 4)
+
+
+def parse_stock_moneyflow_rows(rows) -> list[dict]:
+    """新浪个股资金日流水。netamount/r0_net 等为元；不用 changeratio 冒充资金。"""
+    out: list[dict] = []
+    if not isinstance(rows, list):
+        return out
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        day = str(r.get("opendate") or "")[:10]
+        if len(day) < 10 or day[4:5] != "-":
+            continue
+        out.append({
+            "date": day,
+            "main_net_yi": _yuan_to_yi(_f(r.get("netamount"))),
+            "super_net_yi": _yuan_to_yi(_f(r.get("r0_net"))),
+            "large_net_yi": _yuan_to_yi(_f(r.get("r1_net"))),
+            "small_net_yi": _yuan_to_yi(_f(r.get("r3_net"))),
+        })
+    out.sort(key=lambda x: x["date"])
+    return out
+
+
+def fetch_stock_moneyflow_history(code: str, lookback: int = 240) -> list[dict]:
+    """个股主力资金日K历史（新浪）。指数返回空，不编造。"""
+    s = (code or "").strip().lower()
+    if not s or s.startswith(("sh000", "sz399", "bj899", "sh880")):
+        return []
+    need = max(20, min(int(lookback or 240), 500))
+    per = 80
+    max_pages = min(8, max(1, (need + per - 1) // per + 1))
+    by: dict[str, dict] = {}
+    for page in range(1, max_pages + 1):
+        try:
+            resp = tracked_get(
+                SOURCE,
+                _STOCK_MF_URL.format(page=page, num=per, code=s),
+                headers=_BKZJ_HEADERS,
+            )
+            rows = parse_stock_moneyflow_rows(resp.json())
+        except Exception:
+            break
+        if not rows:
+            break
+        before = len(by)
+        for row in rows:
+            by[row["date"]] = row
+        if len(by) >= need or len(rows) < per or len(by) == before:
+            break
+    days = sorted(by)
+    if len(days) > need:
+        days = days[-need:]
+    return [by[d] for d in days]
 
 
 def fetch_board_moneyflow(fenlei: int = 0, pages: int = 3, num: int = 80) -> list[dict]:
