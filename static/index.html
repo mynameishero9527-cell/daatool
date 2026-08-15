@@ -4,7 +4,22 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>A股量化工具</title>
-<link rel="stylesheet" href="/static/style.css?v=12.0.6">
+<link rel="stylesheet" href="/static/style.css?v=12.0.7">
+<script>
+(function () {
+  try {
+    var p = JSON.parse(localStorage.getItem("uiPrefs") || "{}");
+    var t = p.theme || "night";
+    var s = Number(p.fontScale) || 1;
+    if (s < 0.8) s = 0.8;
+    if (s > 1.5) s = 1.5;
+    document.documentElement.setAttribute("data-theme", t);
+    document.documentElement.style.setProperty("--font-scale", String(s));
+  } catch (e) {
+    document.documentElement.setAttribute("data-theme", "night");
+  }
+})();
+</script>
 <script src="/static/vendor/echarts.min.js?v=12.0.1"></script>
 </head>
 <body>
@@ -29,6 +44,8 @@
     <span id="topAlmanac" class="top-almanac" title="加载中…">📅</span>
     <span class="dot" id="healthDot"></span>
     <span id="lastRefresh">-</span>
+    <button type="button" class="ui-chip" id="themeQuickBtn" title="切换白天/黑夜">🌙</button>
+    <button type="button" class="ui-chip" id="uiPrefsBtn" title="字体与风格">Aa</button>
   </div>
 </header>
 
@@ -558,8 +575,34 @@
   <section class="page" id="page-settings">
     <div class="btn-group sub-tabs" id="settingsTabs">
       <button class="opt active" data-view="ops">系统维护</button>
+      <button class="opt" data-view="ui">界面外观</button>
       <button class="opt" data-view="strategy">选股策略</button>
       <button class="opt" data-view="engine">策略引擎配置</button>
+    </div>
+
+    <div id="settingsPaneUi" style="display:none">
+      <div class="card">
+        <div class="card-title">字体大小
+          <span class="muted" id="fontScaleLabel">100%</span>
+        </div>
+        <div class="font-scale-row">
+          <input type="range" id="fontScaleRange" min="80" max="150" step="5" value="100">
+        </div>
+        <div class="btn-group" id="fontScaleBtns" style="margin-top:10px">
+          <button type="button" class="opt" data-scale="0.85">小</button>
+          <button type="button" class="opt" data-scale="1">标准</button>
+          <button type="button" class="opt" data-scale="1.1">中</button>
+          <button type="button" class="opt" data-scale="1.2">大</button>
+          <button type="button" class="opt" data-scale="1.35">特大</button>
+        </div>
+        <div class="muted" style="margin-top:8px">按比例缩放页面全部文字（含表格、按钮、图表标注）。预览：<span class="px up">12.34</span> <span class="px down">56.78</span></div>
+      </div>
+      <div class="card">
+        <div class="card-title">页面风格
+          <span class="muted">涨跌始终红涨绿跌，不随主题对调</span>
+        </div>
+        <div class="theme-grid" id="themeGrid"></div>
+      </div>
     </div>
 
     <div id="settingsPaneOps">
@@ -724,6 +767,6 @@
   <div class="ctx-item" id="ctxHotRevert" style="display:none">↩ 还原词库利好/利空</div>
 </div>
 
-<script src="/static/app.js?v=12.0.6"></script>
+<script src="/static/app.js?v=12.0.7"></script>
 </body>
 </html>

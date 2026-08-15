@@ -62,6 +62,151 @@ const cls = (v) => (v > 0 ? "up" : v < 0 ? "down" : "flat");
 const sign = (v) => (v > 0 ? "+" : "");
 const pct = (v) => (v === null || v === undefined) ? "-" : `${sign(v)}${fmt(v)}%`;
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+const UI_KEY = "uiPrefs";
+const UI_THEMES = [
+  { id: "night", name: "黑夜", group: "昼夜" },
+  { id: "day", name: "白天", group: "昼夜" },
+  { id: "dawn", name: "拂晓", group: "配色" },
+  { id: "ocean", name: "深海", group: "配色" },
+  { id: "forest", name: "竹林", group: "配色" },
+  { id: "violet", name: "紫霞", group: "配色" },
+  { id: "gold", name: "墨金", group: "配色" },
+];
+let uiPrefs = { theme: "night", fontScale: 1 };
+
+function clampFontScale(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 1;
+  return Math.max(0.8, Math.min(1.5, Math.round(n * 20) / 20));
+}
+function loadUiPrefs() {
+  try {
+    const p = JSON.parse(localStorage.getItem(UI_KEY) || "{}");
+    if (p.theme && UI_THEMES.some((t) => t.id === p.theme)) uiPrefs.theme = p.theme;
+    if (p.fontScale != null) uiPrefs.fontScale = clampFontScale(p.fontScale);
+  } catch { /* ignore */ }
+}
+function saveUiPrefs() {
+  try { localStorage.setItem(UI_KEY, JSON.stringify(uiPrefs)); } catch { /* ignore */ }
+}
+function cssVar(name, fallback) {
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return v || fallback || "";
+}
+function fs(n) {
+  return Math.max(8, Math.round(Number(n) * (uiPrefs.fontScale || 1)));
+}
+function cp() {
+  return {
+    card: cssVar("--card", "#1a2230"),
+    border: cssVar("--border", "#2a3548"),
+    text: cssVar("--text", "#dbe4f0"),
+    muted: cssVar("--muted", "#7d8aa0"),
+    split: cssVar("--chart-split", "#202a3b"),
+    accent: cssVar("--accent", "#4a9eff"),
+    up: cssVar("--up", "#ff5252"),
+    down: cssVar("--down", "#26c281"),
+    hover: cssVar("--card-hover", "#202a3b"),
+    bg: cssVar("--bg", "#0d1117"),
+  };
+}
+function pxHtml(v, pct, digits = 2, extraClass = "") {
+  const n = (v === null || v === undefined || Number.isNaN(Number(v))) ? null : Number(v);
+  const text = n == null ? "-" : fmt(n, digits);
+  const extra = extraClass ? ` ${extraClass}` : "";
+  return `<span class="px ${cls(pct)}${extra}">${text}</span>`;
+}
+function ttStyle() {
+  const c = cp();
+  return { backgroundColor: c.card, borderColor: c.border, textStyle: { color: c.text, fontSize: fs(12) } };
+}
+function candleStyle() {
+  const c = cp();
+  return { color: c.up, color0: c.down, borderColor: c.up, borderColor0: c.down };
+}
+function makeChart(el) {
+  if (!el) return null;
+  return echarts.init(el, null, { renderer: "canvas" });
+}
+function disposeChart(c) {
+  try { if (c && !c.isDisposed()) c.dispose(); } catch { /* ignore */ }
+  return null;
+}
+function applyUiPrefs(refresh = true) {
+  const root = document.documentElement;
+  root.setAttribute("data-theme", uiPrefs.theme || "night");
+  root.style.setProperty("--font-scale", String(uiPrefs.fontScale || 1));
+  saveUiPrefs();
+  const moon = $("#themeQuickBtn");
+  if (moon) moon.textContent = uiPrefs.theme === "day" || uiPrefs.theme === "dawn" ? "☀️" : "🌙";
+  syncAppearanceUi();
+  if (refresh) reloadChartsForTheme();
+}
+function syncAppearanceUi() {
+  const label = $("#fontScaleLabel");
+  if (label) label.textContent = Math.round((uiPrefs.fontScale || 1) * 100) + "%";
+  const range = $("#fontScaleRange");
+  if (range) range.value = String(Math.round((uiPrefs.fontScale || 1) * 100));
+  $$("#fontScaleBtns .opt").forEach((b) => {
+    const s = Number(b.dataset.scale);
+    b.classList.toggle("active", Math.abs(s - (uiPrefs.fontScale || 1)) < 0.001);
+  });
+  const grid = $("#themeGrid");
+  if (grid) {
+    grid.innerHTML = UI_THEMES.map((t) => `
+      <button type="button" class="theme-card ${uiPrefs.theme === t.id ? "active" : ""}" data-theme="${t.id}">
+        <div class="tc-name">${esc(t.name)} <span class="muted">${esc(t.group)}</span></div>
+        <div class="tc-swatch" data-preview="${t.id}">
+          <i style="background:var(--swatch-1)"></i>
+          <i style="background:var(--swatch-2)"></i>
+          <i style="background:var(--swatch-3)"></i>
+        </div>
+      </button>`).join("");
+    grid.querySelectorAll(".theme-card").forEach((card) => {
+      const id = card.dataset.theme;
+      card.style.setProperty("--swatch-1", themeSwatch(id, 1));
+      card.style.setProperty("--swatch-2", themeSwatch(id, 2));
+      card.style.setProperty("--swatch-3", themeSwatch(id, 3));
+    });
+  }
+}
+function themeSwatch(id, i) {
+  const map = {
+    night: ["#0d1117", "#1a2230", "#4a9eff"],
+    day: ["#eef2f7", "#ffffff", "#1d6fd8"],
+    dawn: ["#f6efe4", "#fffaf2", "#c45c20"],
+    ocean: ["#06141f", "#102636", "#2ec6e8"],
+    forest: ["#0b120e", "#17241c", "#d4b06a"],
+    violet: ["#120c1c", "#241b36", "#b07cff"],
+    gold: ["#100e0a", "#241e14", "#d4b06a"],
+  };
+  return (map[id] || map.night)[i - 1];
+}
+function reloadChartsForTheme() {
+  miniChart = disposeChart(miniChart);
+  klineChart = disposeChart(klineChart);
+  sectorChart = disposeChart(sectorChart);
+  flowBarChart = disposeChart(flowBarChart);
+  flowTrendChart = disposeChart(flowTrendChart);
+  ckChart = disposeChart(ckChart);
+  try { if (typeof echarts !== "undefined") echarts.getInstanceByDom && null; } catch { /* ignore */ }
+  if (activeTab === "stock" && currentStock) loadKline();
+  if (activeTab === "dashboard") loaders.dashboard?.();
+  if (activeTab === "sector") loaders.sector?.();
+  if (activeTab === "commodity" && typeof ckState !== "undefined" && ckState.symbol) loadCommodityKline();
+}
+function setFontScale(v) {
+  uiPrefs.fontScale = clampFontScale(v);
+  applyUiPrefs(true);
+}
+function setTheme(id) {
+  if (!UI_THEMES.some((t) => t.id === id)) return;
+  uiPrefs.theme = id;
+  applyUiPrefs(true);
+}
+loadUiPrefs();
+applyUiPrefs(false);
 function planPickedHtml(row, kind) {
   const side = (row && row.side) || kind || "buy";
   const clsName = side === "sell" ? "sell" : "buy";
@@ -267,11 +412,11 @@ async function loadDashAlmanac() {
     const a = await api("/api/macro/almanac");
     const t = a.tomorrow || {};
     $("#dashAlmanac").innerHTML = `
-      <div style="font-size:15px">${esc(a.date)}（${esc(a.weekday)}）</div>
+      <div style="font-size:calc(15px * var(--font-scale))">${esc(a.date)}（${esc(a.weekday)}）</div>
       <div class="desc-hl">${esc(a.year_ganzhi)}【${esc(a.zodiac)}年】${esc(a.month_ganzhi)} ${esc(a.day_ganzhi)}
         ${a.solar_term ? `<span class="badge level-3">${esc(a.solar_term)}</span>` : ""}
         ${a.huangdao ? `<span class="badge ${a.huangdao.is_huangdao ? "level-3" : "level-2"}">${esc(a.huangdao.text)}</span>` : ""}</div>
-      <div class="muted" style="font-size:12px;margin:4px 0">${esc(a.wuxing)} ｜ 财神：${esc(a.caishen)}</div>
+      <div class="muted" style="font-size:calc(12px * var(--font-scale));margin:4px 0">${esc(a.wuxing)} ｜ 财神：${esc(a.caishen)}</div>
       <div class="kv"><span class="k">旺相休囚</span><span style="color:#e8c46b">${esc(a.wangxiang_text)}</span></div>
       <div class="jiugong">${a.jiugong.flat().map((c) =>
         `<div class="${c === "中宫" ? "center" : ""}">${esc(c)}</div>`).join("")}</div>
@@ -280,7 +425,7 @@ async function loadDashAlmanac() {
         ${t.solar_term ? `<span class="badge level-3">${esc(t.solar_term)}</span>` : ""}
         ${t.festival ? `<span class="badge level-4">${esc(t.festival)}</span>` : ""}
         <span class="muted">财神${esc(t.caishen || "")}</span></span></div>
-      <div class="muted" style="font-size:11px;margin-top:4px">${esc(a.note)}</div>`;
+      <div class="muted" style="font-size:calc(11px * var(--font-scale));margin-top:4px">${esc(a.note)}</div>`;
     dashAlmanacLoaded = true;
   } catch (err) { console.warn(err); }
 }
@@ -300,22 +445,24 @@ async function loadMiniMinute() {
   try {
     const d = await api(`/api/market/minute?code=${miniIndexCode}`);
     if (!d.points || !d.points.length) return;
-    miniChart ||= echarts.init($("#miniMinute"), "dark");
+    miniChart ||= makeChart($("#miniMinute"));
     const prices = d.points.map((p) => p[1]);
     const base = d.prev_close || prices[0];
     const last = prices[prices.length - 1];
-    $("#miniMinuteTime").textContent = `${fmt(last)}（${pct((last - base) / base * 100)}）${d.offline ? " · 离线数据" : ""}`;
+    const lastPct = (last - base) / base * 100;
+    $("#miniMinuteTime").innerHTML = `${pxHtml(last, lastPct)}（${pct(lastPct)}）${d.offline ? " · 离线数据" : ""}`;
+    const c = cp();
     miniChart.setOption({
       backgroundColor: "transparent", animation: false,
       grid: { left: 50, right: 10, top: 8, bottom: 20 },
-      tooltip: { trigger: "axis", backgroundColor: "#1a2230", borderColor: "#2a3548", textStyle: { color: "#dbe4f0", fontSize: 12 } },
+      tooltip: { trigger: "axis", ...ttStyle() },
       xAxis: { type: "category", data: d.points.map((p) => `${p[0].slice(0, 2)}:${p[0].slice(2)}`),
-        axisLine: { lineStyle: { color: "#2a3548" } }, axisLabel: { fontSize: 10 } },
-      yAxis: { scale: true, splitLine: { lineStyle: { color: "#202a3b" } }, axisLabel: { fontSize: 10 } },
+        axisLine: { lineStyle: { color: c.border } }, axisLabel: { fontSize: fs(10), color: c.muted } },
+      yAxis: { scale: true, splitLine: { lineStyle: { color: c.split } }, axisLabel: { fontSize: fs(10), color: c.muted } },
       series: [{ type: "line", data: prices, showSymbol: false,
-        lineStyle: { color: last >= base ? "#ff5252" : "#26c281", width: 1.5 },
-        areaStyle: { color: last >= base ? "rgba(255,82,82,.12)" : "rgba(38,194,129,.12)" },
-        markLine: { symbol: "none", data: [{ yAxis: base }], lineStyle: { color: "#7d8aa0", type: "dashed" }, label: { show: false } } }],
+        lineStyle: { color: last >= base ? c.up : c.down, width: 1.5 },
+        areaStyle: { color: last >= base ? cssVar("--up-soft") : cssVar("--down-soft") },
+        markLine: { symbol: "none", data: [{ yAxis: base }], lineStyle: { color: c.muted, type: "dashed" }, label: { show: false } } }],
     }, true);
   } catch (err) { console.warn(err); }
 }
@@ -331,7 +478,7 @@ async function loadForecast() {
       <div class="prob-bar"><div class="p" style="width:${f.prob_up}%"></div></div>
       ${f.factors.map((x) => `<div class="kv"><span class="k">${esc(x.name)}</span>
         <span>${esc(x.value)} <span class="num ${cls(x.impact)}">${sign(x.impact)}${fmt(x.impact, 1)}</span></span></div>`).join("")}
-      <div class="muted" style="font-size:11px;margin-top:6px">${esc(f.disclaimer)}</div>`;
+      <div class="muted" style="font-size:calc(11px * var(--font-scale));margin-top:6px">${esc(f.disclaimer)}</div>`;
   } catch (err) { console.warn(err); }
 }
 
@@ -512,8 +659,8 @@ function renderIndices(list) {
   $("#indexStrip").innerHTML = list.map((q) => `
     <div class="index-card" style="cursor:pointer" title="点击查看K线"
          onclick="openStock('${q.code}','${esc(q.name)}')">
-      <div class="name">${esc(q.name)} <span class="muted" style="font-size:10px">K线 ›</span></div>
-      <div class="price ${cls(q.pct)}">${fmt(q.price)}</div>
+      <div class="name">${esc(q.name)} <span class="muted" style="font-size:calc(10px * var(--font-scale))">K线 ›</span></div>
+      <div class="price">${pxHtml(q.price, q.pct)}</div>
       <div class="chg ${cls(q.pct)}">${sign(q.change)}${fmt(q.change)}&nbsp;&nbsp;${pct(q.pct)}</div>
     </div>`).join("") || '<div class="empty">暂无指数数据</div>';
 }
@@ -527,13 +674,13 @@ async function loadMarketCycle() {
     $("#marketCycle").innerHTML = `
       <hr style="border-color:var(--border);margin:8px 0">
       <div class="kv"><span class="k">攻守姿态</span>
-        <span><span class="badge ${c.stance_css}" style="font-size:13px;padding:3px 12px">${esc(c.stance)}</span>
+        <span><span class="badge ${c.stance_css}" style="font-size:calc(13px * var(--font-scale));padding:3px 12px">${esc(c.stance)}</span>
         <span class="muted">恐慌指数 ${fmt(c.panic_index, 0)}</span></span></div>
-      <div class="muted" style="font-size:12px;margin-bottom:4px">${esc(c.stance_desc)}</div>
+      <div class="muted" style="font-size:calc(12px * var(--font-scale));margin-bottom:4px">${esc(c.stance_desc)}</div>
       <div class="kv"><span class="k">大周期阶段</span>
         <span><span class="badge ${c.stage_css}">${esc(c.stage)}</span></span></div>
       <div class="kv"><span class="k">大盘量能</span><span>${esc(c.vol_desc)}（5日/20日均量比 ${fmt(c.vol_ratio)}）</span></div>
-      <div class="muted" style="font-size:12px">${esc(c.stage_desc)} · 市场宽度 ${fmt(c.breadth, 0)}% · 年化波动 ${fmt(c.volatility20, 0)}%${
+      <div class="muted" style="font-size:calc(12px * var(--font-scale))">${esc(c.stage_desc)} · 市场宽度 ${fmt(c.breadth, 0)}% · 年化波动 ${fmt(c.volatility20, 0)}%${
         c.consec_days ? ` · ${c.consec_days > 0 ? "连涨" + c.consec_days + "日" : "连跌" + Math.abs(c.consec_days) + "日"}` : ""}</div>`;
   } catch (err) { console.warn(err); }
 }
@@ -577,7 +724,7 @@ function renderWatchlist(list) {
       <td>${r.pinned ? "📌 " : ""}${r.code}</td><td>${esc(r.name)}</td>
       <td>${wxBadges(r.wuxing)}</td>
       <td>${finBadge(r)}</td>
-      <td class="num ${cls(r.pct)}">${fmt(r.price)}</td>
+      <td class="num">${pxHtml(r.price, r.pct)}</td>
       <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
       <td class="num ${cls(r.pct)}">${sign(r.change)}${fmt(r.change)}</td>
       <td class="num">${fmt(r.volume, 0)}</td><td class="num">${fmt(r.amount, 0)}</td>
@@ -589,7 +736,7 @@ function renderWatchlist(list) {
         <button class="btn small danger" onclick="removeWatch('${r.code}')">删除</button>
       </td>
     </tr>`).join("")}</tbody></table>
-    <div class="muted" style="margin-top:6px;font-size:12px">${FLOW_NOTE}</div>`;
+    <div class="muted" style="margin-top:6px;font-size:calc(12px * var(--font-scale))">${FLOW_NOTE}</div>`;
   syncWatchButtons();
 }
 
@@ -625,7 +772,7 @@ $("#stockSearch").addEventListener("input", debounce(async (e) => {
   box.innerHTML = rows.length ? rows.map((r) => `
     <div class="sr-item" onclick="openStock('${r.code}','${esc(r.name)}')">
       <span>${esc(r.name)} <span class="muted">${r.code} · ${esc(r.board || "")}</span></span>
-      <span class="${cls(r.pct)} num">${fmt(r.price)} ${pct(r.pct)}</span>
+      <span class="num">${pxHtml(r.price, r.pct)} ${pct(r.pct)}</span>
     </div>`).join("") : '<div class="sr-item muted">未找到，可先在设置页执行全量同步</div>';
   box.classList.add("show");
 }, 250));
@@ -684,7 +831,7 @@ async function loadProfile() {
         ${wxBadges(wx.tags)}
         ${p.industry ? `<span class="badge level-3" style="cursor:pointer" onclick="drillFromProfile('industry','${esc(p.industry)}')">${esc(p.industry)}</span>` : ""}
         ${p.concepts.map((c) => `<span class="badge sector-tag" style="cursor:pointer" onclick="drillFromProfile('concept','${esc(c)}')">${esc(c)}</span>`).join("")}
-        <div class="muted" style="margin-top:6px;font-size:12px">${esc(p.desc)}${wx.note ? " · " + esc(wx.note) : ""}</div>
+        <div class="muted" style="margin-top:6px;font-size:calc(12px * var(--font-scale))">${esc(p.desc)}${wx.note ? " · " + esc(wx.note) : ""}</div>
       </div>`;
   } catch (err) { console.warn(err); }
 }
@@ -696,8 +843,8 @@ async function loadIndexPanel() {
     const c = await api("/api/market/cycle");
     card.innerHTML = `
       <div class="score-head">
-        <span class="badge ${c.stage_css}" style="font-size:16px;padding:6px 18px">${esc(c.stage)}</span>
-        <span class="badge ${c.stance_css}" style="font-size:16px;padding:6px 18px">${esc(c.stance)}姿态</span>
+        <span class="badge ${c.stage_css}" style="font-size:calc(16px * var(--font-scale));padding:6px 18px">${esc(c.stage)}</span>
+        <span class="badge ${c.stance_css}" style="font-size:calc(16px * var(--font-scale));padding:6px 18px">${esc(c.stance)}姿态</span>
         <div class="muted" style="margin-top:8px">${esc(c.stage_desc)} · ${esc(c.stance_desc)}</div>
       </div>
       <div class="kv"><span class="k">恐慌指数</span><span class="num"><b>${fmt(c.panic_index, 0)}</b> / 100（年化波动 ${fmt(c.volatility20, 0)}%）</span></div>
@@ -705,11 +852,11 @@ async function loadIndexPanel() {
       <div class="kv"><span class="k">大盘量能</span><span>${esc(c.vol_desc)}（${fmt(c.vol_ratio)}）</span></div>
       <div class="kv"><span class="k">市场宽度</span><span class="num">${fmt(c.breadth, 0)}% 上涨</span></div>
       <hr style="border-color:var(--border);margin:10px 0">
-      <div class="card-title" style="font-size:13px">研判信号</div>
+      <div class="card-title" style="font-size:calc(13px * var(--font-scale))">研判信号</div>
       ${c.signals.map((s) => `<div class="kv">
         <span class="k">${s.ok ? "🟢" : "🔴"} ${esc(s.name)}</span></div>
-        <div class="muted" style="font-size:12px;margin:-4px 0 6px">${esc(s.text)}</div>`).join("")}
-      <div class="muted" style="font-size:11px;margin-top:8px">周期研判为量化参考，不构成投资建议。</div>`;
+        <div class="muted" style="font-size:calc(12px * var(--font-scale));margin:-4px 0 6px">${esc(s.text)}</div>`).join("")}
+      <div class="muted" style="font-size:calc(11px * var(--font-scale));margin-top:8px">周期研判为量化参考，不构成投资建议。</div>`;
   } catch (err) { card.innerHTML = '<div class="empty">周期研判加载失败</div>'; }
 }
 
@@ -724,8 +871,8 @@ window.drillFromProfile = (dim, name) => {
 
 async function loadKline() {
   if (!currentStock) return;
-  klineChart ||= echarts.init($("#klineChart"), "dark", { renderer: "canvas" });
-  klineChart.showLoading({ maskColor: "rgba(13,17,23,.6)", textColor: "#dbe4f0" });
+  klineChart ||= makeChart($("#klineChart"));
+  klineChart.showLoading({ maskColor: cssVar("--bg") + "99", textColor: cssVar("--text") });
   try {
     const d = await api(`/api/kline?code=${currentStock.code}&period=${currentPeriod}`);
     klineChart.hideLoading();
@@ -734,7 +881,7 @@ async function loadKline() {
         klineChart.clear();
         klineChart.setOption({
           ...baseGrid(),
-          title: { text: "暂无分时数据", left: "center", top: "middle", textStyle: { color: "#7d8aa0", fontSize: 14 } },
+          title: { text: "暂无分时数据", left: "center", top: "middle", textStyle: { color: cp().muted, fontSize: fs(14) } },
         }, true);
         return;
       }
@@ -744,7 +891,7 @@ async function loadKline() {
         klineChart.clear();
         klineChart.setOption({
           ...baseGrid(),
-          title: { text: "暂无K线数据", left: "center", top: "middle", textStyle: { color: "#7d8aa0", fontSize: 14 } },
+          title: { text: "暂无K线数据", left: "center", top: "middle", textStyle: { color: cp().muted, fontSize: fs(14) } },
         }, true);
         return;
       }
@@ -755,7 +902,7 @@ async function loadKline() {
 
 function baseGrid() {
   return { backgroundColor: "transparent", animation: false,
-    tooltip: { trigger: "axis", axisPointer: { type: "cross" }, backgroundColor: "#1a2230", borderColor: "#2a3548", textStyle: { color: "#dbe4f0", fontSize: 12 } } };
+    tooltip: { trigger: "axis", axisPointer: { type: "cross" }, ...ttStyle() } };
 }
 
 function renderMinute(d) {
@@ -765,17 +912,18 @@ function renderMinute(d) {
     return t.length >= 4 ? `${t.slice(0, 2)}:${t.slice(2, 4)}` : t;
   });
   const base = d.prev_close || prices[0];
+  const c = cp();
   klineChart.setOption({
     ...baseGrid(),
     grid: [{ left: 55, right: 20, top: 20, bottom: 40 }],
-    xAxis: { type: "category", data: times, axisLine: { lineStyle: { color: "#2a3548" } } },
-    yAxis: { scale: true, splitLine: { lineStyle: { color: "#202a3b" } },
-      axisLabel: { formatter: (v) => (v == null || Number.isNaN(v) ? "" : Number(v).toFixed(2)) } },
+    xAxis: { type: "category", data: times, axisLine: { lineStyle: { color: c.border } }, axisLabel: { color: c.muted } },
+    yAxis: { scale: true, splitLine: { lineStyle: { color: c.split } },
+      axisLabel: { color: c.muted, formatter: (v) => (v == null || Number.isNaN(v) ? "" : Number(v).toFixed(2)) } },
     dataZoom: [{ type: "inside", start: 0, end: 100 }],
     series: [
-      { type: "line", data: prices, showSymbol: false, lineStyle: { color: "#4a9eff", width: 1.4 },
-        areaStyle: { color: "rgba(74,158,255,.12)" },
-        markLine: { symbol: "none", data: [{ yAxis: base }], lineStyle: { color: "#7d8aa0", type: "dashed" }, label: { show: false } } },
+      { type: "line", data: prices, showSymbol: false, lineStyle: { color: c.accent, width: 1.4 },
+        areaStyle: { color: cssVar("--accent-soft") },
+        markLine: { symbol: "none", data: [{ yAxis: base }], lineStyle: { color: c.muted, type: "dashed" }, label: { show: false } } },
     ],
   }, true);
 }
@@ -798,7 +946,8 @@ function renderCandle(d) {
     name: `MA${n}`, type: "line", data: values, showSymbol: false, smooth: true,
     lineStyle: { width: 1, color: ["#e8c46b", "#4a9eff", "#c678dd", "#56b6c2"][i] },
   }));
-  const volColors = candles.map((k) => (k[1] >= k[0] ? "#ff5252" : "#26c281"));
+  const pal = cp();
+  const volColors = candles.map((k) => (k[1] >= k[0] ? pal.up : pal.down));
   const n = (d.dates || []).length;
   const start = zoomStart(n);
   const early = n > 0 && n <= 12 && currentPeriod === "day";
@@ -806,31 +955,30 @@ function renderCandle(d) {
     ...baseGrid(),
     title: early ? {
       text: `上市初期仅 ${n} 根日K，已展示全部`,
-      left: 58, top: 4, textStyle: { color: "#7d8aa0", fontSize: 11, fontWeight: 400 },
+      left: 58, top: 4, textStyle: { color: pal.muted, fontSize: fs(11), fontWeight: 400 },
     } : undefined,
-    legend: { data: maSeries.map((s) => s.name), textStyle: { color: "#7d8aa0" }, top: 0 },
+    legend: { data: maSeries.map((s) => s.name), textStyle: { color: pal.muted, fontSize: fs(12) }, top: 0 },
     grid: [
       { left: 55, right: 20, top: 28, height: "52%" },
       { left: 55, right: 20, top: "66%", height: "12%" },
       { left: 55, right: 20, top: "82%", height: "12%" },
     ],
     xAxis: [
-      { type: "category", data: d.dates, gridIndex: 0, axisLine: { lineStyle: { color: "#2a3548" } } },
+      { type: "category", data: d.dates, gridIndex: 0, axisLine: { lineStyle: { color: pal.border } } },
       { type: "category", data: d.dates, gridIndex: 1, show: false },
       { type: "category", data: d.dates, gridIndex: 2, show: false },
     ],
     yAxis: [
-      { scale: true, gridIndex: 0, splitLine: { lineStyle: { color: "#202a3b" } } },
+      { scale: true, gridIndex: 0, splitLine: { lineStyle: { color: pal.split } } },
       { gridIndex: 1, splitNumber: 2, axisLabel: { show: false }, splitLine: { show: false } },
       { gridIndex: 2, splitNumber: 2, axisLabel: { show: false }, splitLine: { show: false } },
     ],
     dataZoom: [
       { type: "inside", xAxisIndex: [0, 1, 2], start, end: 100 },
-      { type: "slider", xAxisIndex: [0, 1, 2], top: "96%", height: 14, borderColor: "#2a3548", start, end: 100 },
+      { type: "slider", xAxisIndex: [0, 1, 2], top: "96%", height: 14, borderColor: pal.border, start, end: 100 },
     ],
     series: [
-      { name: "K线", type: "candlestick", data: candles,
-        itemStyle: { color: "#ff5252", color0: "#26c281", borderColor: "#ff5252", borderColor0: "#26c281" } },
+      { name: "K线", type: "candlestick", data: candles, itemStyle: candleStyle() },
       ...maSeries,
       { name: "成交量", type: "bar", xAxisIndex: 1, yAxisIndex: 1, data: d.volumes,
         itemStyle: { color: (p) => volColors[p.dataIndex] } },
@@ -849,7 +997,7 @@ function gaugeHtml(label, value, levelText, extra = "") {
       <span><span class="g-num ${value >= 65 ? "up" : value < 40 ? "down" : "flat"}">${value}</span>
       <span class="badge ${value >= 65 ? "level-4" : value >= 45 ? "level-2" : "level-1"}">${esc(levelText)}</span></span></div>
     <div class="gauge-track"><div class="gauge-fill" style="width:${value}%"></div></div>
-    ${extra ? `<div class="muted" style="margin-top:3px;font-size:12px">${extra}</div>` : ""}
+    ${extra ? `<div class="muted" style="margin-top:3px;font-size:calc(12px * var(--font-scale))">${extra}</div>` : ""}
   </div>`;
 }
 
@@ -857,29 +1005,29 @@ function attributionHtml(att) {
   if (!att || (!att.reasons.length && att.risk_index === null)) return "";
   const risk = att.risk_index ?? 0;
   return `
-    <div class="card-title" style="font-size:14px;margin-top:2px">今日${(att.industry_pct ?? 0) >= 0 ? "上涨" : "下跌"}归因
+    <div class="card-title" style="font-size:calc(14px * var(--font-scale));margin-top:2px">今日${(att.industry_pct ?? 0) >= 0 ? "上涨" : "下跌"}归因
       ${att.industry ? `<span class="muted">所属：${esc(att.industry)}（板块 ${pct(att.industry_pct)}）</span>` : ""}</div>
-    ${att.reasons.map((r) => `<div class="reason-item"><span class="rt">[${esc(r.type)}]</span><span class="desc-hl" style="font-size:14px">${esc(r.text)}</span></div>`).join("")}
+    ${att.reasons.map((r) => `<div class="reason-item"><span class="rt">[${esc(r.type)}]</span><span class="desc-hl" style="font-size:calc(14px * var(--font-scale))">${esc(r.text)}</span></div>`).join("")}
     ${att.sector_events.length ? `
-      <div class="card-title" style="font-size:14px;margin-top:10px">板块重大事件</div>
+      <div class="card-title" style="font-size:calc(14px * var(--font-scale));margin-top:10px">板块重大事件</div>
       ${att.sector_events.map((e) => `<div class="reason-item">
         <span class="badge dir-${e.direction}">${esc(e.direction)}</span>
         <span class="badge level-${e.level}">${esc(e.desc)}</span>
-        <span style="font-size:13px">${esc(e.text)}…</span></div>`).join("")}` : ""}
-    <div class="card-title" style="font-size:14px;margin-top:10px">利空风险指数
-      <span class="num ${risk >= 60 ? "up" : risk >= 40 ? "flat" : "down"}" style="font-size:20px;font-weight:800">${fmt(risk, 0)}</span></div>
+        <span style="font-size:calc(13px * var(--font-scale))">${esc(e.text)}…</span></div>`).join("")}` : ""}
+    <div class="card-title" style="font-size:calc(14px * var(--font-scale));margin-top:10px">利空风险指数
+      <span class="num ${risk >= 60 ? "up" : risk >= 40 ? "flat" : "down"}" style="font-size:calc(20px * var(--font-scale));font-weight:800">${fmt(risk, 0)}</span></div>
     <div class="risk-bar"><div class="p" style="width:${risk}%"></div></div>
     ${risk >= 60 ? `<div class="risk-warn">${esc(att.risk_warning)}</div>`
-      : `<div class="desc-hl" style="font-size:13px">${esc(att.risk_warning)}</div>`}
-    ${att.risk_factors && att.risk_factors.length ? `<div class="muted" style="font-size:12px;margin-top:3px">风险因素：${att.risk_factors.map(esc).join("；")}</div>` : ""}
+      : `<div class="desc-hl" style="font-size:calc(13px * var(--font-scale))">${esc(att.risk_warning)}</div>`}
+    ${att.risk_factors && att.risk_factors.length ? `<div class="muted" style="font-size:calc(12px * var(--font-scale));margin-top:3px">风险因素：${att.risk_factors.map(esc).join("；")}</div>` : ""}
     <hr style="border-color:var(--border);margin:10px 0">`;
 }
 
 function pullSmashHtml(ps) {
   if (!ps || !ps.available) return "";
   const patternBadge = ps.pattern_score
-    ? `<span class="badge ${ps.pattern.includes("地天") ? "level-4" : "level-0"}" style="font-size:12px">${esc(ps.pattern)} · 形态分${ps.pattern_score}</span>`
-    : `<span class="muted" style="font-size:12px">${esc(ps.pattern)}</span>`;
+    ? `<span class="badge ${ps.pattern.includes("地天") ? "level-4" : "level-0"}" style="font-size:calc(12px * var(--font-scale))">${esc(ps.pattern)} · 形态分${ps.pattern_score}</span>`
+    : `<span class="muted" style="font-size:calc(12px * var(--font-scale))">${esc(ps.pattern)}</span>`;
   return `
     <div class="kv" style="margin-top:4px"><span class="k">盘口行为</span><span>${patternBadge}</span></div>
     <div class="comp-bar"><span class="label">拉升</span>
@@ -888,7 +1036,7 @@ function pullSmashHtml(ps) {
     <div class="comp-bar"><span class="label">砸盘</span>
       <div class="track"><div class="fill" style="width:${ps.smash_score}%;background:var(--down)"></div></div>
       <span class="num">${fmt(ps.smash_score, 0)}</span></div>
-    <div class="muted" style="font-size:12px">${esc(ps.desc)}</div>
+    <div class="muted" style="font-size:calc(12px * var(--font-scale))">${esc(ps.desc)}</div>
     <hr style="border-color:var(--border);margin:10px 0">`;
 }
 
@@ -908,11 +1056,11 @@ function metrics2Html(m, dark) {
       flowBar = `<div class="flow-bar" title="外盘(主动买) vs 内盘(主动卖)">
         <div class="fo" style="width:${op}%">外 ${fmt(of.outer, 0)}</div>
         <div class="fi" style="width:${100 - op}%">内 ${fmt(of.inner, 0)}</div></div>
-        <div class="muted" style="font-size:12px">内外盘比 ${fmt(of.in_out_ratio)} · 委比 ${fmt(of.order_ratio)}%</div>`;
+        <div class="muted" style="font-size:calc(12px * var(--font-scale))">内外盘比 ${fmt(of.in_out_ratio)} · 委比 ${fmt(of.order_ratio)}%</div>`;
     }
     html += gaugeHtml("暗盘力量", dark.power, dark.level,
       `${esc(dark.desc)}${dark.divergence && dark.divergence !== "无" ? " · <b>" + esc(dark.divergence) + "</b>" : ""}`) + flowBar +
-      `<div class="muted" style="font-size:11px;margin-top:2px">口径：${esc(dark.scope)}</div>`;
+      `<div class="muted" style="font-size:calc(11px * var(--font-scale));margin-top:2px">口径：${esc(dark.scope)}</div>`;
   }
   if (m && m.stabilize_score !== null && m.stabilize_score !== undefined) {
     const gates = (m.gates || []).map((g, i) =>
@@ -942,9 +1090,9 @@ async function loadAnalysis() {
     const q = d.quote || {};
     const priceHead = q.price !== undefined && q.price !== null ? `
       <div style="text-align:center;padding-bottom:6px;border-bottom:1px solid var(--border);margin-bottom:8px">
-        <span style="font-size:30px;font-weight:800" class="${cls(q.pct)}">${fmt(q.price)}</span>
-        <span class="${cls(q.pct)}" style="font-size:15px;font-weight:600;margin-left:8px">${sign(q.change)}${fmt(q.change)} (${pct(q.pct)})</span>
-        <div class="muted" style="font-size:11px">现价 · ${esc(String(q.time || "").replace(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})$/, "$2-$3 $4:$5:$6"))} · ${esc(q.source || "")}</div>
+        ${pxHtml(q.price, q.pct, 2, "lg")}
+        <span class="${cls(q.pct)}" style="font-size:calc(15px * var(--font-scale));font-weight:600;margin-left:8px">${sign(q.change)}${fmt(q.change)} (${pct(q.pct)})</span>
+        <div class="muted" style="font-size:calc(11px * var(--font-scale))">现价 · ${esc(String(q.time || "").replace(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})$/, "$2-$3 $4:$5:$6"))} · ${esc(q.source || "")}</div>
       </div>` : "";
     card.innerHTML = `${priceHead}
       <div class="score-head">
@@ -959,8 +1107,8 @@ async function loadAnalysis() {
           <div class="track"><div class="fill" style="width:${v}%"></div></div>
           <span class="num">${v}</span></div>
         ${r.component_notes && r.component_notes[k]
-          ? `<div class="muted" style="font-size:11px;margin:-2px 0 8px 52px">${esc(r.component_notes[k])}</div>` : ""}`).join("")}
-      ${r.algorithm ? `<div class="muted" style="font-size:11px;margin:4px 0 8px">${esc(r.algorithm)}</div>` : ""}
+          ? `<div class="muted" style="font-size:calc(11px * var(--font-scale));margin:-2px 0 8px 52px">${esc(r.component_notes[k])}</div>` : ""}`).join("")}
+      ${r.algorithm ? `<div class="muted" style="font-size:calc(11px * var(--font-scale));margin:4px 0 8px">${esc(r.algorithm)}</div>` : ""}
       <hr style="border-color:var(--border);margin:10px 0">
       ${pullSmashHtml(d.pull_smash)}
       ${metrics2Html(d.metrics, d.dark)}
@@ -970,7 +1118,7 @@ async function loadAnalysis() {
       <div class="kv"><span class="k">PE(TTM) / PB</span><span class="num">${fmt(s.pe_ttm, 1)} / ${fmt(s.pb)}</span></div>
       <div class="kv"><span class="k">总市值 / 流通市值</span><span class="num">${fmt(s.total_mv, 0)} / ${fmt(s.float_mv, 0)} 亿</span></div>
       <hr style="border-color:var(--border);margin:10px 0">
-      <div class="card-title" style="font-size:13px">机构评级 <span class="muted">${br.simulated ? "规则模拟·仅供参考" : ""}</span></div>
+      <div class="card-title" style="font-size:calc(13px * var(--font-scale))">机构评级 <span class="muted">${br.simulated ? "规则模拟·仅供参考" : ""}</span></div>
       <div class="kv"><span class="k">评级分布</span><span>${Object.entries(br.distribution).filter(([, n]) => n > 0).map(([k, n]) => `${k}${n}家`).join(" · ")}</span></div>
       <div class="kv"><span class="k">一致目标价</span><span class="num">${fmt(br.consensus_target)}</span></div>
       <div style="max-height:180px;overflow-y:auto;margin-top:6px">
@@ -990,11 +1138,11 @@ async function loadFinance() {
     if (!f.reports.length) { box.innerHTML = ""; return; }
     box.innerHTML = `
       <hr style="border-color:var(--border);margin:10px 0">
-      <div class="card-title" style="font-size:13px">财务分析
+      <div class="card-title" style="font-size:calc(13px * var(--font-scale))">财务分析
         <span>${f.grade ? `<span class="badge ${f.grade === "A" ? "level-4" : f.grade === "B" ? "level-3" : f.grade === "C" ? "level-2" : "level-1"}">评级 ${f.grade}</span>` : ""}</span>
       </div>
-      <div class="muted" style="font-size:12px;margin-bottom:6px">${esc(f.summary)}</div>
-      <table style="font-size:12px"><thead><tr>
+      <div class="muted" style="font-size:calc(12px * var(--font-scale));margin-bottom:6px">${esc(f.summary)}</div>
+      <table style="font-size:calc(12px * var(--font-scale))"><thead><tr>
         <th>报告期</th><th>营收(亿)</th><th>同比</th><th>归母净利(亿)</th><th>同比</th><th>净利率</th>
       </tr></thead><tbody>${f.reports.map((r) => `
         <tr style="cursor:default">
@@ -1005,7 +1153,7 @@ async function loadFinance() {
           <td class="num ${cls(r.profit_yoy)}">${r.profit_yoy !== null ? sign(r.profit_yoy) + fmt(r.profit_yoy, 1) + "%" : "-"}</td>
           <td class="num">${r.margin !== null ? fmt(r.margin, 1) + "%" : "-"}</td>
         </tr>`).join("")}</tbody></table>
-      <div class="muted" style="font-size:11px;margin-top:4px">数据来源：${esc(f.source || "")}</div>`;
+      <div class="muted" style="font-size:calc(11px * var(--font-scale));margin-top:4px">数据来源：${esc(f.source || "")}</div>`;
   } catch (err) { box.innerHTML = ""; console.warn(err); }
 }
 
@@ -1018,7 +1166,7 @@ const kindBadge = (kind) => {
 };
 function holderTable(title, rows, floatHolder) {
   if (!rows || !rows.length) {
-    return `<div><div class="hold-sub">${esc(title)}</div><div class="muted" style="font-size:12px">暂无披露</div></div>`;
+    return `<div><div class="hold-sub">${esc(title)}</div><div class="muted" style="font-size:calc(12px * var(--font-scale))">暂无披露</div></div>`;
   }
   const ratioHead = floatHolder ? "占流通比" : "占总股本";
   return `<div>
@@ -1117,7 +1265,7 @@ function orgHoldPane(h) {
         <td class="num">${r.float_ratio != null ? fmt(r.float_ratio, 2) + "%" : "-"}</td>
         <td>${esc(r.date || "-")}</td>
       </tr>`).join("")}</tbody></table>
-    <div class="muted" style="font-size:11px;margin-top:6px">子集为已披露机构类型。无明细名单的类型只展示汇总，不编造持有人。</div>`;
+    <div class="muted" style="font-size:calc(11px * var(--font-scale));margin-top:6px">子集为已披露机构类型。无明细名单的类型只展示汇总，不编造持有人。</div>`;
 }
 
 function countsPane(h) {
@@ -1153,7 +1301,7 @@ function fundsPane(h) {
         <td class="num">${r.value_yi != null ? fmt(r.value_yi, 2) : "-"}</td>
         <td>${esc(r.date || "-")}</td>
       </tr>`).join("")}</tbody></table>
-    <div class="muted" style="font-size:11px;margin-top:6px">${esc(h.funds_note || "按持股数量降序取前10。")}</div>`;
+    <div class="muted" style="font-size:calc(11px * var(--font-scale));margin-top:6px">${esc(h.funds_note || "按持股数量降序取前10。")}</div>`;
 }
 
 function unlocksPane(h) {
@@ -1188,7 +1336,7 @@ function holderAiPane(h) {
     ? aiErrBanner(ai, ai.kept ? "。已保留上次成功分析，未覆盖。" : "。未假装成功。")
     : "";
   return `<div class="hold-ai-bar">
-      <div class="muted" style="font-size:12px">${stamp}</div>
+      <div class="muted" style="font-size:calc(12px * var(--font-scale))">${stamp}</div>
       <button type="button" class="btn small" id="holderAiBtn">更新AI分析</button>
     </div>
     <div id="holderAiBanner">${lastErr}</div>
@@ -1228,7 +1376,7 @@ function paintHoldersCard(h) {
     <div class="hold-legend">
       <span><i class="org"></i>机构 ${fmt(inst, 2)}%${h.institution_count != null ? ` · ${fmtInt(h.institution_count)} 家` : ""}</span>
       <span><i class="person"></i>个人及其他 ${fmt(person, 2)}%</span>
-    </div>` : `<div class="muted" style="font-size:12px;margin:6px 0 10px">暂无机构/个人持股占比（本期未披露机构持仓构成）</div>`;
+    </div>` : `<div class="muted" style="font-size:calc(12px * var(--font-scale));margin:6px 0 10px">暂无机构/个人持股占比（本期未披露机构持仓构成）</div>`;
   box.innerHTML = `
     <div class="hold-kpis">${kpis.map(([k, v]) => `
       <div class="hold-kpi"><div class="v ${k === "户数环比" ? qoqClass : ""}">${esc(String(v))}</div>
@@ -1236,7 +1384,7 @@ function paintHoldersCard(h) {
     ${split}
     ${holdTabBtns(h)}
     <div class="hold-pane" id="holdPane">${holdPaneHtml(h)}</div>
-    <div class="muted" style="font-size:11px;margin-top:8px">${esc(h.note || "")} 数据来源：${esc(h.source || "")}${h.fetched_at ? " · " + esc(h.fetched_at) : ""}</div>`;
+    <div class="muted" style="font-size:calc(11px * var(--font-scale));margin-top:8px">${esc(h.note || "")} 数据来源：${esc(h.source || "")}${h.fetched_at ? " · " + esc(h.fetched_at) : ""}</div>`;
 }
 
 async function loadHolders() {
@@ -1460,7 +1608,7 @@ async function almanacCard() {
         ${a.solar_term ? `｜ <span class="badge level-3">今日${esc(a.solar_term)}</span>` : ""}
         ${a.huangdao ? `｜ <span class="badge ${a.huangdao.is_huangdao ? "level-3" : "level-2"}">${esc(a.huangdao.text)}</span>` : ""}<br>
         <span class="muted">五行：${esc(a.wuxing)} ｜ 财神方位：${esc(a.caishen)}（民俗参考）</span><br>
-        <span class="muted" style="font-size:12px">时辰方位：${a.shichen.map((s) => `${esc(s.name.split(" ")[0])}${esc(s.direction)}`).join(" · ")}</span>
+        <span class="muted" style="font-size:calc(12px * var(--font-scale))">时辰方位：${a.shichen.map((s) => `${esc(s.name.split(" ")[0])}${esc(s.direction)}`).join(" · ")}</span>
       </div>`;
   } catch { return ""; }
 }
@@ -1655,8 +1803,8 @@ async function loadMacro() {
             ${sectorBadges(n.affected_sectors, title)}
             ${(n.affected_sectors || []).length ? `<button class="btn small ghost js-news-stocks" data-sectors="${esc(secs)}" data-title="${esc(title)}">相关个股 ›</button>` : ""}
           </div>
-          ${n.brief ? `<div class="muted" style="font-size:12px;margin-top:3px">💡 ${esc(n.brief)}</div>` : ""}
-          ${n.commentary ? `<div class="desc-hl" style="font-size:13px;margin-top:3px">💬 ${esc(n.commentary)}</div>` : ""}
+          ${n.brief ? `<div class="muted" style="font-size:calc(12px * var(--font-scale));margin-top:3px">💡 ${esc(n.brief)}</div>` : ""}
+          ${n.commentary ? `<div class="desc-hl" style="font-size:calc(13px * var(--font-scale));margin-top:3px">💬 ${esc(n.commentary)}</div>` : ""}
         </div>
       </div>`;
       }).join("") : '<div class="empty">该筛选条件下暂无数据</div>');
@@ -1696,7 +1844,7 @@ async function renderOfficialPolicy(box) {
     <div id="eventDetailBox"></div>
     ${rows.length ? rows.map((n) => {
       const secs = (n.affected_sectors || []).join(",");
-      const href = n.url ? `<a href="${esc(n.url)}" target="_blank" rel="noopener" style="color:var(--accent);font-size:12px;margin-left:6px">原文</a>` : "";
+      const href = n.url ? `<a href="${esc(n.url)}" target="_blank" rel="noopener" style="color:var(--accent);font-size:calc(12px * var(--font-scale));margin-left:6px">原文</a>` : "";
       return `<div class="policy-item js-news-item" data-title="${esc(n.title)}" data-sectors="${esc(secs)}">
         <div class="p-head">
           <span class="cal-date" style="width:108px">${esc((n.time || "").slice(0, 16))}</span>
@@ -1754,7 +1902,7 @@ async function renderHotWords(box) {
           <span class="rise">↑${fmt(t.rise, 0)}</span>
           <span class="fall">↓${fmt(t.fall, 0)}</span>
         </div>
-        <div class="muted" style="margin-top:6px;font-size:11px">${esc(t.trend)} · 近两周 ${t.count_now || 0} 次 / 前两周 ${t.count_prev || 0} 次</div>
+        <div class="muted" style="margin-top:6px;font-size:calc(11px * var(--font-scale))">${esc(t.trend)} · 近两周 ${t.count_now || 0} 次 / 前两周 ${t.count_prev || 0} 次</div>
         ${t.impact_summary ? `<div class="impact">${esc(t.impact_summary)}</div>` : ""}
       </div>`;
     }).join("")}</div>` : `<div class="empty">${esc(d.empty_reason || "暂无热词")}</div>`}`;
@@ -1874,11 +2022,11 @@ window.openHotTerm = async (term, resetSector = true) => {
       <div class="outlook-summary" style="border-color:rgba(255,169,64,.4)" data-term="${esc(term)}">
         <b>🔥 热词「${esc(term)}」关联板块${d.ai_applied ? '<span class="hot-ai-flag">AI已回填</span>' : ""}</b>
         <button class="btn small ghost" style="float:right" onclick="hotFocus.term='';hotFocus.sector='';this.closest('#hotDetailBox').innerHTML=''">收起</button>
-        <div style="margin:8px 0 4px;font-size:14px"><b>${esc(d.impact_summary || "利好 / 利空板块待映射")}</b></div>
+        <div style="margin:8px 0 4px;font-size:calc(14px * var(--font-scale))"><b>${esc(d.impact_summary || "利好 / 利空板块待映射")}</b></div>
         ${d.ai_applied && d.ai_reason ? `<div class="muted" style="margin:4px 0">AI总述：${esc(d.ai_reason)} · ${esc(d.ai_updated_at || "")}</div>` : ""}
         ${(d.samples || []).length ? `<div class="muted" style="margin:6px 0">样例：${d.samples.map((s) => esc(s)).join(" · ")}</div>` : ""}
         ${chips.length ? `<div class="hot-chip-row">${chips.join("")}</div>` : `<div class="empty">${esc(d.empty_reason || "无关联板块")}</div>`}
-        <div class="muted" style="margin-top:8px;font-size:12px">${esc(d.note || "")} ${esc(d.disclaimer || "")}</div>
+        <div class="muted" style="margin-top:8px;font-size:calc(12px * var(--font-scale))">${esc(d.note || "")} ${esc(d.disclaimer || "")}</div>
         <div id="hotStockBox"></div>
       </div>`;
     box.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -1909,7 +2057,7 @@ window.openHotSector = async (sector, term) => {
     box.innerHTML = `
       <div class="muted" style="margin:10px 0 6px">${dirTxt ? `<span class="hot-chip-lab ${dir === "利好" ? "bull" : "bear"}">${esc(dirTxt)}</span>` : ""}板块「${esc(sector)}」个股 TOP20${match}</div>
       ${d.stocks && d.stocks.length ? renderHotSectorStockTable(d.stocks, sector) : `<div class="empty">${esc(d.empty_reason || "无个股")}</div>`}
-      <div class="muted" style="font-size:11px;margin-top:4px">${esc(d.disclaimer || "")}</div>`;
+      <div class="muted" style="font-size:calc(11px * var(--font-scale));margin-top:4px">${esc(d.disclaimer || "")}</div>`;
   } catch (err) {
     if (seq !== hotStockSeq) return;
     box.innerHTML = `<div class="empty">「${esc(sector)}」个股加载失败</div>`;
@@ -1931,7 +2079,7 @@ function renderHotSectorStockTable(stocks, sector) {
       <td class="num ${buyCls(r.buy_index)}">${r.buy_index !== null && r.buy_index !== undefined ? `<b>${fmt(r.buy_index, 0)}</b>` : "-"}</td>
       <td>${relatedTags(r, false)}</td>
     </tr>`).join("")}</tbody></table>
-    <div class="muted" style="margin-top:6px;font-size:12px">「${esc(sector)}」${stocks.length} 只。${FLOW_NOTE} 点击行进入个股分析。</div>`;
+    <div class="muted" style="margin-top:6px;font-size:calc(12px * var(--font-scale))">「${esc(sector)}」${stocks.length} 只。${FLOW_NOTE} 点击行进入个股分析。</div>`;
 }
 
 function parseSectors(v) {
@@ -1954,11 +2102,11 @@ function buyCls(v) {
 function relatedTags(r, withFin = true) {
   const bits = [wxBadges(r.wuxing)];
   if (r.buy_level) {
-    bits.push(`<span class="badge ${buyCls(r.buy_index)}" style="font-size:11px;padding:2px 7px">${esc(r.buy_level)}</span>`);
+    bits.push(`<span class="badge ${buyCls(r.buy_index)}" style="font-size:calc(11px * var(--font-scale));padding:2px 7px">${esc(r.buy_level)}</span>`);
   }
   if (r.advice) {
     const ac = r.advice === "增持" ? "advice-buy" : r.advice === "减持" ? "advice-sell" : "advice-hold";
-    bits.push(`<span class="badge ${ac}" style="font-size:11px;padding:2px 7px">${esc(r.advice)}</span>`);
+    bits.push(`<span class="badge ${ac}" style="font-size:calc(11px * var(--font-scale));padding:2px 7px">${esc(r.advice)}</span>`);
   }
   if (withFin) bits.push(finBadge(r));
   return bits.filter(Boolean).join(" ");
@@ -1977,7 +2125,7 @@ function renderRelatedStockTable(stocks) {
       <td class="num ${buyCls(r.buy_index)}">${r.buy_index !== null && r.buy_index !== undefined ? `<b>${fmt(r.buy_index, 0)}</b>` : "-"}</td>
       <td>${relatedTags(r, false)}</td>
     </tr>`).join("")}</tbody></table>
-    <div class="muted" style="margin-top:6px;font-size:12px">展示 ${stocks.length} 只（TOP20–50）。${FLOW_NOTE} 点击行进入个股分析。</div>`;
+    <div class="muted" style="margin-top:6px;font-size:calc(12px * var(--font-scale))">展示 ${stocks.length} 只（TOP20–50）。${FLOW_NOTE} 点击行进入个股分析。</div>`;
 }
 
 window.showNewsStocks = (sectors, title) => showEventDetail(title, sectors);
@@ -2007,7 +2155,7 @@ window.showEventDetail = async (title, sectors = "") => {
           </span>
         </div>
         ${renderRelatedStockTable(d.stocks)}
-        <div class="muted" style="font-size:11px;margin-top:6px">${esc(d.disclaimer)}</div>
+        <div class="muted" style="font-size:calc(11px * var(--font-scale));margin-top:6px">${esc(d.disclaimer)}</div>
       </div>`;
     $("#relLimitBtns")?.addEventListener("click", (e) => {
       const btn = e.target.closest(".opt");
@@ -2096,7 +2244,7 @@ let industriesCollapsed = true;
 function condGroup(group, label, buttonsHtml, collapsible = false) {
   const count = (screenerState[group] || []).length;
   return `<div class="cond-group">
-    <div class="g-label">${label}${count ? ` <span class="badge sector-tag" style="font-size:10px;padding:0 6px">${count}</span>` : ""}
+    <div class="g-label">${label}${count ? ` <span class="badge sector-tag" style="font-size:calc(10px * var(--font-scale));padding:0 6px">${count}</span>` : ""}
       ${count ? `<span class="g-clear" onclick="clearGroup('${group}')">清除</span>` : ""}
       ${collapsible ? `<span class="collapse-toggle" onclick="toggleIndustries()">${industriesCollapsed ? "展开 ▾" : "收起 ▴"}</span>` : ""}
     </div>
@@ -2123,7 +2271,7 @@ function renderScreenerConditions() {
     <span><span class="g-label muted">股价区间</span>
       <input id="priceMin" placeholder="最低" value="${screenerState.price_min}">
       ~ <input id="priceMax" placeholder="最高" value="${screenerState.price_max}"></span>
-    <label style="color:var(--muted);font-size:13px">
+    <label style="color:var(--muted);font-size:calc(13px * var(--font-scale))">
       <input type="checkbox" id="excludeSt" ${screenerState.exclude_st ? "checked" : ""}> 剔除 ST/退市
     </label>
     <span class="muted">已选条件 ${totalConds} 项
@@ -2160,7 +2308,7 @@ function renderChips() {
       chips.push(`<span class="chip" onclick="removeCond('${group}','${v}')">${GROUP_LABELS[group] || ""}${GROUP_LABELS[group] ? ":" : ""}${esc(label)} ✕</span>`);
     }
   }
-  $("#condChips").innerHTML = chips.join("") || '<span class="muted" style="font-size:12px">未设置条件（默认展示全市场按购买指数排序）</span>';
+  $("#condChips").innerHTML = chips.join("") || '<span class="muted" style="font-size:calc(12px * var(--font-scale))">未设置条件（默认展示全市场按购买指数排序）</span>';
   updateScreenerSentence();
 }
 
@@ -2257,16 +2405,16 @@ async function runScreener() {
         <td>${finBadge(r)}</td>
         <td>${wxBadges(r.wuxing)}</td>
         <td>${esc(r.industry || "-")}</td>
-        <td class="num ${cls(r.pct)}">${fmt(r.price)}</td>
+        <td class="num">${pxHtml(r.price, r.pct)}</td>
         <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
         <td class="num">${r.buy_index !== null ? `<b>${fmt(r.buy_index, 0)}</b> <span class="muted">${esc(r.buy_level || "")}</span>` : "-"}</td>
         <td>${r.sent_level ? esc(r.sent_level) : "-"}</td>
-        <td class="num">${fmt(r.dark_power, 0)}${r.divergence && r.divergence !== "无" ? ` <span class="badge sector-tag" style="font-size:10px">${esc(r.divergence)}</span>` : ""}</td>
+        <td class="num">${fmt(r.dark_power, 0)}${r.divergence && r.divergence !== "无" ? ` <span class="badge sector-tag" style="font-size:calc(10px * var(--font-scale))">${esc(r.divergence)}</span>` : ""}</td>
         <td class="num">${fmt(r.volume_ratio)}</td>${flowMetricCells(r)}
         <td class="num">${fmt(r.pe_ttm, 1)}</td>
-        <td>${r.stabilize_score !== null ? `<span class="badge level-4" style="font-size:11px">${fmt(r.stabilize_score, 0)}</span>` : "-"}</td>
+        <td>${r.stabilize_score !== null ? `<span class="badge level-4" style="font-size:calc(11px * var(--font-scale))">${fmt(r.stabilize_score, 0)}</span>` : "-"}</td>
       </tr>`).join("")}</tbody></table>
-      <div class="muted" style="margin-top:8px;font-size:12px">指标为量化参考，不构成投资建议。${FLOW_NOTE}</div>`
+      <div class="muted" style="margin-top:8px;font-size:calc(12px * var(--font-scale))">指标为量化参考，不构成投资建议。${FLOW_NOTE}</div>`
       : '<div class="empty">无符合条件的个股，可放宽条件</div>';
   } catch (err) {
     $("#screenerCount").textContent = "筛选失败";
@@ -2387,12 +2535,12 @@ async function loadSectorRecommend() {
             <td>${esc(r.name)} <span class="muted">${r.code}</span></td>
             <td>${finBadge(r)}</td>
             <td>${wxBadges(r.wuxing)}</td>
-            <td class="num ${cls(r.pct)}">${fmt(r.price)}</td>
+            <td class="num">${pxHtml(r.price, r.pct)}</td>
             <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
             <td class="num">${fmt(r.volume_ratio)}</td>${flowMetricCells(r)}
             <td class="num">${r.buy_index !== null ? `<b>${fmt(r.buy_index, 0)}</b>` : "-"}</td>
             <td class="num"><b>${fmt(r.score, 1)}</b></td>
-            <td><span class="badge ${r.advice === "增持" ? "advice-buy" : r.advice === "减持" ? "advice-sell" : "advice-hold"}" style="font-size:11px;padding:2px 7px">${esc(r.advice || "-")}</span></td>
+            <td><span class="badge ${r.advice === "增持" ? "advice-buy" : r.advice === "减持" ? "advice-sell" : "advice-hold"}" style="font-size:calc(11px * var(--font-scale));padding:2px 7px">${esc(r.advice || "-")}</span></td>
           </tr>`).join("")}</tbody></table>
       </div>`).join("") : '<div class="empty">暂无板块推荐（需全量快照）</div>';
   } catch (err) { box.innerHTML = '<div class="empty">加载失败</div>'; }
@@ -2410,7 +2558,8 @@ function flowColor(ratio) {
 }
 
 function renderSectorMap(items) {
-  sectorChart ||= echarts.init($("#sectorMap"), "dark");
+  sectorChart ||= makeChart($("#sectorMap"));
+  const pal = cp();
   const data = items.map((it) => ({
     name: it.name,
     value: it.amount_yi || 0,
@@ -2420,7 +2569,7 @@ function renderSectorMap(items) {
   sectorChart.setOption({
     backgroundColor: "transparent",
     tooltip: {
-      backgroundColor: "#1a2230", borderColor: "#2a3548", textStyle: { color: "#dbe4f0", fontSize: 12 },
+      ...ttStyle(),
       formatter: (p) => {
         const m = p.data._meta || {};
         return `<b>${p.name}</b><br>成交额 ${m.amount_yi} 亿<br>主力净流入 <b>${m.net_in_yi} 亿</b>（${m.net_in_ratio}%）<br>` +
@@ -2432,13 +2581,13 @@ function renderSectorMap(items) {
       type: "treemap", roam: false, nodeClick: false, breadcrumb: { show: false },
       width: "100%", height: "100%",
       label: {
-        show: true, fontSize: 12,
+        show: true, fontSize: fs(12), color: pal.text,
         formatter: (p) => {
           const m = p.data._meta || {};
           return `${p.name}\n${m.pct > 0 ? "+" : ""}${m.pct}%  ${m.net_in_yi > 0 ? "流入" : "流出"}${Math.abs(m.net_in_yi)}亿`;
         },
       },
-      itemStyle: { borderColor: "#0d1117", borderWidth: 2, gapWidth: 2 },
+      itemStyle: { borderColor: pal.bg || cssVar("--bg"), borderWidth: 2, gapWidth: 2 },
       data,
     }],
   }, true);
@@ -2474,14 +2623,14 @@ window.drillSector = async (name) => {
       <tr onclick="openStock('${r.code}','${esc(r.name)}')">
         <td>${esc(r.name)} <span class="muted">${r.code}</span></td>
         <td>${finBadge(r)}</td>
-        <td class="num ${cls(r.pct)}">${fmt(r.price)}</td>
+        <td class="num">${pxHtml(r.price, r.pct)}</td>
         <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
         <td class="num">${fmt(r.volume_ratio)}</td>${flowMetricCells(r)}
         <td class="num">${r.buy_index !== null ? `<b>${fmt(r.buy_index, 0)}</b>` : "-"}</td>
         <td>${r.sent_level ? esc(r.sent_level) : "-"}</td>
         <td class="num">${fmt(r.dark_power, 0)}</td>
       </tr>`).join("")}</tbody></table>
-      <div class="muted" style="margin-top:6px;font-size:12px">${FLOW_NOTE}</div>` : '<div class="empty">暂无成分股数据</div>';
+      <div class="muted" style="margin-top:6px;font-size:calc(12px * var(--font-scale))">${FLOW_NOTE}</div>` : '<div class="empty">暂无成分股数据</div>';
     box.scrollIntoView({ behavior: "smooth", block: "nearest" });
   } catch (err) { $("#sectorDrillTable").innerHTML = '<div class="empty">加载失败</div>'; }
 };
@@ -2610,15 +2759,15 @@ function renderFlowBarEcharts(items) {
   host.style.height = h + "px";
   host.style.display = "";
   try { flowBarChart?.dispose(); } catch { /* ignore */ }
-  flowBarChart = echarts.init(host, "dark");
+  flowBarChart = makeChart(host);
   const names = items.map((it) => it.name);
   const values = items.map((it) => Number(it.net_in_yi) || 0);
+  const pal = cp();
   flowBarChart.setOption({
     backgroundColor: "transparent",
     tooltip: {
       trigger: "axis", axisPointer: { type: "shadow" },
-      backgroundColor: "#1a2230", borderColor: "#2a3548",
-      textStyle: { color: "#dbe4f0", fontSize: 12 },
+      ...ttStyle(),
       formatter: (ps) => {
         const p = ps[0] || {};
         const v = p.value || 0;
@@ -2631,21 +2780,21 @@ function renderFlowBarEcharts(items) {
     },
     grid: { left: 88, right: 56, top: 8, bottom: 8 },
     xAxis: {
-      type: "value", splitLine: { lineStyle: { color: "#202a3b" } },
-      axisLabel: { color: "#7d8aa0", formatter: (v) => `${v}亿` },
+      type: "value", splitLine: { lineStyle: { color: pal.split } },
+      axisLabel: { color: pal.muted, formatter: (v) => `${v}亿` },
     },
     yAxis: {
       type: "category", data: names, inverse: true,
-      axisLabel: { color: "#dbe4f0", fontSize: 12 },
-      axisLine: { lineStyle: { color: "#2a3548" } },
+      axisLabel: { color: pal.text, fontSize: fs(12) },
+      axisLine: { lineStyle: { color: pal.border } },
     },
     series: [{
       type: "bar", data: values, barMaxWidth: 16,
-      itemStyle: { color: (p) => (p.value >= 0 ? "#ff5252" : "#26c281") },
+      itemStyle: { color: (p) => (p.value >= 0 ? pal.up : pal.down) },
       label: {
         show: true,
         position: (p) => (p.value >= 0 ? "right" : "left"),
-        color: "#9aa8bc", fontSize: 11,
+        color: pal.muted, fontSize: fs(11),
         formatter: (p) => `${p.value > 0 ? "+" : ""}${Number(p.value).toFixed(1)}`,
       },
     }],
@@ -2830,7 +2979,7 @@ function renderFlowTrendTable(lines) {
       </tr>`;
     }).join("")
   }</tbody></table>
-  <div class="muted" style="margin-top:6px;font-size:12px">共 ${rows.length} 个板块 · 点行可选中并联动直方图</div>`;
+  <div class="muted" style="margin-top:6px;font-size:calc(12px * var(--font-scale))">共 ${rows.length} 个板块 · 点行可选中并联动直方图</div>`;
   box.querySelectorAll(".js-trend-row").forEach((el) => {
     el.addEventListener("click", () => selectFlowBar(el.dataset.name || ""));
   });
@@ -2918,7 +3067,7 @@ function paintFlowTrend(d) {
     host.style.minHeight = "560px";
     host.style.maxHeight = "";
     host.style.overflow = "";
-    flowTrendChart = echarts.init(host, "dark");
+    flowTrendChart = makeChart(host);
     const palette = ["#ff5252", "#4a9eff", "#26c281", "#ffa940", "#c084fc", "#22d3ee", "#f472b6", "#a3e635", "#fb7185", "#60a5fa", "#fbbf24", "#34d399", "#e879f9", "#38bdf8", "#f97316", "#84cc16"];
     const hasVol = volData.some((v) => v != null);
     flowTrendChart.setOption({
@@ -2927,8 +3076,7 @@ function paintFlowTrend(d) {
       axisPointer: { link: [{ xAxisIndex: "all" }], type: "cross" },
       tooltip: {
         trigger: "axis",
-        backgroundColor: "#1a2230", borderColor: "#2a3548",
-        textStyle: { color: "#dbe4f0", fontSize: 12 },
+        ...ttStyle(),
         formatter: (ps) => {
           if (!ps || !ps.length) return "";
           const idx = ps[0].dataIndex;
@@ -3066,7 +3214,7 @@ function renderFlowBarStockTable(rows) {
         <td>${relatedTags(r, false)}</td>
         <td class="num ${cls(r.contrib)}">${fmt(r.contrib, 0)}</td>
       </tr>`).join("")}</tbody></table>
-      <div class="muted" style="margin-top:6px;font-size:12px">${esc(flowBarStockNote || "")} ${FLOW_NOTE}
+      <div class="muted" style="margin-top:6px;font-size:calc(12px * var(--font-scale))">${esc(flowBarStockNote || "")} ${FLOW_NOTE}
         ${flowBarState.limit < 200 && rows.length >= flowBarState.limit
           ? ` <button class="btn small ghost" onclick="flowBarMore()">显示更多</button>` : ""}</div>`
     : `<div class="empty">${rows && rows.length ? "该财报筛选下无个股" : "该板块暂无个股"}</div>`;
@@ -3101,10 +3249,10 @@ function renderCommodities(items) {
     (items.map((c) => `
     <div class="q-card" style="cursor:pointer" onclick="openCommodityKline('${c.symbol}','${esc(c.name)}')" title="点击查看K线">
       <div class="head">
-        <div><div class="name">${esc(c.name)} <span class="muted" style="font-size:10px">K线 ›</span></div><div class="sub">${esc(c.category)} · ${esc(c.unit)}</div></div>
+        <div><div class="name">${esc(c.name)} <span class="muted" style="font-size:calc(10px * var(--font-scale))">K线 ›</span></div><div class="sub">${esc(c.category)} · ${esc(c.unit)}</div></div>
         <span class="star ${c.watched ? "on" : ""}" onclick="event.stopPropagation();toggleCommodity('${c.symbol}')">${c.watched ? "★" : "☆"}</span>
       </div>
-      <div class="price ${cls(c.pct)}">${fmt(c.price, 3)}</div>
+      <div class="price">${pxHtml(c.price, c.pct, 3)}</div>
       <div class="chg ${cls(c.pct)}">${pct(c.pct)}</div>
       <div class="row2"><span>高 ${fmt(c.high, 2)} 低 ${fmt(c.low, 2)}</span><span>关联: ${esc(c.related_sector)}</span></div>
     </div>`).join("") || '<div class="empty" style="grid-column:1/-1">请选择至少一个分类</div>');
@@ -3139,16 +3287,16 @@ async function loadCommodityRelated() {
         <td>${esc(r.name)} <span class="muted">${r.code}</span></td>
         <td>${finBadge(r)}</td>
         <td>${esc(r.industry || "-")}</td>
-        <td class="num ${cls(r.pct)}">${fmt(r.price)}</td>
+        <td class="num">${pxHtml(r.price, r.pct)}</td>
         <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
         <td class="num">${fmt(r.volume_ratio)}</td>${flowMetricCells(r)}
         <td class="num">${r.buy_index !== null ? `<b>${fmt(r.buy_index, 0)}</b>` : "-"}</td>
         <td class="num"><b>${fmt(r.score, 1)}</b></td>
         <td>${r.sent_level ? esc(r.sent_level) : "-"}</td>
         <td class="num">${fmt(r.dark_power, 0)}</td>
-        <td><span class="badge ${r.advice === "增持" ? "advice-buy" : r.advice === "减持" ? "advice-sell" : "advice-hold"}" style="font-size:11px;padding:2px 7px">${esc(r.advice || "-")}</span></td>
+        <td><span class="badge ${r.advice === "增持" ? "advice-buy" : r.advice === "减持" ? "advice-sell" : "advice-hold"}" style="font-size:calc(11px * var(--font-scale));padding:2px 7px">${esc(r.advice || "-")}</span></td>
       </tr>`).join("")}</tbody></table>
-      <div class="muted" style="margin-top:6px;font-size:12px">行背景按评分五档着色。${FLOW_NOTE}</div>` : '<div class="empty">暂无关联个股</div>';
+      <div class="muted" style="margin-top:6px;font-size:calc(12px * var(--font-scale))">行背景按评分五档着色。${FLOW_NOTE}</div>` : '<div class="empty">暂无关联个股</div>';
     $("#ckRelatedPager").innerHTML = d.pages > 1 ? `
       <button class="btn small ghost" ${d.page <= 1 ? "disabled" : ""} onclick="ckRelGo(${d.page - 1})">‹ 上一页</button>
       <span class="info">第 ${d.page} / ${d.pages} 页</span>
@@ -3168,8 +3316,8 @@ $("#ckPeriod").addEventListener("click", (e) => {
 
 async function loadCommodityKline() {
   if (!ckState.symbol) return;
-  ckChart ||= echarts.init($("#ckChart"), "dark");
-  ckChart.showLoading({ maskColor: "rgba(13,17,23,.6)", textColor: "#dbe4f0" });
+  ckChart ||= makeChart($("#ckChart"));
+  ckChart.showLoading({ maskColor: cssVar("--bg") + "99", textColor: cssVar("--text") });
   try {
     const d = await api(`/api/commodities/kline?symbol=${ckState.symbol}&period=${ckState.period}`);
     ckChart.hideLoading();
@@ -3183,28 +3331,29 @@ async function loadCommodityKline() {
       name: `MA${n}`, type: "line", data: values, showSymbol: false, smooth: true,
       lineStyle: { width: 1, color: ["#e8c46b", "#4a9eff", "#c678dd"][i] },
     }));
+    const pal = cp();
     ckChart.setOption({
       backgroundColor: "transparent", animation: false,
-      tooltip: { trigger: "axis", axisPointer: { type: "cross" }, backgroundColor: "#1a2230", borderColor: "#2a3548", textStyle: { color: "#dbe4f0", fontSize: 12 } },
-      legend: { data: maSeries.map((s) => s.name), textStyle: { color: "#7d8aa0" }, top: 0 },
+      tooltip: { trigger: "axis", axisPointer: { type: "cross" }, ...ttStyle() },
+      legend: { data: maSeries.map((s) => s.name), textStyle: { color: pal.muted }, top: 0 },
       grid: [{ left: 60, right: 20, top: 28, height: "62%" }, { left: 60, right: 20, top: "78%", height: "16%" }],
       xAxis: [
-        { type: "category", data: d.dates, gridIndex: 0, axisLine: { lineStyle: { color: "#2a3548" } } },
+        { type: "category", data: d.dates, gridIndex: 0, axisLine: { lineStyle: { color: pal.border } } },
         { type: "category", data: d.dates, gridIndex: 1, show: false },
       ],
       yAxis: [
-        { scale: true, gridIndex: 0, splitLine: { lineStyle: { color: "#202a3b" } } },
+        { scale: true, gridIndex: 0, splitLine: { lineStyle: { color: pal.split } } },
         { gridIndex: 1, splitNumber: 2, axisLabel: { show: false }, splitLine: { show: false } },
       ],
       dataZoom: [{ type: "inside", xAxisIndex: [0, 1], start: zoomStart((d.dates || []).length), end: 100 },
-                 { type: "slider", xAxisIndex: [0, 1], top: "96%", height: 12, borderColor: "#2a3548",
+                 { type: "slider", xAxisIndex: [0, 1], top: "96%", height: 12, borderColor: pal.border,
                    start: zoomStart((d.dates || []).length), end: 100 }],
       series: [
         { name: "K线", type: "candlestick", data: (d.kline || []).map(candleOHLC),
-          itemStyle: { color: "#ff5252", color0: "#26c281", borderColor: "#ff5252", borderColor0: "#26c281" } },
+          itemStyle: candleStyle() },
         ...maSeries,
         { name: "成交量", type: "bar", xAxisIndex: 1, yAxisIndex: 1, data: d.volumes,
-          itemStyle: { color: (p) => (d.kline[p.dataIndex][1] >= d.kline[p.dataIndex][0] ? "#ff5252" : "#26c281") } },
+          itemStyle: { color: (p) => (d.kline[p.dataIndex][1] >= d.kline[p.dataIndex][0] ? pal.up : pal.down) } },
       ],
     }, true);
   } catch (err) { ckChart.hideLoading(); console.warn(err); }
@@ -3239,7 +3388,7 @@ async function loadGlobal() {
       </tr></thead><tbody>${d.items.map((r) => `
         <tr onclick="openEtfDetail('${r.code}','${esc(r.name)}')">
           <td>${r.code}</td><td>${esc(r.name)}</td><td>${esc(r.category)}</td><td>${esc(r.track)}</td>
-          <td class="num ${cls(r.pct)}">${fmt(r.price, 3)}</td>
+          <td class="num">${pxHtml(r.price, r.pct, 3)}</td>
           <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
           <td class="num">${fmt(r.amount, 0)}</td>
         </tr>`).join("")}</tbody></table>
@@ -3265,8 +3414,8 @@ async function loadGlobal() {
         const clickable = rg.region === "中国大陆";
         return `
         <div class="q-card" ${clickable ? `style="cursor:pointer" onclick="openStock('${q.symbol}','${esc(q.name)}')" title="点击查看K线"` : ""}>
-          <div class="head"><div class="name">${esc(q.name)}${clickable ? ' <span class="muted" style="font-size:10px">K线 ›</span>' : ""}</div><span class="flag">${esc(q.country)}</span></div>
-          <div class="price ${cls(q.pct)}">${fmt(q.price)}</div>
+          <div class="head"><div class="name">${esc(q.name)}${clickable ? ' <span class="muted" style="font-size:calc(10px * var(--font-scale))">K线 ›</span>' : ""}</div><span class="flag">${esc(q.country)}</span></div>
+          <div class="price">${pxHtml(q.price, q.pct)}</div>
           <div class="chg ${cls(q.pct)}">${sign(q.change)}${fmt(q.change)}&nbsp;&nbsp;${pct(q.pct)}</div>
           <div class="row2"><span>${esc(q.desc)}</span>${clickable ? "" : '<span class="muted">暂不支持K线</span>'}</div>
         </div>`;
@@ -3293,16 +3442,16 @@ window.openEtfDetail = async (code, name) => {
         <td>${finBadge(r)}</td>
         <td>${esc(r.industry || "-")}</td>
         <td class="num"><b>${fmt(r.weight)}%</b></td>
-        <td class="num ${cls(r.pct)}">${fmt(r.price)}</td>
+        <td class="num">${pxHtml(r.price, r.pct)}</td>
         <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
         <td class="num">${fmt(r.volume_ratio)}</td>${flowMetricCells(r)}
         <td class="num">${r.buy_index !== null ? `<b>${fmt(r.buy_index, 0)}</b> <span class="muted">${esc(r.buy_level || "")}</span>` : "-"}</td>
         <td class="num"><b>${fmt(r.score, 1)}</b></td>
         <td>${r.sent_level ? esc(r.sent_level) : "-"}</td>
         <td class="num">${fmt(r.dark_power, 0)}</td>
-        <td><span class="badge ${r.advice === "增持" ? "advice-buy" : r.advice === "减持" ? "advice-sell" : "advice-hold"}" style="font-size:11px;padding:2px 7px">${esc(r.advice)}</span></td>
+        <td><span class="badge ${r.advice === "增持" ? "advice-buy" : r.advice === "减持" ? "advice-sell" : "advice-hold"}" style="font-size:calc(11px * var(--font-scale));padding:2px 7px">${esc(r.advice)}</span></td>
       </tr>`).join("")}</tbody></table>
-      <div class="muted" style="margin-top:6px;font-size:12px">行背景按评分五档着色（≥55 起）。${FLOW_NOTE}</div>` : `<div class="empty">${esc(d.note || "暂无持仓数据")}</div>`;
+      <div class="muted" style="margin-top:6px;font-size:calc(12px * var(--font-scale))">行背景按评分五档着色（≥55 起）。${FLOW_NOTE}</div>` : `<div class="empty">${esc(d.note || "暂无持仓数据")}</div>`;
     box.scrollIntoView({ behavior: "smooth", block: "nearest" });
   } catch (err) { $("#etfHoldings").innerHTML = '<div class="empty">加载失败</div>'; }
 };
@@ -3365,7 +3514,7 @@ async function loadRecommend() {
       ? '<div class="offline-banner" style="border-color:rgba(255,82,82,.5);color:var(--up);background:rgba(255,82,82,.08)">⚠️ 妖股波动剧烈，随时可能天地板，本榜仅作市场现象研究，严禁跟风追高</div>'
       : "";
     const finNote = d.finance_note
-      ? `<div class="muted" style="margin-bottom:8px;font-size:12px">${esc(d.finance_note)}</div>` : "";
+      ? `<div class="muted" style="margin-bottom:8px;font-size:calc(12px * var(--font-scale))">${esc(d.finance_note)}</div>` : "";
     box.innerHTML = d.items.length ? demonBanner + statsHtml + finNote + `<table><thead><tr>
       <th>#</th><th>名称</th><th>五行</th><th>财报</th><th>所属板块</th><th>现价</th><th>涨跌幅</th><th>${esc(d.items[0].metric_name)}</th>
       ${isStab ? "<th>闸门</th><th>星级</th>" : ""}<th>购买指数</th><th>情绪</th>
@@ -3376,7 +3525,7 @@ async function loadRecommend() {
         <td>${wxBadges(r.wuxing)}</td>
         <td>${finBadge(r)}</td>
         <td>${esc(r.industry || "-")}</td>
-        <td class="num ${cls(r.pct)}">${fmt(r.price)}</td>
+        <td class="num">${pxHtml(r.price, r.pct)}</td>
         <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
         <td class="num">${fmt(r.metric_value)}</td>
         ${isStab ? `<td>${(r.gates || []).map((g, gi) => `<span class="gate ${g ? "on" : ""}">G${gi + 1}</span>`).join("")}</td>
@@ -3385,10 +3534,10 @@ async function loadRecommend() {
         <td>${r.sent_level ? esc(r.sent_level) : "-"}</td>
         <td class="num" title="${esc(r.volume_desc || "")}">${fmt(r.volume_ratio)}</td>${flowMetricCells(r)}
         <td class="num"><b>${fmt(r.score, 1)}</b></td>
-        <td><span class="badge ${r.advice === "增持" ? "advice-buy" : r.advice === "减持" ? "advice-sell" : "advice-hold"}" style="font-size:12px;padding:2px 8px">${r.advice}</span></td>
+        <td><span class="badge ${r.advice === "增持" ? "advice-buy" : r.advice === "减持" ? "advice-sell" : "advice-hold"}" style="font-size:calc(12px * var(--font-scale));padding:2px 8px">${r.advice}</span></td>
         <td class="desc-hl" style="white-space:normal;min-width:220px;max-width:340px">${esc(r.reason || "")}</td>
       </tr>`).join("")}</tbody></table>
-      <div class="muted" style="margin-top:8px;font-size:12px">评分行背景：≥55 淡橙 → ≥95 深红 递进。榜单为量化参考，不构成投资建议。</div>`
+      <div class="muted" style="margin-top:8px;font-size:calc(12px * var(--font-scale))">评分行背景：≥55 淡橙 → ≥95 深红 递进。榜单为量化参考，不构成投资建议。</div>`
       : finNote + `<div class="empty">该筛选条件下无个股${
         recState.finance_grade && recState.finance_grade !== "none"
           ? "（财报评级覆盖尚少，可改选「全部」或「无评级」，或在设置页重建财报评级）"
@@ -3423,7 +3572,7 @@ async function loadAnnouncements() {
         <b>📊 ${esc(d.target_name)} 机构评级</b> <span class="muted">${d.ratings.simulated ? "规则模拟·仅供参考" : ""}</span><br>
         评级分布：${Object.entries(d.ratings.distribution).filter(([, n]) => n > 0).map(([k, n]) => `${k} ${n} 家`).join(" · ")}
         ｜ 一致目标价 <b>${fmt(d.ratings.consensus_target)}</b><br>
-        <span class="muted" style="font-size:12px">${d.ratings.items.slice(0, 5).map((it) =>
+        <span class="muted" style="font-size:calc(12px * var(--font-scale))">${d.ratings.items.slice(0, 5).map((it) =>
           `${esc(it.broker)}:${it.rating}(${fmt(it.target_price)})`).join("　")}</span>
       </div>` : "";
     list.innerHTML = d.items.length ? d.items.map((a) => `
@@ -3436,7 +3585,7 @@ async function loadAnnouncements() {
             <span class="badge level-${a.impact_level}">${esc(a.impact_desc)}</span>
             ${(a.affected_sectors || []).map((s) => `<span class="badge sector-tag js-sector" data-sector="${esc(s)}" data-title="${esc(s)}" title="点击查看「${esc(s)}」相关个股 TOP20–50">${esc(s)}</span>`).join("")}
           </div>
-          ${a.brief ? `<div class="desc-hl" style="font-size:13px;margin-top:3px">💡 ${esc(a.brief)}</div>` : ""}
+          ${a.brief ? `<div class="desc-hl" style="font-size:calc(13px * var(--font-scale));margin-top:3px">💡 ${esc(a.brief)}</div>` : ""}
         </div>
       </div>`).join("") : '<div class="empty">暂无匹配公告（公告源为7x24快讯识别）</div>';
   } catch (err) { list.innerHTML = '<div class="empty">加载失败</div>'; }
@@ -3489,15 +3638,15 @@ async function loadRanks() {
         <td>${wxBadges(r.wuxing)}</td>
         <td>${finBadge(r)}</td>
         <td>${esc(r.industry || "-")}</td>
-        <td class="num ${cls(r.pct)}">${fmt(r.price)}</td>
+        <td class="num">${pxHtml(r.price, r.pct)}</td>
         <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
         <td class="num">${fmt(r.metric_value)}</td>
         <td class="num">${fmt(r.volume_ratio)}</td>${flowMetricCells(r)}
         <td class="num">${r.buy_index !== null ? `<b>${fmt(r.buy_index, 0)}</b>` : "-"}</td>
         <td class="num"><b>${fmt(r.score, 1)}</b></td>
-        <td><span class="badge ${r.advice === "增持" ? "advice-buy" : r.advice === "减持" ? "advice-sell" : "advice-hold"}" style="font-size:11px;padding:2px 7px">${esc(r.advice || "-")}</span></td>
+        <td><span class="badge ${r.advice === "增持" ? "advice-buy" : r.advice === "减持" ? "advice-sell" : "advice-hold"}" style="font-size:calc(11px * var(--font-scale));padding:2px 7px">${esc(r.advice || "-")}</span></td>
       </tr>`).join("")}</tbody></table>
-      <div class="muted" style="margin-top:8px;font-size:12px">行背景按评分五档着色。${FLOW_NOTE} 榜单为本地异动口径，不构成投资建议。</div>`
+      <div class="muted" style="margin-top:8px;font-size:calc(12px * var(--font-scale))">行背景按评分五档着色。${FLOW_NOTE} 榜单为本地异动口径，不构成投资建议。</div>`
       : '<div class="empty">该榜暂无数据（需全量快照）</div>';
   } catch (err) { box.innerHTML = '<div class="empty">加载失败</div>'; console.warn(err); }
 }
@@ -3531,13 +3680,13 @@ window.runAiPick = async () => {
         <td>${finBadge(r)}</td>
         <td>${wxBadges(r.wuxing)}</td>
         <td>${esc(r.industry || "-")}</td>
-        <td class="num ${cls(r.pct)}">${fmt(r.price)}</td>
+        <td class="num">${pxHtml(r.price, r.pct)}</td>
         <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
         <td class="num">${r.buy_index !== null ? `<b>${fmt(r.buy_index, 0)}</b>` : "-"}</td>
         <td class="num">${fmt(r.pe_ttm, 1)}</td>
         <td class="num">${fmt(r.volume_ratio)}</td>${flowMetricCells(r)}
       </tr>`).join("")}</tbody></table>
-      <div class="muted" style="margin-top:6px;font-size:12px">${FLOW_NOTE}</div>` : '<div class="empty">未命中个股，可换个描述或放宽条件</div>';
+      <div class="muted" style="margin-top:6px;font-size:calc(12px * var(--font-scale))">${FLOW_NOTE}</div>` : '<div class="empty">未命中个股，可换个描述或放宽条件</div>';
   } catch (err) { $("#aiPickTable").innerHTML = '<div class="empty">选股失败</div>'; console.warn(err); }
 };
 async function loadAiPick() { /* 进入页不自动请求，等待用户输入 */ }
@@ -3888,11 +4037,14 @@ $("#settingsTabs")?.addEventListener("click", (e) => {
   const ops = $("#settingsPaneOps");
   const st = $("#settingsPaneStrategy");
   const en = $("#settingsPaneEngine");
+  const ui = $("#settingsPaneUi");
   if (ops) ops.style.display = settingsSub === "ops" ? "" : "none";
   if (st) st.style.display = settingsSub === "strategy" ? "" : "none";
   if (en) en.style.display = settingsSub === "engine" ? "" : "none";
+  if (ui) ui.style.display = settingsSub === "ui" ? "" : "none";
   if (settingsSub === "strategy") loadStrategyPage();
   else if (settingsSub === "engine") loadEngineBlueprint();
+  else if (settingsSub === "ui") syncAppearanceUi();
   else loadSettings();
 });
 
@@ -4064,7 +4216,7 @@ async function loadEngineBlueprint() {
     wbox.innerHTML = (d.weights || []).map((w) =>
       `<label class="sp-w">${esc(w.name)} <b>${w.w}</b>
         <input type="range" min="0" max="40" value="${w.w}" disabled>
-        <span class="muted" style="font-size:11px">${esc(w.note || "")}</span></label>`).join("");
+        <span class="muted" style="font-size:calc(11px * var(--font-scale))">${esc(w.note || "")}</span></label>`).join("");
   }
   const cons = $("#engineConsume");
   if (cons) {
@@ -4074,7 +4226,7 @@ async function loadEngineBlueprint() {
       ["宏观催化页走 Brief", true],
       ["LLM 写 Brief 句子", false],
     ].map(([lab, on]) =>
-      `<label class="muted" style="font-size:13px"><input type="checkbox" disabled ${on ? "checked" : ""}> ${lab}</label>`).join("");
+      `<label class="muted" style="font-size:calc(13px * var(--font-scale))"><input type="checkbox" disabled ${on ? "checked" : ""}> ${lab}</label>`).join("");
   }
   const rules = $("#engineRules");
   if (rules) rules.textContent = "铁律：" + (d.rules || []).join(" · ");
@@ -4321,7 +4473,7 @@ function renderSpControls() {
     `<label class="sp-w">${esc(labels[k] || k)} <b id="spw_${k}">${w[k] ?? 0}</b>
       <input type="range" min="0" max="40" step="1" data-w="${k}" value="${w[k] ?? 0}"></label>`).join("");
   $("#spHard").innerHTML = `<span class="g-label muted">硬性条件</span>` + SP_HARD.map((h) =>
-    `<label class="muted" style="font-size:13px"><input type="checkbox" data-hard="${h.key}" ${spState.hard[h.key] ? "checked" : ""}> ${h.label}</label>`).join("");
+    `<label class="muted" style="font-size:calc(13px * var(--font-scale))"><input type="checkbox" data-hard="${h.key}" ${spState.hard[h.key] ? "checked" : ""}> ${h.label}</label>`).join("");
   const r = spState.ranges;
   $("#spRanges").innerHTML = `
     <span><span class="g-label muted">购买指数≥</span><input id="spBuyMin" value="${esc(r.buy_index_min)}" placeholder="不限" style="width:70px"></span>
@@ -4468,15 +4620,15 @@ function renderSpResult(d) {
       <td>${i + 1}</td><td>${esc(r.name)} <span class="muted">${r.code}</span></td>
       <td>${finBadge(r)}</td>
       <td>${esc(r.industry || "-")}</td>
-      <td class="num ${cls(r.pct)}">${fmt(r.price)}</td>
+      <td class="num">${pxHtml(r.price, r.pct)}</td>
       <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
       <td class="num"><b>${fmt(r.smart_score, 1)}</b></td>
       <td class="num">${r.buy_index != null ? `<b>${fmt(r.buy_index, 0)}</b>` : "-"}</td>
       <td class="num">${fmt(r.volume_ratio)}</td>${flowMetricCells(r)}
-      <td><span class="badge ${r.advice === "增持" ? "advice-buy" : r.advice === "减持" ? "advice-sell" : "advice-hold"}" style="font-size:11px;padding:2px 7px">${esc(r.advice || "-")}</span></td>
+      <td><span class="badge ${r.advice === "增持" ? "advice-buy" : r.advice === "减持" ? "advice-sell" : "advice-hold"}" style="font-size:calc(11px * var(--font-scale));padding:2px 7px">${esc(r.advice || "-")}</span></td>
       <td class="desc-hl" style="white-space:normal;min-width:200px">${esc(r.local_reason || "")}</td>
     </tr>`).join("")}</tbody></table>
-    <div class="muted" style="margin-top:6px;font-size:12px">${FLOW_NOTE} 综合分为本地加权，不构成投资建议。</div>`
+    <div class="muted" style="margin-top:6px;font-size:calc(12px * var(--font-scale))">${FLOW_NOTE} 综合分为本地加权，不构成投资建议。</div>`
     : `<div class="empty">${esc(d.local_summary || "无命中个股")}</div>`;
   if (d.usage) {
     const el = $("#spAiUsage");
@@ -4763,6 +4915,7 @@ loaders.ai = loadAiConfig;
 loaders.settings = () => {
   if (settingsSub === "strategy") loadStrategyPage();
   else if (settingsSub === "engine") loadEngineBlueprint();
+  else if (settingsSub === "ui") syncAppearanceUi();
   else loadSettings();
 };
 
@@ -4789,6 +4942,32 @@ async function loadSettingsHealthOnly() {
 
 window.addEventListener("resize", () => { klineChart?.resize(); sectorChart?.resize(); ckChart?.resize(); miniChart?.resize(); flowBarChart?.resize(); flowTrendChart?.resize(); applyAlertDock(); applyBuyFlashPos(); });
 
+function bindAppearance() {
+  $("#themeQuickBtn")?.addEventListener("click", () => {
+    const light = uiPrefs.theme === "day" || uiPrefs.theme === "dawn";
+    setTheme(light ? "night" : "day");
+  });
+  $("#uiPrefsBtn")?.addEventListener("click", () => {
+    window.jumpApp("settings", { view: "ui" });
+  });
+  $("#fontScaleRange")?.addEventListener("input", (e) => {
+    uiPrefs.fontScale = clampFontScale(Number(e.target.value) / 100);
+    applyUiPrefs(false);
+  });
+  $("#fontScaleRange")?.addEventListener("change", () => applyUiPrefs(true));
+  $("#fontScaleBtns")?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-scale]");
+    if (!btn) return;
+    setFontScale(btn.dataset.scale);
+  });
+  $("#themeGrid")?.addEventListener("click", (e) => {
+    const card = e.target.closest("[data-theme]");
+    if (!card) return;
+    setTheme(card.dataset.theme);
+  });
+  syncAppearanceUi();
+}
+
 /* 首屏 */
 loadDashboard();
 initCommodityCats();
@@ -4798,3 +4977,4 @@ bindAlertDock();
 applyAlertDock();
 bindBuyFlash();
 loadBuyPoints();
+bindAppearance();
