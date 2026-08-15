@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>A股量化工具</title>
-<link rel="stylesheet" href="/static/style.css?v=12.0.9">
+<link rel="stylesheet" href="/static/style.css?v=13.0.0">
 <script>
 (function () {
   try {
@@ -445,6 +445,7 @@
       <button class="opt" data-view="signals">策略命中</button>
       <button class="opt" data-view="catalyst">宏观催化</button>
       <button class="opt" data-view="snapshot">引擎快照</button>
+      <button class="opt" data-view="verify">信号验证</button>
     </div>
     <div class="muted" id="spEngineBanner" style="margin-bottom:10px"></div>
 
@@ -681,14 +682,22 @@
     <div id="settingsPaneEngine" style="display:none">
       <div class="card">
         <div class="card-title">策略引擎配置
-          <span class="muted" id="engineStatusTag">设计评审 · 未启用</span>
+          <span class="muted" id="engineStatusTag">未启用</span>
         </div>
         <div class="muted" id="engineIntro" style="margin-bottom:10px"></div>
         <div class="engine-flow" id="engineFlow"></div>
+        <div class="cond-inline" style="margin-top:12px;gap:16px;align-items:center">
+          <label class="muted"><input type="checkbox" id="engineEnabled"> 启用引擎（日终 15:50 自动拍）</label>
+          <label class="muted"><input type="checkbox" id="engineIntraday"> 盘中 10 分钟增量拍</label>
+          <button class="btn" type="button" id="engineRunBtn" onclick="runEngineOnce()">跑一次引擎</button>
+          <button class="btn ghost" type="button" onclick="saveEngineConfig()">保存配置</button>
+        </div>
+        <div class="muted" id="engineSaveMsg" style="margin-top:8px"></div>
+        <div id="engineLiveStatus" class="engine-live"></div>
       </div>
       <div class="grid-2">
         <div class="card">
-          <div class="card-title">采集源 <span class="muted">下轮可关域；本轮只读</span></div>
+          <div class="card-title">采集源 <span class="muted">关闭后该域记为缺失，不编数据</span></div>
           <div id="engineDomains" class="engine-domains"></div>
         </div>
         <div class="card">
@@ -703,9 +712,8 @@
         <div id="engineWeights" class="sp-weights"></div>
       </div>
       <div class="card">
-        <div class="card-title">消费开关 <span class="muted">下轮实现后可保存</span></div>
+        <div class="card-title">消费开关 <span class="muted">未启用引擎时智能选股仍现场计算</span></div>
         <div id="engineConsume" class="cond-inline" style="gap:16px"></div>
-        <button class="btn" disabled title="引擎尚未实现">保存配置（下轮开放）</button>
         <div class="muted" style="margin-top:10px" id="engineRules"></div>
       </div>
     </div>
@@ -771,6 +779,6 @@
   <div class="ctx-item" id="ctxHotRevert" style="display:none">↩ 还原词库利好/利空</div>
 </div>
 
-<script src="/static/app.js?v=12.0.9"></script>
+<script src="/static/app.js?v=13.0.0"></script>
 </body>
 </html>

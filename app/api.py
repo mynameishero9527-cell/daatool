@@ -14,7 +14,7 @@ from .services import (
 )
 from .services import metrics as metrics_svc
 from .services import policy_archive
-from .services import engine_blueprint
+from .services import engine, engine_blueprint
 from .database import query as db_query
 
 router = APIRouter(prefix="/api")
@@ -607,8 +607,63 @@ def ai_wuxing(payload: dict):
 
 @router.get("/engine/blueprint")
 def engine_blueprint_get():
-    """12.0 策略引擎只读蓝图，不含运行结果。"""
+    """策略引擎设计对象 + 当前配置/快照状态。"""
     return engine_blueprint.blueprint()
+
+
+@router.get("/engine/config")
+def engine_config_get():
+    return {"ok": True, **engine.get_config()}
+
+
+@router.post("/engine/config")
+def engine_config_save(payload: dict = Body(default={})):
+    return engine.save_config(payload or {})
+
+
+@router.post("/engine/run")
+def engine_run_post(payload: dict = Body(default={})):
+    kind = (payload or {}).get("kind") or "manual"
+    if kind not in ("eod", "intraday", "manual"):
+        kind = "manual"
+    return engine.run_engine(kind)
+
+
+@router.get("/engine/status")
+def engine_status_get():
+    return engine.status()
+
+
+@router.get("/engine/brief")
+def engine_brief_get():
+    return engine.get_brief()
+
+
+@router.get("/engine/signals")
+def engine_signals_get(side: str = "buy", limit: int = Query(40, le=80)):
+    return engine.get_signals(side, limit)
+
+
+@router.get("/engine/catalysts")
+def engine_catalysts_get():
+    return engine.get_catalysts()
+
+
+@router.get("/engine/stocks")
+def engine_stocks_get(limit: int = Query(40, le=80), board: str = ""):
+    if board:
+        return engine.stocks_for_board(board, limit)
+    return engine.list_stocks(limit)
+
+
+@router.get("/engine/snapshot")
+def engine_snapshot_get():
+    return engine.snapshot_view()
+
+
+@router.get("/engine/tasks")
+def engine_tasks_get(side: str = "", status: str = "", limit: int = Query(80, le=200)):
+    return engine.list_signal_tasks(side, status, limit)
 
 
 @router.get("/smartpick/meta")

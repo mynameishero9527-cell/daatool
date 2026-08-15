@@ -40,7 +40,7 @@ h1{font-size:22px;margin:0 0 8px} p{margin:8px 0} .muted{color:#8b9bb4;font-size
 </body></html>
 """
 
-app = FastAPI(title="A股量化工具", version="12.0.9", docs_url="/docs", redoc_url="/redoc")
+app = FastAPI(title="A股量化工具", version="13.0.0", docs_url="/docs", redoc_url="/redoc")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -89,6 +89,11 @@ def startup() -> None:
     # 1) 数据库自检与建表
     init_db()
     log.info("数据库初始化完成")
+    try:
+        from .services import engine as engine_svc
+        engine_svc.ensure_tables()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("引擎表初始化失败: %s", exc)
     # 2) 默认自选股
     market.ensure_default_watchlist()
     # 3) 首次启动链路：快照同步 → K线/行业/指标重建（均在后台，不阻塞启动）

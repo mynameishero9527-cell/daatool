@@ -330,6 +330,11 @@ def get_buy_points(limit: int = 8) -> dict:
                 "note": note or "指标已计算但暂无可用个股，请确认快照已同步"}
 
     _decorate_buy_rows(rows)
+    try:
+        from . import engine as engine_svc
+        engine_svc.attach_signal_levels(rows, "buy", (asof or "")[:10] or None)
+    except Exception:  # noqa: BLE001
+        pass
     if source == "top_buy_index":
         for r in rows:
             r["buy_level"] = "观察池"
@@ -379,4 +384,9 @@ def get_sell_points(limit: int = 12) -> dict:
                 "empty_reason": "no_candidates",
                 "note": note or "当前启用方案暂无卖点命中"}
     _decorate_buy_rows(rows, "sell")
+    try:
+        from . import engine as engine_svc
+        engine_svc.attach_signal_levels(rows, "sell", (asof or "")[:10] or None)
+    except Exception:  # noqa: BLE001
+        pass
     return {**base, "items": rows, "count": len(rows), "source": source, "note": note}

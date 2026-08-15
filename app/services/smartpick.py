@@ -376,6 +376,34 @@ def run(payload: dict) -> dict:
     items = [r for r in items if _ranges_ok(r, ranges)]
     for r in items:
         r["smart_score"], r["local_reason"] = _composite(r, weights, r.get("sector_net_in_yi"))
+    score_source = "live"
+    engine_meta = None
+    try:
+        from . import engine as engine_svc
+        cfg = engine_svc.get_config()
+        consume = (cfg.get("consume") or {}).get("smartpick_vector", True)
+        run = engine_svc.latest_run() if (cfg.get("enabled") and consume) else None
+        if run:
+            vmap = engine_svc.vector_map(run["run_id"])
+            if vmap:
+                used = 0
+                for r in items:
+                    vec = vmap.get(r.get("code") or "")
+                    if vec and vec.get("score") is not None:
+                        r["smart_score"] = vec["score"]
+                        r["engine_score"] = vec["score"]
+                        bits = vec.get("reason_bits") or ""
+                        if bits:
+                            r["local_reason"] = bits
+                        used += 1
+                if used:
+                    score_source = "engine"
+                    engine_meta = {
+                        "run_id": run["run_id"], "asof": run["asof"], "kind": run["kind"],
+                        "used": used,
+                    }
+    except Exception as exc:  # noqa: BLE001
+        log.warning("智能选股消费引擎向量失败，回退现场计算: %s", exc)
     items.sort(key=lambda x: x.get("smart_score") or 0, reverse=True)
     items = items[:100]
     from . import finance as finance_svc
@@ -388,7 +416,8 @@ def run(payload: dict) -> dict:
     local = (f"策略「{tpl['name']}」命中 {len(items)} 只。"
              + (f" 语义：{semantic_summary}。" if semantic_summary else "")
              + f" 财报已评级 {st.get('graded', 0)}/{st.get('universe', 0)}。"
-             + " 综合分为本地加权，不构成投资建议。")
+             + (" 综合分来自引擎快照，不构成投资建议。" if score_source == "engine"
+                else " 综合分为本地加权，不构成投资建议。"))
     if not items and hard.get("need_finance"):
         local += " 当前绩优硬性条件要求已评级，覆盖率低时结果可能为空，可改「均衡综合」或先重建财报。"
 
@@ -405,4 +434,6 @@ def run(payload: dict) -> dict:
         "ai": ai_block, "policy": policy, "usage": _usage(),
         "finance_graded": st.get("graded", 0),
         "finance_universe": st.get("universe", 0),
+        "score_source": score_source,
+        "engine": engine_meta,
     }

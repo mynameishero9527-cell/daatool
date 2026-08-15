@@ -217,6 +217,17 @@ function planPickedHtml(row, kind) {
   const text = (row && (row.picked_text || row.picked_by)) || "";
   return text ? `<div class="plan-picked"><span class="plan-picked-verb">${esc(text)}</span></div>` : "";
 }
+function signalLevelsHtml(r) {
+  if (!r || (r.entry_px == null && r.take_px == null && r.stop_px == null)) return "";
+  const retTxt = (v) => (v == null || v === "") ? "待收盘验证" : pct(v);
+  return `<div class="signal-levels">
+    <span>入场参考 <b>${fmt(r.entry_px)}</b></span>
+    <span>止盈 <b>${fmt(r.take_px)}</b></span>
+    <span>止损 <b>${fmt(r.stop_px)}</b></span>
+    <span>+1日 ${retTxt(r.ret_1)}</span>
+    <span>+5日 ${retTxt(r.ret_5)}</span>
+  </div>`;
+}
 function signalContextHtml(r) {
   const board = r.board_text || r.industry || "—";
   const wx = wxBadges(r.wuxing) || "—";
@@ -229,7 +240,7 @@ function signalContextHtml(r) {
     <span>五行 ${wx}</span>
     <span>个股热度 <b>${esc(heat)}</b></span>
     <span>板块热度 <b>${esc(sec)}</b></span>
-  </div>`;
+  </div>${signalLevelsHtml(r)}`;
 }
 const wxBadges = (tags) => (tags && tags.length)
   ? tags.map((t) => `<span class="wx-badge wx-${esc(t)}">${esc(t)}</span>`).join("") : "";
@@ -4543,19 +4554,102 @@ $("#btnResetBuy")?.addEventListener("click", () => saveStrategyPlans({ buy_ids: 
 $("#btnResetSell")?.addEventListener("click", () => saveStrategyPlans({ buy_ids: selectedStrategyIds("buy"), sell_ids: ["A"] }));
 
 let engineBlueprint = null;
-async function ensureEngineBlueprint() {
-  if (engineBlueprint) return engineBlueprint;
+async function ensureEngineBlueprint(force) {
+  if (!force && engineBlueprint) return engineBlueprint;
   engineBlueprint = await api("/api/engine/blueprint");
   return engineBlueprint;
 }
 
+function collectEngineConfig() {
+  const domains = {};
+  $$("#engineDomains input[data-dom]").forEach((el) => { domains[el.dataset.dom] = el.checked; });
+  const weights = {};
+  $$("#engineWeights input[data-w]").forEach((el) => { weights[el.dataset.w] = Number(el.value); });
+  return {
+    enabled: !!$("#engineEnabled")?.checked,
+    intraday: !!$("#engineIntraday")?.checked,
+    domains,
+    weights,
+    consume: {
+      smartpick_vector: !!$("#engConsVector")?.checked,
+      smartpick_signals: !!$("#engConsSignals")?.checked,
+      smartpick_catalyst: !!$("#engConsCatalyst")?.checked,
+    },
+  };
+}
+
+window.saveEngineConfig = async () => {
+  const msg = $("#engineSaveMsg");
+  if (msg) msg.textContent = "保存中…";
+  try {
+    const d = await api("/api/engine/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(collectEngineConfig()),
+    });
+    engineBlueprint = null;
+    if (msg) {
+      msg.textContent = d.enabled
+        ? "已保存并启用。交易日 15:50 将自动拍；智能选股可消费向量。"
+        : "已保存。引擎未启用，智能选股仍现场计算。手动「跑一次」仍可预览快照。";
+    }
+    loadEngineBlueprint();
+  } catch (err) {
+    if (msg) msg.textContent = "保存失败：" + (err.message || err);
+  }
+};
+
+window.runEngineOnce = async () => {
+  const msg = $("#engineSaveMsg");
+  const btn = $("#engineRunBtn");
+  if (msg) msg.textContent = "正在采集本地库并写快照，请稍候…";
+  if (btn) btn.disabled = true;
+  try {
+    const d = await api("/api/engine/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: "manual" }),
+    });
+    engineBlueprint = null;
+    if (msg) {
+      msg.textContent = d.ok
+        ? `完成：${d.status} · ${d.stocks || 0} 只向量 · 买点 ${d.buy_hits || 0} · 卖点 ${d.sell_hits || 0}${d.note ? " · " + d.note : ""}`
+        : (`失败：${d.note || d.error || "核心域 quote/metrics 不可用"}`);
+    }
+    loadEngineBlueprint();
+  } catch (err) {
+    if (msg) msg.textContent = "运行失败：" + (err.message || err);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+};
+
+function paintEngineLive(d) {
+  const box = $("#engineLiveStatus");
+  if (!box) return;
+  const run = d.run || {};
+  if (!d.has_snapshot) {
+    box.innerHTML = "尚无快照。点「跑一次引擎」将只读本地库生成向量与信号包，不编造评分。";
+    return;
+  }
+  const missing = ((run.brief && run.brief.missing) || []).join("、");
+  box.innerHTML = `最近快照 <b>${esc(run.run_id || "")}</b> · ${esc(run.kind || "")} · ${esc(run.asof || "")} · 状态 ${esc(run.status || "")}`
+    + (run.finished_at ? ` · 完成 ${esc(run.finished_at)}` : "")
+    + (missing ? `<div>缺失域：${esc(missing)}（保留空值，不编数据）</div>` : "")
+    + (run.note ? `<div>${esc(run.note)}</div>` : "");
+}
+
 async function loadEngineBlueprint() {
-  const d = await ensureEngineBlueprint();
+  const d = await ensureEngineBlueprint(true);
   const tag = $("#engineStatusTag");
-  if (tag) tag.textContent = d.enabled ? "已启用" : "设计评审 · 未启用";
+  if (tag) tag.textContent = d.enabled ? "已启用" : "未启用 · 可手动跑一次";
+  const en = $("#engineEnabled");
+  if (en) en.checked = !!d.enabled;
+  const intra = $("#engineIntraday");
+  if (intra) intra.checked = !!d.intraday;
   const intro = $("#engineIntro");
   if (intro) {
-    intro.innerHTML = `${esc(d.subtitle || "")} 详细逻辑见仓库 <b>${esc(d.doc || "需求优化文档12.0.md")}</b>。${esc(d.note || "")}`;
+    intro.innerHTML = `${esc(d.subtitle || "")} 详细逻辑见仓库 <b>${esc(d.doc || "需求优化文档13.0.md")}</b>。${esc(d.note || "")}`;
   }
   const flow = $("#engineFlow");
   if (flow) {
@@ -4566,7 +4660,7 @@ async function loadEngineBlueprint() {
   if (dom) {
     dom.innerHTML = (d.domains || []).map((x) =>
       `<label class="engine-dom ${x.on ? "" : "off"}">
-        <input type="checkbox" disabled ${x.on ? "checked" : ""}> ${esc(x.name)}
+        <input type="checkbox" data-dom="${esc(x.id)}" ${x.on ? "checked" : ""}> ${esc(x.name)}
         <div class="ed-from">${esc(x.from)}</div>
       </label>`).join("");
   }
@@ -4583,23 +4677,30 @@ async function loadEngineBlueprint() {
   const wbox = $("#engineWeights");
   if (wbox) {
     wbox.innerHTML = (d.weights || []).map((w) =>
-      `<label class="sp-w">${esc(w.name)} <b>${w.w}</b>
-        <input type="range" min="0" max="40" value="${w.w}" disabled>
+      `<label class="sp-w">${esc(w.name)} <b id="engw_${esc(w.id)}">${w.w}</b>
+        <input type="range" min="0" max="40" data-w="${esc(w.id)}" value="${w.w}">
         <span class="muted" style="font-size:calc(11px * var(--font-scale))">${esc(w.note || "")}</span></label>`).join("");
   }
   const cons = $("#engineConsume");
+  const c = d.consume || {};
   if (cons) {
-    cons.innerHTML = [
-      ["智能选股综合分接入向量", true],
-      ["策略命中页走信号包", true],
-      ["宏观催化页走 Brief", true],
-      ["LLM 写 Brief 句子", false],
-    ].map(([lab, on]) =>
-      `<label class="muted" style="font-size:calc(13px * var(--font-scale))"><input type="checkbox" disabled ${on ? "checked" : ""}> ${lab}</label>`).join("");
+    cons.innerHTML = `
+      <label class="muted" style="font-size:calc(13px * var(--font-scale))"><input type="checkbox" id="engConsVector" ${c.smartpick_vector !== false ? "checked" : ""}> 智能选股综合分接入向量</label>
+      <label class="muted" style="font-size:calc(13px * var(--font-scale))"><input type="checkbox" id="engConsSignals" ${c.smartpick_signals !== false ? "checked" : ""}> 策略命中页走信号包</label>
+      <label class="muted" style="font-size:calc(13px * var(--font-scale))"><input type="checkbox" id="engConsCatalyst" ${c.smartpick_catalyst !== false ? "checked" : ""}> 宏观催化页走 Brief</label>
+      <label class="muted" style="font-size:calc(13px * var(--font-scale))"><input type="checkbox" disabled ${d.llm_brief ? "checked" : ""}> LLM 写 Brief 句子（默认关）</label>`;
   }
   const rules = $("#engineRules");
   if (rules) rules.textContent = "铁律：" + (d.rules || []).join(" · ");
+  paintEngineLive(d);
 }
+
+$("#engineWeights")?.addEventListener("input", (e) => {
+  const inp = e.target.closest("input[type=range]");
+  if (!inp) return;
+  const lab = $(`#engw_${inp.dataset.w}`);
+  if (lab) lab.textContent = inp.value;
+});
 
 window.jumpApp = (tab, extra = {}) => {
   const btn = $(`#mainTabs .tab[data-tab="${tab}"]`);
@@ -4859,40 +4960,210 @@ async function loadSmartpick() {
   applyAlertDock();
   loadAlerts();
   try {
-    const bp = await ensureEngineBlueprint();
+    const bp = await ensureEngineBlueprint(true);
     const banner = $("#spEngineBanner");
+    const run = bp.run || {};
+    const consume = (bp.config && bp.config.consume) || {};
     if (banner) {
-      banner.textContent = smartpickSub === "composite"
-        ? "综合分来自现场计算 · 策略引擎接入后将改为消费个股向量（StockVector）。设计见设置→策略引擎配置。"
-        : (bp.subtitle || "策略引擎本轮只落设计，不编造名单。");
+      if (smartpickSub === "composite") {
+        banner.textContent = (bp.enabled && consume.smartpick_vector && bp.has_snapshot)
+          ? `综合分可消费引擎向量 · 快照 ${run.run_id || ""} · ${run.asof || ""}。未写入快照的个股仍用现场分。`
+          : "综合分来自现场计算 · 启用引擎并打开「综合分接入向量」后将消费 StockVector。";
+      } else if (bp.has_snapshot) {
+        banner.textContent = `引擎快照 ${run.kind || ""} ${run.asof || ""} · ${run.run_id || ""} · 量化参考，不构成投资建议`;
+      } else {
+        banner.textContent = "尚无引擎快照。可到设置→策略引擎配置点「跑一次引擎」。不编造名单。";
+      }
     }
     if (smartpickSub === "composite") {
       spMeta = await api("/api/smartpick/meta");
       if (!Object.keys(spState.weights).length) spState.weights = { ...(spMeta.weights || {}) };
       renderSpControls();
     } else {
-      renderSmartpickEnginePane(bp);
+      await renderSmartpickEnginePane(bp);
     }
   } catch (err) { console.warn(err); }
 }
 
-function renderSmartpickEnginePane(bp) {
-  const box = $("#spPaneEngine");
-  if (!box) return;
-  const tab = (bp.smartpick_tabs || []).find((t) => t.id === smartpickSub) || {};
-  const jumps = (tab.jumps || []).map((j) => {
+function spEngineJumps(tab) {
+  return (tab.jumps || []).map((j) => {
     const extra = j.view ? `{view:'${j.view}'}` : (j.sub ? `{sub:'${j.sub}'}` : "{}");
     return `<button class="btn small" type="button" onclick="jumpApp('${esc(j.tab)}', ${extra})">${esc(j.label)}</button>`;
   }).join("");
-  box.innerHTML = `
-    <div class="card">
-      <div class="card-title">${esc(tab.name || "引擎结果")} <span class="muted">等待策略引擎产出 · 不编造名单</span></div>
+}
+
+function spEngineEmpty(tab, reason) {
+  return `<div class="card">
+      <div class="card-title">${esc(tab.name || "引擎结果")} <span class="muted">不编造名单</span></div>
       <div class="muted" style="margin-bottom:8px">${esc(tab.blurb || "")}</div>
       <div class="sp-engine-empty">
-        <div class="empty" style="padding:12px 0">${esc(tab.empty || "尚无引擎数据")}</div>
-        <div class="jumps">${jumps}</div>
+        <div class="empty" style="padding:12px 0">${esc(reason || tab.empty || "尚无引擎数据")}</div>
+        <div class="jumps">${spEngineJumps(tab)}</div>
       </div>
     </div>`;
+}
+
+async function renderSmartpickEnginePane(bp) {
+  const box = $("#spPaneEngine");
+  if (!box) return;
+  const tab = (bp.smartpick_tabs || []).find((t) => t.id === smartpickSub) || {};
+  box.innerHTML = `<div class="card"><div class="empty">加载中…</div></div>`;
+  try {
+    if (smartpickSub === "signals") {
+      const [buy, sell] = await Promise.all([
+        api("/api/engine/signals?side=buy&limit=40"),
+        api("/api/engine/signals?side=sell&limit=40"),
+      ]);
+      const paint = (d, side) => {
+        const items = d.items || [];
+        if (!items.length) return `<div class="empty">${esc(d.empty_reason || "无命中")}</div>`;
+        return `<table><thead><tr>
+          <th>名称</th><th>现价</th><th>涨跌</th><th>综合分</th><th>方案</th><th>入场/止盈/止损</th><th>跟踪</th>
+        </tr></thead><tbody>${items.map((r) => `
+          <tr data-code="${esc(r.code)}" data-name="${esc(r.name)}" onclick="openStock('${esc(r.code)}','${esc(r.name)}')">
+            <td>${esc(r.name)} <span class="muted">${esc(r.code)}</span></td>
+            <td class="num">${pxHtml(r.price, r.pct)}</td>
+            <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
+            <td class="num">${fmt(r.score, 1)}</td>
+            <td>${esc(r.plan_id || "")}</td>
+            <td>${signalLevelsHtml(r)}</td>
+            <td>${esc(r.task_status || "")}</td>
+          </tr>`).join("")}</tbody></table>`;
+      };
+      box.innerHTML = `
+        <div class="card">
+          <div class="card-title">策略命中 <span class="muted">${esc((buy.run_id || sell.run_id || "") + " " + (buy.asof || ""))}</span></div>
+          <div class="muted" style="margin-bottom:8px">${esc(tab.blurb || "")} 买/卖分列，不混用。</div>
+          <div class="card-title">买点 ${buy.count || 0}</div>
+          ${paint(buy, "buy")}
+          <div class="card-title" style="margin-top:16px">卖点 ${sell.count || 0}</div>
+          ${paint(sell, "sell")}
+          <div class="jumps" style="margin-top:12px">${spEngineJumps(tab)}</div>
+        </div>`;
+      return;
+    }
+    if (smartpickSub === "catalyst") {
+      const d = await api("/api/engine/catalysts");
+      const items = d.items || [];
+      if (!items.length) {
+        box.innerHTML = spEngineEmpty(tab, d.empty_reason);
+        return;
+      }
+      box.innerHTML = `
+        <div class="card">
+          <div class="card-title">宏观催化 <span class="muted">${esc(d.run_id || "")} · ${esc(d.asof || "")}</span></div>
+          <div class="muted" style="margin-bottom:8px">${esc(tab.blurb || "")}</div>
+          <div class="engine-cat-grid">${items.map((c) => `
+            <div class="engine-cat" data-board="${esc((c.sectors || [])[0] || "")}">
+              <div class="k">${esc(c.kind || "")} · ${esc(c.event_time || "").slice(0, 10)}</div>
+              <div><b>${esc(c.title || "")}</b></div>
+              <div class="muted">${esc((c.sectors || []).slice(0, 6).join("、") || "未映射板块")}</div>
+            </div>`).join("")}</div>
+          <div id="spCatStocks" class="muted" style="margin-top:12px">点击有板块的卡片查看快照内 TOP20。</div>
+          <div class="jumps" style="margin-top:12px">${spEngineJumps(tab)}</div>
+        </div>`;
+      box.querySelectorAll(".engine-cat").forEach((el) => {
+        el.addEventListener("click", () => showEngineBoard(el.dataset.board || ""));
+      });
+      return;
+    }
+    if (smartpickSub === "snapshot") {
+      const d = await api("/api/engine/snapshot");
+      if (d.empty) {
+        box.innerHTML = spEngineEmpty(tab, d.empty_reason);
+        return;
+      }
+      const regime = d.regime || {};
+      const domains = d.domains || {};
+      const facts = (d.brief && d.brief.key_facts) || [];
+      box.innerHTML = `
+        <div class="card">
+          <div class="card-title">引擎快照 <span class="muted">${esc(d.run_id || "")} · ${esc(d.kind || "")} · ${esc(d.status || "")}</span></div>
+          <div>${esc(regime.sentence || regime.label || "体制未知")}</div>
+          <div class="muted">${esc(d.note || "")} ${esc(d.disclaimer || "")}</div>
+        </div>
+        <div class="card">
+          <div class="card-title">域新鲜度</div>
+          ${(Object.entries(domains).map(([k, v]) =>
+            `<div class="kv"><span class="k">${esc(k)}</span><span>${v.available ? (v.rows + " 条 · " + (v.asof || "")) : ("缺失 · " + (v.error || ""))}</span></div>`).join("")) || '<div class="empty">无域记录</div>'}
+        </div>
+        <div class="card">
+          <div class="card-title">关键事实</div>
+          ${facts.length ? facts.map((f) => `<div>· ${esc(f.title || f.term || f.name || JSON.stringify(f))}</div>`).join("") : '<div class="empty">窗口内无政策/热词/日历（不编造）</div>'}
+        </div>
+        <div class="card">
+          <div class="card-title">向量 Top</div>
+          ${(d.stocks || []).length ? `<table><thead><tr><th>名称</th><th>现价</th><th>综合分</th><th>购买指数</th><th>说明</th></tr></thead><tbody>
+            ${d.stocks.map((r) => `<tr data-code="${esc(r.code)}" onclick="openStock('${esc(r.code)}','${esc(r.name)}')">
+              <td>${esc(r.name)} <span class="muted">${esc(r.code)}</span></td>
+              <td class="num">${pxHtml(r.price, r.pct)}</td>
+              <td class="num"><b>${fmt(r.score, 1)}</b></td>
+              <td class="num">${fmt(r.d_buy, 0)}</td>
+              <td>${esc(r.reason_bits || "")}</td>
+            </tr>`).join("")}</tbody></table>` : '<div class="empty">无个股向量</div>'}
+        </div>`;
+      return;
+    }
+    if (smartpickSub === "verify") {
+      const d = await api("/api/engine/tasks?limit=80");
+      const items = d.items || [];
+      const retTxt = (v) => (v == null || v === "") ? "—" : pct(v);
+      box.innerHTML = `
+        <div class="card">
+          <div class="card-title">信号验证 <span class="muted">${items.length} 条任务</span></div>
+          <div class="muted" style="margin-bottom:8px">${esc(d.note || tab.blurb || "")}</div>
+          <button class="btn" type="button" disabled title="${esc(d.backtest_reason || "")}">日K回测（关闭）</button>
+          <div class="muted" style="margin:8px 0 12px">${esc(d.backtest_reason || "缺少按日因子表，回测入口关闭。")}</div>
+          ${items.length ? `<table><thead><tr>
+            <th>日期</th><th>名称</th><th>方向</th><th>方案</th><th>入场</th><th>止盈</th><th>止损</th>
+            <th>状态</th><th>+1日</th><th>+5日</th>
+          </tr></thead><tbody>${items.map((r) => `
+            <tr data-code="${esc(r.code)}" onclick="openStock('${esc(r.code)}','${esc(r.name || "")}')">
+              <td>${esc(r.asof || "")}</td>
+              <td>${esc(r.name || "")} <span class="muted">${esc(r.code)}</span></td>
+              <td>${esc(r.side || "")}</td>
+              <td>${esc(r.plan_id || "")}</td>
+              <td class="num">${fmt(r.entry_px)}</td>
+              <td class="num">${fmt(r.take_px)}</td>
+              <td class="num">${fmt(r.stop_px)}</td>
+              <td><span class="task-st ${esc(r.status || "")}">${esc(r.status || "")}</span></td>
+              <td class="num">${retTxt(r.ret_1)}</td>
+              <td class="num">${retTxt(r.ret_5)}</td>
+            </tr>`).join("")}</tbody></table>` : `<div class="empty">${esc(d.empty_reason || tab.empty || "尚无信号任务")}</div>`}
+          <div class="jumps" style="margin-top:12px">${spEngineJumps(tab)}</div>
+        </div>`;
+      return;
+    }
+    box.innerHTML = spEngineEmpty(tab);
+  } catch (err) {
+    box.innerHTML = `<div class="card"><div class="empty">加载失败：${esc(err.message || err)}</div></div>`;
+  }
+}
+
+window.showEngineBoard = async (board) => {
+  const box = $("#spCatStocks");
+  if (!box) return;
+  if (!board) {
+    box.innerHTML = '<div class="empty">该条催化未映射板块，不猜测个股。</div>';
+    return;
+  }
+  box.innerHTML = `<div class="empty">加载「${esc(board)}」快照个股…</div>`;
+  try {
+    const d = await api(`/api/engine/stocks?board=${encodeURIComponent(board)}&limit=20`);
+    const items = d.items || [];
+    box.innerHTML = items.length
+      ? `<div class="card-title">${esc(board)} TOP${items.length}</div>
+         <table><thead><tr><th>名称</th><th>现价</th><th>综合分</th><th>说明</th></tr></thead><tbody>
+         ${items.map((r) => `<tr onclick="openStock('${esc(r.code)}','${esc(r.name)}')">
+           <td>${esc(r.name)} <span class="muted">${esc(r.code)}</span></td>
+           <td class="num">${pxHtml(r.price, r.pct)}</td>
+           <td class="num"><b>${fmt(r.score, 1)}</b></td>
+           <td>${esc(r.reason_bits || "")}</td>
+         </tr>`).join("")}</tbody></table>`
+      : `<div class="empty">${esc(d.empty_reason || "该板块无个股向量")}</div>`;
+  } catch (err) {
+    box.innerHTML = `<div class="empty">加载失败：${esc(err.message || err)}</div>`;
+  }
 }
 
 $("#smartpickTabs")?.addEventListener("click", (e) => {
@@ -4968,6 +5239,9 @@ function renderSpResult(d) {
   $("#spCount").textContent = `共 ${d.total || 0} 只`;
   $("#spLocal").style.display = "";
   $("#spLocal").textContent = d.local_summary || "";
+  if (d.score_source === "engine" && d.engine) {
+    $("#spLocal").textContent += ` 快照 ${d.engine.run_id || ""} · ${d.engine.asof || ""}。`;
+  }
   const ai = d.ai || {};
   const box = $("#spAiBox");
   if (ai.text) {

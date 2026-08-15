@@ -130,6 +130,21 @@ def _job_metrics_rebuild():
     """盘后：全市场K线同步 + 行业映射 + 指标重算（企稳/购买指数/情绪/暗盘力量）。"""
     stocklist.full_sync()
     metrics_svc.rebuild_all(include_kline=True)
+    try:
+        from .services import engine as engine_svc
+        engine_svc.track_open_tasks()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("信号跟踪失败: %s", exc)
+
+
+def _job_engine_eod():
+    from .services import engine as engine_svc
+    engine_svc.maybe_auto_run("eod")
+
+
+def _job_engine_intraday():
+    from .services import engine as engine_svc
+    engine_svc.maybe_auto_run("intraday")
 
 
 def _job_metrics_recompute():
@@ -141,7 +156,7 @@ from .database import get_meta_json, set_meta_json
 
 # 间隔型任务（可调频率，分钟）
 INTERVAL_JOBS = {"medium": 1, "news": 1, "snapshot": 5, "metrics_recompute": 10, "alerts": 10,
-                 "sector_flow": 5, "hot_terms": 60, "official_policy": 240}
+                 "sector_flow": 5, "hot_terms": 60, "official_policy": 240, "engine_intraday": 10}
 ALLOWED_MINUTES = [1, 5, 10, 15, 30, 60, 120, 180, 240]
 
 
@@ -230,6 +245,10 @@ def start() -> None:
                   "cron", hour=3, minute=40, id="official_policy_backfill")
     sched.add_job(_run("热度词汇重算", _job_hot_terms),
                   "interval", minutes=60, id="hot_terms")
+    sched.add_job(_run("策略引擎日终快照", _job_engine_eod), "cron",
+                  day_of_week="mon-fri", hour=15, minute=50, id="engine_eod")
+    sched.add_job(_run("策略引擎盘中增量", _job_engine_intraday, only_trading=True),
+                  "interval", minutes=10, id="engine_intraday")
     sched.start()
     _scheduler = sched
     _apply_overrides(sched)
@@ -250,7 +269,9 @@ def status() -> list[dict]:
                     "finance_rebuild": "财报评级重建",
                     "official_policy": "官方政策增量同步",
                     "official_policy_backfill": "官方政策半年回补",
-                    "hot_terms": "热度词汇重算"}.get(job.id, job.id)
+                    "hot_terms": "热度词汇重算",
+                    "engine_eod": "策略引擎日终快照",
+                    "engine_intraday": "策略引擎盘中增量"}.get(job.id, job.id)
             st = JOB_STATUS.get(name, {})
             overrides = get_meta_json("job_overrides", {}) or {}
             minutes = (overrides.get(job.id, {}) or {}).get("minutes") or INTERVAL_JOBS.get(job.id)

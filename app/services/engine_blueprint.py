@@ -1,7 +1,7 @@
-"""策略引擎 12.0 蓝图：只读设计对象，不跑采集、不写快照、不编评分。"""
+"""策略引擎蓝图：13.0 已落地采集→快照；本模块仍提供只读设计对象给设置页。"""
 
-VERSION = "12.0.0"
-STATUS = "design_only"
+VERSION = "13.0.0"
+STATUS = "live"
 
 DOMAINS = [
     {"id": "market", "name": "大盘环境", "from": "指数/涨跌家数/成交额", "on": True},
@@ -36,8 +36,8 @@ WEIGHTS = [
 ]
 
 SCHEDULE = [
-    {"id": "intraday", "name": "盘中刷新", "when": "交易时段每 10 分钟", "out": "intraday 快照，允许部分域缺失"},
-    {"id": "eod", "name": "日终定拍", "when": "交易日 15:50（指标重建之后）", "out": "当日正式快照"},
+    {"id": "intraday", "name": "盘中刷新", "when": "交易时段每 10 分钟（需启用且打开盘中开关）", "out": "intraday 快照，允许部分域缺失"},
+    {"id": "eod", "name": "日终定拍", "when": "交易日 15:50（指标重建之后，需启用）", "out": "当日正式快照"},
     {"id": "llm", "name": "LLM 摘要", "when": "默认关闭", "out": "只写 Brief 句子，失败回退规则"},
 ]
 
@@ -55,21 +55,22 @@ SMARTPICK_TABS = [
         "id": "composite",
         "name": "综合选股",
         "live": True,
-        "blurb": "本轮仍用现场计算（模板/硬条件/权重）。引擎启用后改为消费 StockVector，页头会写明快照 run。",
+        "blurb": "默认现场计算。引擎启用且消费向量且已有快照时，综合分改用 StockVector；页头写明 run。",
     },
     {
         "id": "signals",
         "name": "策略命中",
-        "live": False,
-        "blurb": "将列出引擎信号包中的买点/卖点，方案名与设置→选股策略启用集一致。本轮不跑引擎，故无名单。",
-        "empty": "策略引擎未产出信号包。可先在「综合选股」计算，或到设置→选股策略查看启用方案。",
-        "jumps": [{"tab": "settings", "view": "strategy", "label": "打开选股策略"}],
+        "live": True,
+        "blurb": "列出引擎信号包中的买点/卖点，方案名与设置→选股策略启用集一致。无快照不编造名单。",
+        "empty": "策略引擎未产出信号包。可先在「综合选股」计算，或到设置→策略引擎配置跑一次引擎。",
+        "jumps": [{"tab": "settings", "view": "engine", "label": "打开策略引擎配置"},
+                  {"tab": "settings", "view": "strategy", "label": "打开选股策略"}],
     },
     {
         "id": "catalyst",
         "name": "宏观催化",
-        "live": False,
-        "blurb": "将展示引擎抽取的关键政策、热词、高星日历，点击路径：催化 → 热门板块 → 个股 TOP20。",
+        "live": True,
+        "blurb": "引擎抽取的关键政策、热词、高星日历。点击板块可看快照内个股 TOP20。",
         "empty": "尚无引擎 Brief。原始数据仍在宏观情报里，可先查看官方政策与热度词汇。",
         "jumps": [
             {"tab": "macro", "sub": "official", "label": "官方政策信息"},
@@ -79,9 +80,17 @@ SMARTPICK_TABS = [
     {
         "id": "snapshot",
         "name": "引擎快照",
-        "live": False,
-        "blurb": "将展示体制、量能、关键事实清单、各域新鲜度与缺失原因。",
-        "empty": "尚无引擎快照。完整设计见设置→策略引擎配置。",
+        "live": True,
+        "blurb": "体制、量能、关键事实清单、各域新鲜度与缺失原因。",
+        "empty": "尚无引擎快照。请到设置→策略引擎配置点「跑一次引擎」。",
+        "jumps": [{"tab": "settings", "view": "engine", "label": "打开策略引擎配置"}],
+    },
+    {
+        "id": "verify",
+        "name": "信号验证",
+        "live": True,
+        "blurb": "跟踪命中后的真实后续日 K（+1/+5 日）。回测需按日因子表，当前入口关闭。",
+        "empty": "尚无信号任务。先跑引擎或打开买点窗产生命中。",
         "jumps": [{"tab": "settings", "view": "engine", "label": "打开策略引擎配置"}],
     },
 ]
@@ -93,6 +102,8 @@ RULES = [
     "策略 SQL 只在服务端硬编码",
     "缺数给原因，不编造政策/热度/股东/资金",
     "LLM 失败回退本地规则，不假装成功",
+    "跟踪收益只用后续日 K，无下一根为空白不是 0%",
+    "同日高低触及止盈止损记 ambiguous，不选边",
     "全部结论为量化参考，不构成投资建议",
 ]
 
@@ -102,24 +113,48 @@ FLOW = [
     {"step": "3 分析", "text": "规则计算体制、轮动、催化、个股向量、买/卖信号包"},
     {"step": "4 快照", "text": "按交易日落盘，供智能选股与其它入口消费"},
     {"step": "5 消费", "text": "综合分=向量加权；命中页=信号包；催化页=Brief；缺快照则回退现场计算"},
+    {"step": "6 验证", "text": "signal_task 用后续日 K 跟踪；无 factor_daily 不开放回测"},
 ]
 
 
 def blueprint() -> dict:
+    from . import engine as eng
+    cfg = eng.get_config()
+    st = eng.status()
+    run = st.get("run")
+    enabled = bool(cfg.get("enabled"))
+    has = bool(st.get("has_snapshot"))
+    domains = []
+    for d in DOMAINS:
+        item = dict(d)
+        item["on"] = bool(cfg.get("domains", {}).get(d["id"], d.get("on", True)))
+        domains.append(item)
+    weights = []
+    for w in WEIGHTS:
+        item = dict(w)
+        item["w"] = int(cfg.get("weights", {}).get(w["id"], w["w"]))
+        weights.append(item)
+    consume = cfg.get("consume") or {}
     return {
         "ok": True,
         "version": VERSION,
         "status": STATUS,
-        "enabled": False,
+        "enabled": enabled,
+        "intraday": bool(cfg.get("intraday")),
+        "llm_brief": bool(cfg.get("llm_brief")),
+        "has_snapshot": has,
+        "run": run,
+        "config": cfg,
         "title": "策略引擎配置",
-        "subtitle": "本轮只落设计逻辑，不跑采集、不写快照、不编评分。",
-        "doc": "需求优化文档12.0.md",
-        "domains": DOMAINS,
-        "weights": WEIGHTS,
+        "subtitle": "已落地采集→快照→信号任务。默认关闭自动拍；未启用时智能选股仍现场计算。",
+        "doc": "需求优化文档13.0.md",
+        "domains": domains,
+        "weights": weights,
+        "consume": consume,
         "schedule": SCHEDULE,
         "outputs": OUTPUTS,
         "smartpick_tabs": SMARTPICK_TABS,
         "rules": RULES,
         "flow": FLOW,
-        "note": "启用开关将在实现阶段写入 kv_meta.engine_config，默认仍为关闭。",
+        "note": "启用后交易日 15:50 日终拍；盘中增量需另开开关。手动跑一次可不启用。回测仍关闭（缺 factor_daily）。",
     }

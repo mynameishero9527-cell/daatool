@@ -297,6 +297,87 @@ CREATE TABLE IF NOT EXISTS intel_item_ai (
     updated_at    TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_intel_item_ai_src ON intel_item_ai(source, updated_at);
+
+-- 13.0：策略引擎快照与信号任务（策略只读本地库，禁止写行情表）
+CREATE TABLE IF NOT EXISTS engine_run (
+    run_id      TEXT PRIMARY KEY,
+    asof        TEXT NOT NULL,
+    kind        TEXT NOT NULL,           -- eod / intraday / manual
+    started_at  TEXT,
+    finished_at TEXT,
+    status      TEXT,                    -- ok / partial / fail
+    domains_json TEXT,
+    brief_json  TEXT,
+    note        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_engine_run_asof ON engine_run(asof, kind);
+
+CREATE TABLE IF NOT EXISTS engine_stock (
+    run_id     TEXT NOT NULL,
+    code       TEXT NOT NULL,
+    name       TEXT,
+    price      REAL,
+    pct        REAL,
+    industry   TEXT,
+    d_buy REAL, d_sent REAL, d_dark REAL, d_stab REAL, d_flow REAL,
+    d_vol REAL, d_fin REAL, d_sector REAL, d_macro REAL, d_ext REAL, d_env REAL,
+    fin_missing INTEGER DEFAULT 0,
+    score      REAL,
+    hits_json  TEXT,
+    catalysts_json TEXT,
+    boards_json TEXT,
+    reason_bits TEXT,
+    PRIMARY KEY (run_id, code)
+);
+CREATE INDEX IF NOT EXISTS idx_engine_stock_score ON engine_stock(run_id, score);
+
+CREATE TABLE IF NOT EXISTS engine_sector (
+    run_id    TEXT NOT NULL,
+    dim       TEXT NOT NULL,
+    name      TEXT NOT NULL,
+    hot_score REAL,
+    pct       REAL,
+    net_in    REAL,
+    direction TEXT,
+    tags      TEXT,
+    PRIMARY KEY (run_id, dim, name)
+);
+
+CREATE TABLE IF NOT EXISTS engine_catalyst (
+    run_id        TEXT NOT NULL,
+    cat_id        TEXT NOT NULL,
+    kind          TEXT,
+    title         TEXT,
+    direction     TEXT,
+    impact_level  INTEGER,
+    sectors_json  TEXT,
+    event_time    TEXT,
+    extra_json    TEXT,
+    PRIMARY KEY (run_id, cat_id)
+);
+
+CREATE TABLE IF NOT EXISTS signal_task (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    asof      TEXT,
+    code      TEXT,
+    name      TEXT,
+    side      TEXT,
+    plan_id   TEXT,
+    entry_px  REAL,
+    stop_px   REAL,
+    take_px   REAL,
+    expire_n  INTEGER,
+    status    TEXT,
+    exit_date TEXT,
+    exit_px   REAL,
+    ret_1     REAL,
+    ret_5     REAL,
+    ret_20    REAL,
+    note      TEXT,
+    run_id    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_signal_task_open ON signal_task(status, asof);
+CREATE INDEX IF NOT EXISTS idx_signal_task_code ON signal_task(code, asof);
 """
 
 # 已有表的增量列迁移（幂等）
