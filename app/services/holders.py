@@ -309,6 +309,8 @@ def get_holders(code: str) -> dict:
     code = (code or "").strip().lower()
     if not code or not eastmoney.f10_code(code):
         return _empty(code, "该代码没有股东披露数据")
+    if code.startswith(("sh000", "sz399", "bj899", "sh880")):
+        return _empty(code, "指数没有股东持股披露")
 
     def loader():
         try:
