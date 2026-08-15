@@ -51,10 +51,15 @@ def get_pull_smash(code: str) -> dict:
     pull_score = round(min(100.0, max_rise / 5 * 100), 0)
     smash_score = round(min(100.0, -max_drop / 5 * 100), 0)
 
-    # 涨跌停价（按板块幅度）
-    limit = 0.20 if code[2:].startswith(("30", "68")) else 0.30 if code.startswith("bj") else 0.10
-    up_limit = round(prev_close * (1 + limit), 2)
-    down_limit = round(prev_close * (1 - limit), 2)
+    meta = query("SELECT name, board FROM stock_list WHERE code=?", (code,))
+    name = ((meta[0]["name"] if meta else "") or quote.get("name") or "")
+    board = meta[0]["board"] if meta else ""
+    lim = market_svc.price_limits(code, prev_close, name, board)
+    up_limit = lim["up_limit"]
+    down_limit = lim["down_limit"]
+    limit = lim["limit_pct"] or 0.10
+    if up_limit is None or down_limit is None:
+        return {"available": False, "desc": "昨收缺失，暂无法计算涨跌停价"}
     high = quote.get("high") or max(prices)
     low = quote.get("low") or min(prices)
     price = quote.get("price") or prices[-1]

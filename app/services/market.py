@@ -34,6 +34,66 @@ def normalize_code(raw: str) -> str | None:
     return None
 
 
+def _code_digits(code: str) -> str:
+    c = (code or "").strip().lower()
+    if c.startswith(("sh", "sz", "bj")):
+        return c[2:]
+    return c
+
+
+def limit_pct(code: str, name: str = "", board: str = "") -> float:
+    """涨跌停幅度：创业/科创 ±20%、北交所 ±30%、主板 ST ±5%、其余主板 ±10%。
+
+    创业板/科创板（含 ST）仍按 20%，不按主板 ST 的 5%。无上市日数据时不编造首日无涨跌停。
+    """
+    c = (code or "").strip().lower()
+    d = _code_digits(code)
+    b = board or ""
+    n = (name or "").upper()
+    if d.startswith(("30", "68")) or "创业" in b or "科创" in b:
+        return 0.20
+    if c.startswith("bj") or d.startswith(("8", "4", "92")) or "北交" in b:
+        return 0.30
+    if "ST" in n:
+        return 0.05
+    return 0.10
+
+
+def price_limits(code: str, prev_close, name: str = "", board: str = "") -> dict:
+    """昨收 × (1±幅度) 得到涨停/跌停价；昨收缺失则返回空，不编造。"""
+    pct = limit_pct(code, name, board)
+    try:
+        prev = float(prev_close) if prev_close is not None else None
+    except (TypeError, ValueError):
+        prev = None
+    if not prev or prev <= 0:
+        return {"up_limit": None, "down_limit": None, "limit_pct": pct, "prev_close": None}
+    return {
+        "prev_close": round(prev, 4),
+        "up_limit": round(prev * (1 + pct) + 1e-8, 2),
+        "down_limit": round(prev * (1 - pct) + 1e-8, 2),
+        "limit_pct": pct,
+    }
+
+
+def attach_price_limits(quote: dict | None, code: str, name: str = "", board: str = "") -> dict:
+    """把涨跌停价挂到行情字典上；不修改传入对象。昨收缺失时用现价与涨跌幅反推。"""
+    q = dict(quote or {})
+    prev = q.get("prev_close")
+    if prev in (None, ""):
+        try:
+            px = float(q.get("price"))
+            chg = float(q.get("pct"))
+            if px > 0 and chg > -99.999:
+                prev = px / (1.0 + chg / 100.0)
+            else:
+                prev = None
+        except (TypeError, ValueError):
+            prev = None
+    q.update(price_limits(code, prev, name, board))
+    return q
+
+
 def get_quotes(codes: list[str]) -> dict[str, dict]:
     """批量实时行情：腾讯 → 新浪 → 离线兜底。"""
     if not codes:

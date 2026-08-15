@@ -1388,29 +1388,32 @@ function paintScoreCard() {
   const q = (d && d.quote) || {};
   const br = r && r.broker_ratings;
   const price = q.price != null ? q.price : (br && br.current_price);
-  const priceHead = price !== undefined && price !== null ? `
-      <div class="price-inline">
-        ${pxHtml(price, q.pct, 2)}
-        <span class="${cls(q.pct)}" style="font-weight:600;margin-left:6px">${q.change != null ? `${sign(q.change)}${fmt(q.change)} (${pct(q.pct)})` : pct(q.pct)}</span>
-      </div>` : "";
-  let finHero;
-  if (!f) {
-    finHero = `<div class="score-hero"><div class="muted">财报加载中…</div></div>`;
-  } else if (!f.grade) {
-    finHero = `<div class="score-hero">
-      <div class="score-num muted">—</div>
-      <span class="badge level-2">财报评级</span>
-      <div class="score-clamp">${esc(f.summary || f.grade_desc || "暂无财务分析披露")}</div>
-    </div>`;
-  } else {
-    const gcss = f.grade === "A" ? "level-4" : f.grade === "B" ? "level-3" : f.grade === "C" ? "level-2" : "level-1";
-    const tone = (f.grade === "A" || f.grade === "B") ? "up" : f.grade === "D" ? "down" : "flat";
-    finHero = `<div class="score-hero">
-      <div class="score-num ${tone}">${esc(f.grade)}</div>
-      <span class="badge ${gcss}">财报评级</span>
-      <div class="score-clamp">${esc(f.grade_desc || f.summary || "")}</div>
-    </div>`;
+  const target = br && br.consensus_target;
+  let rel = br && br.upside_pct;
+  if ((rel == null || Number.isNaN(Number(rel))) && Number.isFinite(Number(price)) && Number(price) && target != null) {
+    rel = (Number(target) - Number(price)) / Number(price) * 100;
   }
+  const gtone = !f ? "muted" : !f.grade ? "muted"
+    : (f.grade === "A" || f.grade === "B") ? "up" : f.grade === "D" ? "down" : "flat";
+  const gradeVal = !f ? "…" : (f.grade || "—");
+  const upLim = q.up_limit;
+  const dnLim = q.down_limit;
+  const quoteRow = `<div class="score-quote-row">
+      <div class="sqr-cell"><span>财报评级</span><b class="${gtone}">${esc(String(gradeVal))}</b></div>
+      <div class="sqr-cell"><span>现价</span>${price != null && price !== ""
+        ? `<b class="${cls(q.pct)}">${fmt(price)}</b>` : `<b class="muted">—</b>`}${
+          q.pct != null ? `<i class="${cls(q.pct)}">${pct(q.pct)}</i>` : ""}</div>
+      <div class="sqr-cell"><span>一致目标价</span>${target != null
+        ? `<b class="target-hl">${fmt(target)}</b>` : `<b class="muted">—</b>`}</div>
+      <div class="sqr-cell"><span>相对现价</span>${rel != null && !Number.isNaN(Number(rel))
+        ? `<b class="${cls(rel)}">${sign(Number(rel))}${fmt(Number(rel))}%</b>` : `<b class="muted">—</b>`}</div>
+      <div class="sqr-cell"><span>涨停价</span>${upLim != null
+        ? `<b class="up">${fmt(upLim)}</b>` : `<b class="muted">—</b>`}</div>
+      <div class="sqr-cell"><span>跌停价</span>${dnLim != null
+        ? `<b class="down">${fmt(dnLim)}</b>` : `<b class="muted">—</b>`}</div>
+    </div>`;
+  const gradeNote = (f && (f.grade_desc || f.summary))
+    ? `<div class="score-clamp">${esc(f.grade_desc || f.summary)}</div>` : "";
   let scoreHero;
   if (!r || r.score === null || r.score === undefined) {
     scoreHero = `<div class="score-hero composite">
@@ -1430,9 +1433,9 @@ function paintScoreCard() {
     </div>`;
   }
   card.innerHTML = `<div class="card-title">财报评级 · 综合评分</div>
-      ${priceHead}
-      <div class="score-duo">${finHero}${scoreHero}</div>
-      ${brokerTargetBlock(br, price)}
+      ${quoteRow}
+      ${gradeNote}
+      ${scoreHero}
       ${d ? analysisMetricsHtml(d) : ""}`;
 }
 

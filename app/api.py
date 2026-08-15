@@ -190,6 +190,13 @@ def get_fund_kline(code: str, period: str = "day"):
 def analysis(code: str):
     norm = market.normalize_code(code) or code
     quotes = market.get_quotes([norm])
+    raw = quotes.get(norm)
+    info = db_query("SELECT name, board FROM stock_list WHERE code=?", (norm,))
+    name = ((info[0]["name"] if info else "") or (raw or {}).get("name") or "")
+    board = info[0]["board"] if info else ""
+    quote = market.attach_price_limits(raw, norm, name, board)
+    if raw is None and quote.get("price") is None and quote.get("up_limit") is None:
+        quote = None
     rows = db_query("SELECT * FROM stock_metrics WHERE code=?", (norm,))
     m = rows[0] if rows else None
     metrics2 = None
@@ -206,7 +213,7 @@ def analysis(code: str):
             "divergence": m["divergence"], "updated_at": m["updated_at"],
         }
     return {
-        "quote": quotes.get(norm),
+        "quote": quote,
         "rating": rating.score_stock(norm),
         "metrics": metrics2,
         "dark": darkpool.get_dark_power(norm),
