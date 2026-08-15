@@ -881,6 +881,7 @@ window.openStock = (code, name) => {
   currentStock = { code, name };
   stockAnalysisCache = null;
   stockFinanceCache = null;
+  stockAnnounceCache = null;
   $("#searchResults").classList.remove("show");
   $$("#mainTabs .tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === "stock"));
   $$(".page").forEach((p) => p.classList.toggle("active", p.id === "page-stock"));
@@ -906,6 +907,7 @@ window.openStock = (code, name) => {
     loadProfile();
     loadAnalysis();
     loadHolders();
+    loadStockAnnouncements();
   }
 };
 
@@ -1167,37 +1169,96 @@ function metrics2Html(m, dark) {
   return html ? html + '<hr style="border-color:var(--border);margin:10px 0">' : "";
 }
 
-async function loadAnalysis() {
-  const card = $("#scoreCard");
-  card.innerHTML = '<div class="empty">股价评级计算中…</div>';
-  try {
-    const d = await api(`/api/analysis?code=${currentStock.code}`);
-    stockAnalysisCache = d;
-    refreshHoldExtraPanes();
-    const r = d.rating;
-    if (r.score === null || r.score === undefined) {
-      card.innerHTML = `<div class="card-title">股价评级</div><div class="empty">${esc(r.message || "暂无评分数据")}</div>` + metrics2Html(d.metrics, d.dark);
-      loadFinance();
-      return;
-    }
-    const s = r.snapshot;
-    const q = d.quote || {};
-    const priceHead = q.price !== undefined && q.price !== null ? `
-      <div style="text-align:center;padding-bottom:6px;border-bottom:1px solid var(--border);margin-bottom:8px">
-        ${pxHtml(q.price, q.pct, 2, "lg")}
-        <span class="${cls(q.pct)}" style="font-size:calc(15px * var(--font-scale));font-weight:600;margin-left:8px">${sign(q.change)}${fmt(q.change)} (${pct(q.pct)})</span>
-        <div class="muted" style="font-size:calc(11px * var(--font-scale))">现价 · ${esc(String(q.time || "").replace(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})$/, "$2-$3 $4:$5:$6"))} · ${esc(q.source || "")}</div>
-      </div>` : "";
-    card.innerHTML = `<div class="card-title">股价评级</div>
-      ${priceHead}
-      <div class="score-head">
-        <div class="score-num ${r.score >= 55 ? "up" : r.score < 45 ? "down" : "flat"}">${r.score}</div>
-        <span class="badge ${r.grade_css}">${r.grade} · ${r.volume_desc}</span><br>
-        <span class="badge ${r.advice_css}" style="margin-top:8px">${r.advice}</span>
-        <div class="desc-hl" style="margin-top:8px">${esc(r.advice_reason)}</div>
+function upsideHtml(v) {
+  if (v === null || v === undefined || Number.isNaN(Number(v))) {
+    return '<span class="muted">—</span>';
+  }
+  const n = Number(v);
+  const label = n >= 0 ? "上涨空间" : "下跌空间";
+  return `<span class="upside-hl ${cls(n)}">${label} ${sign(n)}${fmt(n)}%</span>`;
+}
+
+function stanceFromRatings(br) {
+  if (br && br.stance && (br.stance.增持 != null || br.stance.中性 != null || br.stance.减持 != null)) {
+    return {
+      增持: Number(br.stance.增持) || 0,
+      中性: Number(br.stance.中性) || 0,
+      减持: Number(br.stance.减持) || 0,
+    };
+  }
+  const stance = { 增持: 0, 中性: 0, 减持: 0 };
+  const items = (br && Array.isArray(br.items)) ? br.items : [];
+  items.forEach((it) => {
+    const r = it.rating || it.stance || "";
+    if (r === "买入" || r === "增持") stance.增持 += 1;
+    else if (r === "中性") stance.中性 += 1;
+    else stance.减持 += 1;
+  });
+  return stance;
+}
+
+function stanceBarHtml(stance) {
+  const longN = (stance && stance.增持) || 0;
+  const midN = (stance && stance.中性) || 0;
+  const shortN = (stance && stance.减持) || 0;
+  const tot = longN + midN + shortN;
+  const w = (n) => (tot ? (n / tot * 100) : 0);
+  return `<div class="stance-hist">
+    <div class="stance-bar" title="增持(含买入) ${longN} / 中性 ${midN} / 减持(含卖出) ${shortN}">
+      <div class="seg long" style="width:${w(longN)}%"></div>
+      <div class="seg mid" style="width:${w(midN)}%"></div>
+      <div class="seg short" style="width:${w(shortN)}%"></div>
+    </div>
+    <div class="stance-legend">
+      <span class="up">做多 ${longN} 家</span>
+      <span class="muted">中性 ${midN} 家</span>
+      <span class="down">做空 ${shortN} 家</span>
+    </div>
+  </div>`;
+}
+
+function brokerTargetBlock(br, quotePrice) {
+  if (!br) {
+    return `<div class="target-box"><div class="muted">暂无机构目标价</div></div>`;
+  }
+  const price = quotePrice != null && quotePrice !== "" ? Number(quotePrice) : Number(br.current_price);
+  const target = br.consensus_target;
+  let up = br.upside_pct;
+  if ((up == null || Number.isNaN(Number(up))) && Number.isFinite(price) && price && target != null) {
+    up = (Number(target) - price) / price * 100;
+  }
+  return `<div class="target-box">
+    <div class="kv"><span class="k">现价</span><span class="num">${Number.isFinite(price) ? fmt(price) : "—"}</span></div>
+    <div class="kv"><span class="k">机构一致目标价</span><span class="target-hl">${target != null ? fmt(target) : "—"}</span></div>
+    <div class="kv"><span class="k">相对现价</span>${upsideHtml(up)}</div>
+  </div>`;
+}
+
+function ratingBadge(rating) {
+  const r = rating || "";
+  const css = (r === "买入" || r === "增持") ? "advice-buy"
+    : (r === "减持" || r === "卖出") ? "advice-sell" : "advice-hold";
+  return `<span class="badge ${css}" style="font-size:calc(11px * var(--font-scale));padding:1px 8px">${esc(r || "—")}</span>`;
+}
+
+function analysisMetricsHtml(d) {
+  const r = d && d.rating;
+  if (!r) return "";
+  if (r.score === null || r.score === undefined) {
+    return `<div class="muted" style="margin-top:8px">${esc(r.message || "暂无综合评分数据")}</div>`
+      + metrics2Html(d.metrics, d.dark);
+  }
+  const s = r.snapshot || {};
+  return `
+      <hr style="border-color:var(--border);margin:10px 0">
+      <div class="muted" style="font-size:calc(12px * var(--font-scale));margin-bottom:6px">综合量能与操作参考（独立于财报评级）</div>
+      <div style="text-align:center;margin-bottom:8px">
+        <span class="badge ${r.grade_css}">${esc(r.grade || "")} · ${esc(r.volume_desc || "")}</span>
+        <span class="badge ${r.advice_css}" style="font-size:calc(12px * var(--font-scale));padding:3px 10px">${esc(r.advice || "")}</span>
+        <div class="desc-hl" style="margin-top:8px;text-align:left">${esc(r.advice_reason || "")}</div>
       </div>
       ${attributionHtml(d.attribution)}
-      ${Object.entries(r.components).map(([k, v]) => `
+      ${Object.entries(r.components || {}).map(([k, v]) => `
         <div class="comp-bar"><span class="label">${k}</span>
           <div class="track"><div class="fill" style="width:${v}%"></div></div>
           <span class="num">${v}</span></div>
@@ -1211,24 +1272,83 @@ async function loadAnalysis() {
       <div class="kv"><span class="k">5日主力净流入</span><span class="num ${cls(s.main_net_in_d5)}">${fmt((s.main_net_in_d5 || 0) / 10000)} 亿</span></div>
       <div class="kv"><span class="k">5日/20日/60日涨幅</span><span class="num">${pct(s.pct_d5)} / ${pct(s.pct_d20)} / ${pct(s.pct_d60)}</span></div>
       <div class="kv"><span class="k">PE(TTM) / PB</span><span class="num">${fmt(s.pe_ttm, 1)} / ${fmt(s.pb)}</span></div>
-      <div class="kv"><span class="k">总市值 / 流通市值</span><span class="num">${fmt(s.total_mv, 0)} / ${fmt(s.float_mv, 0)} 亿</span></div>
-      <div class="muted" style="font-size:calc(11px * var(--font-scale));margin-top:8px">机构评级、财务分析已移至下方持股情况对应页签。</div>`;
+      <div class="kv"><span class="k">总市值 / 流通市值</span><span class="num">${fmt(s.total_mv, 0)} / ${fmt(s.float_mv, 0)} 亿</span></div>`;
+}
+
+function paintScoreCard() {
+  const card = $("#scoreCard");
+  if (!card || !currentStock || isIndexCode(currentStock.code)) return;
+  const d = stockAnalysisCache;
+  const f = stockFinanceCache;
+  const r = d && d.rating;
+  const q = (d && d.quote) || {};
+  const br = r && r.broker_ratings;
+  const price = q.price != null ? q.price : (br && br.current_price);
+  const priceHead = price !== undefined && price !== null ? `
+      <div style="text-align:center;padding-bottom:6px;border-bottom:1px solid var(--border);margin-bottom:8px">
+        ${pxHtml(price, q.pct, 2, "lg")}
+        <span class="${cls(q.pct)}" style="font-size:calc(15px * var(--font-scale));font-weight:600;margin-left:8px">${q.change != null ? `${sign(q.change)}${fmt(q.change)} (${pct(q.pct)})` : ""}</span>
+        <div class="muted" style="font-size:calc(11px * var(--font-scale))">现价 · ${esc(String(q.time || "").replace(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})$/, "$2-$3 $4:$5:$6"))} · ${esc(q.source || "")}</div>
+      </div>` : "";
+  let gradeBlock;
+  if (!f) {
+    gradeBlock = '<div class="empty">财报评级加载中…</div>';
+  } else if (!f.grade) {
+    gradeBlock = `<div class="score-head">
+      <div class="score-num muted" style="font-size:calc(28px * var(--font-scale))">暂无</div>
+      <div class="muted">${esc(f.summary || f.grade_desc || "暂无财务分析披露")}</div>
+    </div>`;
+  } else {
+    const gcss = f.grade === "A" ? "level-4" : f.grade === "B" ? "level-3" : f.grade === "C" ? "level-2" : "level-1";
+    const tone = (f.grade === "A" || f.grade === "B") ? "up" : f.grade === "D" ? "down" : "flat";
+    gradeBlock = `<div class="score-head">
+      <div class="score-num ${tone}">${esc(f.grade)}</div>
+      <span class="badge ${gcss}">财报评级 ${esc(f.grade)}</span>
+      <div class="desc-hl" style="margin-top:8px">${esc(f.grade_desc || "")}</div>
+      <div class="muted" style="margin-top:6px;font-size:calc(12px * var(--font-scale))">${esc(f.summary || "")}</div>
+    </div>`;
+  }
+  card.innerHTML = `<div class="card-title">财报评级</div>
+      ${priceHead}
+      ${gradeBlock}
+      ${brokerTargetBlock(br, price)}
+      ${d ? analysisMetricsHtml(d) : ""}`;
+}
+
+async function loadAnalysis() {
+  const card = $("#scoreCard");
+  const code = currentStock && currentStock.code;
+  card.innerHTML = '<div class="empty">财报评级计算中…</div>';
+  try {
+    const d = await api(`/api/analysis?code=${code}`);
+    if (!currentStock || currentStock.code !== code) return;
+    stockAnalysisCache = d;
+    paintScoreCard();
+    refreshHoldExtraPanes();
     loadFinance();
   } catch (err) {
+    if (!currentStock || currentStock.code !== code) return;
     stockAnalysisCache = null;
-    card.innerHTML = '<div class="empty">股价评级加载失败</div>';
     console.warn(err);
+    paintScoreCard();
+    loadFinance();
   }
 }
 
 async function loadFinance() {
   if (!currentStock) return;
+  const code = currentStock.code;
   try {
-    stockFinanceCache = await api(`/api/finance?code=${currentStock.code}`);
+    const f = await api(`/api/finance?code=${code}`);
+    if (!currentStock || currentStock.code !== code) return;
+    stockFinanceCache = f;
   } catch (err) {
+    if (!currentStock || currentStock.code !== code) return;
     stockFinanceCache = { reports: [], summary: "财务数据加载失败", error: String(err && err.message || err) };
     console.warn(err);
   }
+  if (!currentStock || currentStock.code !== code) return;
+  paintScoreCard();
   refreshHoldExtraPanes();
 }
 
@@ -1251,7 +1371,7 @@ function holderTable(title, rows, floatHolder) {
     </tr></thead><tbody>${rows.map((r) => `
       <tr>
         <td>${r.rank || "-"}</td>
-        <td>${esc(r.name)}${r.shares_type ? ` <span class="muted">${esc(r.shares_type)}</span>` : ""}</td>
+        <td><span class="holder-name">${esc(r.name)}</span>${r.shares_type ? ` <span class="muted">${esc(r.shares_type)}</span>` : ""}</td>
         <td>${kindBadge(r.kind)}${r.holder_type ? ` <span class="muted">${esc(r.holder_type)}</span>` : ""}</td>
         <td class="num">${r.ratio !== null && r.ratio !== undefined ? fmt(r.ratio, 2) + "%" : "-"}</td>
         <td class="num">${esc(r.shares_txt || "-")}</td>
@@ -1275,6 +1395,7 @@ let holdAiBusy = false;
 let holdBriefBusy = false;
 let stockAnalysisCache = null;
 let stockFinanceCache = null;
+let stockAnnounceCache = null;
 
 function normalizeHoldTab() {
   if (holdTab === "funds") {
@@ -1292,16 +1413,20 @@ function normalizeHoldTab() {
 function holdTabBtns(h) {
   normalizeHoldTab();
   const unlockN = (h.unlocks || []).length;
+  const annN = (stockAnnounceCache && Array.isArray(stockAnnounceCache.items))
+    ? stockAnnounceCache.items.length : 0;
   const tabs = [
     ["structure", "持股构成"],
     ["ratings", "机构评级"],
     ["finance", "财务分析"],
     ["unlocks", "限售解禁"],
+    ["announce", "公司公告"],
     ["ai", "AI分析结果"],
     ["brief", "AI简明诊断"],
   ];
   return `<div class="btn-group sub-tabs hold-tabs" id="holdTabs">${tabs.map(([id, title]) => {
-    const extra = id === "unlocks" && unlockN ? `（${unlockN}）` : "";
+    const extra = id === "unlocks" && unlockN ? `（${unlockN}）`
+      : (id === "announce" && annN ? `（${annN}）` : "");
     const aiOn = id === "ai" && h.ai && h.ai.applied;
     const briefOn = id === "brief" && h.brief && h.brief.applied;
     const mark = aiOn || briefOn ? " · 已存" : "";
@@ -1335,14 +1460,80 @@ function ratingsPane() {
   if (!br) return '<div class="empty">暂无机构评级</div>';
   const dist = br.distribution || {};
   const items = Array.isArray(br.items) ? br.items : [];
+  const stance = stanceFromRatings(br);
+  const q = (d.quote && d.quote.price != null) ? d.quote.price : br.current_price;
   return `
-    <div class="muted" style="font-size:calc(12px * var(--font-scale));margin-bottom:8px">${br.simulated ? "规则模拟·仅供参考" : "机构评级"}</div>
+    <div class="muted" style="font-size:calc(12px * var(--font-scale));margin-bottom:8px">${esc(br.note || (br.simulated ? "规则模拟·仅供参考" : "机构评级"))}</div>
+    ${stanceBarHtml(stance)}
+    ${brokerTargetBlock(br, q)}
     <div class="kv"><span class="k">评级分布</span><span>${Object.entries(dist).filter(([, n]) => n > 0).map(([k, n]) => `${k}${n}家`).join(" · ") || "暂无"}</span></div>
-    <div class="kv"><span class="k">一致目标价</span><span class="num">${fmt(br.consensus_target)}</span></div>
-    <div style="max-height:360px;overflow-y:auto;margin-top:8px">
-      ${items.length ? items.map((it) => `<div class="kv"><span class="k">${esc(it.broker)} <span class="muted">${esc(it.type)}</span></span>
-        <span>${esc(it.rating)} <span class="num muted">${fmt(it.target_price)}</span> <span class="muted">${esc((it.date || "").slice(5))}</span></span></div>`).join("") : '<div class="empty">暂无明细</div>'}
+    <div class="broker-list">
+      ${items.length ? items.map((it) => `<div class="kv broker-row">
+        <span class="k"><span class="broker-name">${esc(it.broker)}</span> <span class="muted">${esc(it.type || "")}</span></span>
+        <span>${ratingBadge(it.rating)} <span class="num">${fmt(it.target_price)}</span>
+          ${it.upside_pct != null ? `<span class="${cls(it.upside_pct)}">${sign(it.upside_pct)}${fmt(it.upside_pct)}%</span>` : ""}
+          <span class="muted">${esc((it.date || "").slice(5))}</span></span>
+      </div>`).join("") : '<div class="empty">暂无明细</div>'}
     </div>`;
+}
+
+function announceItemHtml(a) {
+  const ident = a.id || `${a.time || ""}:${(a.text || "").slice(0, 40)}`;
+  const key = intelKey("announce", ident);
+  const secs = Array.isArray(a.affected_sectors)
+    ? a.affected_sectors.filter((s) => typeof s === "string").join(",")
+    : String(a.affected_sectors || "");
+  const dir = a.direction || "中性";
+  const dirCls = dir === "利空" ? "dir-利空" : dir === "利好" ? "dir-利好" : "level-2";
+  const t = String(a.time || "");
+  const tshow = t.length >= 16 ? t.slice(5, 16) : t;
+  return `
+      <div class="news-item js-intel-row js-news-item" data-news="${escAttr(a.text)}" data-impact="${escAttr(a.impact_desc || "")}"
+        data-title="${escAttr((a.text || "").slice(0, 40))}" data-sectors="${escAttr(secs)}" data-direction="${escAttr(dir)}"
+        data-intel-source="announce" data-intel-id="${escAttr(ident)}" data-intel-key="${escAttr(key)}"
+        data-intel-title="${escAttr((a.text || "").slice(0, 40))}" data-intel-text="${escAttr((a.text || "").slice(0, 500))}"
+        data-intel-time="${escAttr(t)}" data-attention="${escAttr((a.impact_level || 0) * 20)}">
+        <span class="time">${esc(tshow)}</span>
+        <div class="body">${esc(a.text)}
+          <div class="meta">
+            <span class="badge sector-tag">${esc(a.tag || "公告")}</span>
+            <span class="badge ${dirCls}">${esc(dir)}</span>
+            ${a.impact_desc ? `<span class="badge level-${esc(a.impact_level || 1)}">${esc(a.impact_desc)}</span>` : ""}
+            ${intelFlagHtml(key)}
+            ${intelSectorBadges(key, secs, a.tag, dir)}
+          </div>
+          ${a.brief ? `<div class="desc-hl" style="font-size:calc(13px * var(--font-scale));margin-top:3px">💡 ${esc(a.brief)}</div>` : ""}
+          ${intelReasonLine(key)}
+        </div>
+      </div>`;
+}
+
+function announcePane() {
+  const d = stockAnnounceCache;
+  if (!d) return '<div class="empty">公司公告加载中…</div>';
+  const items = Array.isArray(d.items) ? d.items : [];
+  if (!items.length) {
+    return `<div class="empty">${esc(d.empty_reason || "暂无匹配的公司公告")}</div>
+      <div class="muted" style="font-size:calc(11px * var(--font-scale));margin-top:6px">${esc(d.note || "公告源为 7x24 快讯识别，非交易所全量公告。")}</div>`;
+  }
+  return `<div class="ann-pane">${items.map(announceItemHtml).join("")}</div>
+    <div class="muted" style="font-size:calc(11px * var(--font-scale));margin-top:6px">${esc(d.note || "公告源为 7x24 快讯识别，非交易所全量公告。")}</div>`;
+}
+
+async function loadStockAnnouncements() {
+  if (!currentStock || isIndexCode(currentStock.code)) return;
+  const code = currentStock.code;
+  try {
+    await refreshIntelAiIndex();
+    const d = await api(`/api/announcements?code=${encodeURIComponent(code)}&limit=40`);
+    if (!currentStock || currentStock.code !== code) return;
+    stockAnnounceCache = d;
+  } catch (err) {
+    if (!currentStock || currentStock.code !== code) return;
+    stockAnnounceCache = { items: [], empty_reason: "公司公告加载失败", note: String(err && err.message || err) };
+    console.warn(err);
+  }
+  refreshHoldExtraPanes();
 }
 
 function financePane() {
@@ -1371,8 +1562,15 @@ function financePane() {
 }
 
 function refreshHoldExtraPanes() {
-  if (holdersData && (holdTab === "ratings" || holdTab === "finance")) {
+  if (!holdersData) return;
+  if (holdTab === "ratings" || holdTab === "finance" || holdTab === "announce") {
     paintHoldersCard(holdersData);
+    return;
+  }
+  const btn = document.querySelector('#holdTabs .js-hold-tab[data-tab="announce"]');
+  if (btn) {
+    const n = (stockAnnounceCache && stockAnnounceCache.items || []).length;
+    btn.textContent = n ? `公司公告（${n}）` : "公司公告";
   }
 }
 
@@ -1519,6 +1717,7 @@ function holdPaneHtml(h) {
   if (holdTab === "ratings") return ratingsPane();
   if (holdTab === "finance") return financePane();
   if (holdTab === "unlocks") return unlocksPane(h);
+  if (holdTab === "announce") return announcePane();
   if (holdTab === "ai") return holderAiPane(h);
   if (holdTab === "brief") return briefPane(h);
   return structurePane(h);
@@ -6052,19 +6251,25 @@ async function loadBuyPoints() {
       const clsName = short === "增持" ? "advice-buy" : short === "减持" ? "advice-sell" : "advice-hold";
       return `<span class="badge ${clsName} flash-tip">${esc(short)}</span>`;
     };
-    body.innerHTML = `<table class="flash-table"><thead><tr>
-      <th>名称</th><th>现价</th><th>涨跌幅</th><th>量比</th><th>购买指数</th><th>提示</th>
-    </tr></thead><tbody>${items.map((r) => `
-      <tr class="${scoreRowClass(r.score)}" data-code="${escAttr(r.code)}" data-name="${escAttr(r.name)}" onclick="openStock('${esc(r.code)}','${esc(r.name)}')">
-        <td>${esc(r.name)} <span class="muted">${esc(stockCodeDigits(r.code))}</span>
-          ${planPickedHtml(r, kind)}
-        </td>
-        <td class="num">${pxHtml(r.price, r.pct)}</td>
-        <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
-        <td class="num">${fmt(r.volume_ratio)}</td>
-        <td class="num"><b>${fmt(r.buy_index, 0)}</b></td>
-        <td class="flash-tip-cell">${adviceBadge(r)} ${watchBtnHtml(r.code, r.name, r.in_watchlist)}</td>
-      </tr>`).join("")}</tbody></table>`;
+    body.innerHTML = `<div class="flash-list">${items.map((r) => `
+      <div class="flash-card ${scoreRowClass(r.score)}" data-code="${escAttr(r.code)}" data-name="${escAttr(r.name)}" onclick="openStock('${esc(r.code)}','${esc(r.name)}')">
+        <div class="flash-card-top">
+          <div>
+            <span class="hl-name">${esc(r.name)}</span>
+            <span class="muted stock-code-text">${esc(stockCodeDigits(r.code))}</span>
+            ${planPickedHtml(r, kind)}
+          </div>
+          ${watchBtnHtml(r.code, r.name, r.in_watchlist)}
+        </div>
+        <div class="flash-metrics">
+          <span class="m">现价 ${pxHtml(r.price, r.pct)}</span>
+          <span class="m ${cls(r.pct)}">${pct(r.pct)}</span>
+          <span class="m">量比 <b>${fmt(r.volume_ratio)}</b></span>
+          <span class="m">购买指数 <b>${fmt(r.buy_index, 0)}</b></span>
+          ${adviceBadge(r)}
+        </div>
+        <div class="flash-advice">${esc(r.advice_summary || r.advice || r.op_advice || r.hit_action || "暂无操作建议")}</div>
+      </div>`).join("")}</div>`;
     syncWatchButtons();
   } catch (err) {
     paintEmpty(kindLabel + "加载失败，请检查服务是否在运行", "失败");

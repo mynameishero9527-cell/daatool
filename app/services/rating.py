@@ -268,28 +268,61 @@ _BROKERS = [
     ("野村证券", "外资投行"), ("易方达基金", "公募基金"),
 ]
 _RATING_NAMES = ["买入", "增持", "中性", "减持", "卖出"]
+_STANCE_NAMES = ("增持", "中性", "减持")
+
+
+def rating_stance(rating: str) -> str:
+    """买入/增持→做多(增持)；中性；减持/卖出→做空(减持)。"""
+    if rating in ("买入", "增持"):
+        return "增持"
+    if rating == "中性":
+        return "中性"
+    return "减持"
+
+
+def upside_pct(target, price) -> float | None:
+    """(目标价 - 现价) / 现价 * 100。现价无效时不编造。"""
+    try:
+        p = float(price)
+        t = float(target)
+    except (TypeError, ValueError):
+        return None
+    if p == 0:
+        return None
+    return round((t - p) / p * 100, 2)
 
 
 def broker_ratings(code: str, score: float) -> dict:
-    """模拟机构评级：以综合评分为中枢、代码哈希扰动，输出评级分布与目标价。"""
+    """模拟机构评级：以综合评分为中枢、代码哈希扰动，输出评级分布、多空立场与目标价。"""
     rows = query("SELECT price FROM stock_snapshot WHERE code=?", (code,))
     price = rows[0]["price"] if rows and rows[0]["price"] else 10.0
+    base = score if score is not None else 50.0
     items, dist = [], {r: 0 for r in _RATING_NAMES}
-    for i, (broker, btype) in enumerate(_BROKERS):
+    stance = {s: 0 for s in _STANCE_NAMES}
+    for broker, btype in _BROKERS:
         h = int(hashlib.md5(f"{code}{broker}".encode()).hexdigest()[:6], 16) / 0xFFFFFF
-        adj = score + (h - 0.5) * 30
+        adj = base + (h - 0.5) * 30
         idx = 0 if adj >= 75 else 1 if adj >= 60 else 2 if adj >= 42 else 3 if adj >= 30 else 4
         rating = _RATING_NAMES[idx]
+        st = rating_stance(rating)
         dist[rating] += 1
+        stance[st] += 1
         target = round(price * (1 + (adj - 50) / 100 * 0.6 + (h - 0.5) * 0.08), 2)
         items.append({
-            "broker": broker, "type": btype, "rating": rating, "target_price": target,
+            "broker": broker, "type": btype, "rating": rating, "stance": st,
+            "target_price": target, "upside_pct": upside_pct(target, price),
             "date": (date.today() - timedelta(days=int(h * 85))).isoformat(),
         })
     targets = [it["target_price"] for it in items]
+    consensus = round(sum(targets) / len(targets), 2) if targets else None
+    cur = round(float(price), 2)
     return {
         "simulated": True,
         "items": sorted(items, key=lambda x: x["date"], reverse=True),
         "distribution": dist,
-        "consensus_target": round(sum(targets) / len(targets), 2),
+        "stance": stance,
+        "current_price": cur,
+        "consensus_target": consensus,
+        "upside_pct": upside_pct(consensus, cur) if consensus is not None else None,
+        "note": "增持含买入，减持含卖出。规则模拟·仅供参考。",
     }
