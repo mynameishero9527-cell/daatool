@@ -86,6 +86,11 @@ def get_alerts(limit: int = Query(50, le=100)):
     return alerts.get_alerts(limit)
 
 
+@router.get("/alerts/buy-points")
+def alerts_buy_points(limit: int = Query(8, le=20)):
+    return alerts.get_buy_points(limit)
+
+
 @router.get("/market/minute")
 def market_minute(code: str = "sh000001"):
     return kline.get_minute(market.normalize_code(code) or code)
@@ -288,14 +293,21 @@ def sector_stocks(dim: str, name: str, limit: int = Query(30, le=100)):
 def sector_flow_bar(dim: str = "industry",
                     span: str = Query("1d", alias="range"),
                     sort: str = "inflow",
-                    day: str = ""):
-    return sector.get_flow_bar(dim, span, sort, day)
+                    day: str = "",
+                    direction: str = Query("", alias="dir"),
+                    min_stocks: int = 0,
+                    q: str = ""):
+    return sector.get_flow_bar(dim, span, sort, day, direction, min_stocks, q)
 
 
 @router.get("/sector/flow-trend")
 def sector_flow_trend(dim: str = "industry", name: str = "",
-                      span: str = Query("1d", alias="range")):
-    return sector.get_flow_trend(dim, name, span)
+                      span: str = Query("1d", alias="range"),
+                      top_n: int = Query(12, le=30),
+                      direction: str = Query("", alias="dir"),
+                      min_stocks: int = 0,
+                      q: str = ""):
+    return sector.get_flow_trend(dim, name, span, top_n, direction, min_stocks, q)
 
 
 @router.get("/sector/flow-bar/stocks")

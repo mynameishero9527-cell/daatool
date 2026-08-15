@@ -123,4 +123,45 @@ def get_alerts(limit: int = 50) -> dict:
                  "ORDER BY id DESC LIMIT ?", (limit,))
     for r in rows:
         r["type_name"] = TYPE_NAMES.get(r["alert_type"], r["alert_type"])
+        title = r.get("title") or ""
+        m = None
+        if "（" in title and "）" in title:
+            inner = title.split("（", 1)[1].split("）", 1)[0]
+            name = title.split("（", 1)[0].strip()
+            if inner and name:
+                m = (name, inner)
+        if m:
+            r["name"], r["code"] = m[0], m[1]
+        else:
+            r["name"], r["code"] = "", ""
     return {"items": rows}
+
+
+def get_buy_points(limit: int = 8) -> dict:
+    """实时最佳买点（供全局弹窗）。购买建议来自购买指数档位 + 综合评分操作提示。"""
+    limit = max(3, min(int(limit or 8), 20))
+    rows = query(
+        """SELECT s.code, s.name, s.pct, s.volume_ratio, s.price, s.main_net_in,
+                  l.industry, m.buy_index, m.sentiment
+           FROM stock_metrics m
+           JOIN stock_snapshot s ON s.code = m.code
+           JOIN stock_list l ON l.code = s.code
+           WHERE m.buy_index >= 80 AND s.main_net_in > 0
+             AND s.name NOT LIKE '%ST%' AND s.name NOT LIKE '%退%'
+           ORDER BY m.buy_index DESC LIMIT ?""", (limit,))
+    from . import finance as finance_svc
+    from . import metrics as metrics_svc
+    from . import rating as rating_svc
+    finance_svc.attach_grades(rows)
+    for r in rows:
+        buy_lv, buy_act = metrics_svc.buy_index_level(r.get("buy_index") or 0)
+        sent_lv, sent_ds = metrics_svc.sentiment_level(r.get("sentiment") or 50)
+        _score, op = rating_svc.quick_score(r)
+        r["buy_level"] = buy_lv
+        r["sent_level"] = sent_lv
+        r["sent_desc"] = sent_ds
+        r["score"] = _score
+        r["advice"] = f"{buy_lv}，{buy_act}；操作参考：{op}"
+        r["finance_grade"] = r.get("finance_grade") or ""
+    return {"items": rows, "count": len(rows),
+            "note": "购买指数≥80 且主力净流入>0，每轮扫描轮动，不构成投资建议"}

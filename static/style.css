@@ -484,6 +484,58 @@ tr.score-95 td { background: rgba(255, 60, 60, .30); }
   background: rgba(255,169,64,.12); border: 1px solid rgba(255,169,64,.4); color: var(--warn);
   border-radius: 8px; padding: 8px 14px; margin-bottom: 12px; font-size: 13px;
 }
+.alert-item .btn.small { flex-shrink: 0; margin-top: 2px; }
+
+.hl-name {
+  font-weight: 800; color: #ffd27a;
+  animation: hl-name 1.8s ease-in-out infinite;
+}
+.hl-code {
+  font-weight: 700; color: #7ecbff; font-variant-numeric: tabular-nums;
+  animation: hl-code 1.6s ease-in-out infinite;
+}
+@keyframes hl-name {
+  0%, 100% { color: #ffd27a; text-shadow: 0 0 6px #ff5252, 0 0 14px #ffa940; }
+  50% { color: #fff6d0; text-shadow: 0 0 12px #ff8080, 0 0 24px #ff5252; }
+}
+@keyframes hl-code {
+  0%, 100% { color: #7ecbff; text-shadow: 0 0 6px #4a9eff, 0 0 14px rgba(74,158,255,.6); }
+  50% { color: #d7efff; text-shadow: 0 0 12px #4a9eff, 0 0 22px #22d3ee; }
+}
+
+.buy-flash {
+  position: fixed; top: 64px; right: 14px; z-index: 120;
+  width: 430px; max-height: min(70vh, 560px);
+  background: var(--card); border: 1px solid rgba(255,82,82,.45);
+  border-radius: 12px; box-shadow: 0 12px 40px rgba(0,0,0,.5);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.buy-flash-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 12px; border-bottom: 1px solid rgba(255,82,82,.25);
+  background: rgba(139,26,26,.35); font-weight: 700;
+}
+.buy-flash-body { overflow: auto; padding: 8px 10px 12px; }
+.buy-flash-row {
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 10px; margin-bottom: 8px; background: var(--bg2);
+}
+.buy-flash-main { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+.buy-flash-meta {
+  display: flex; flex-wrap: wrap; gap: 8px 12px;
+  font-size: 12px; color: var(--muted); margin-bottom: 4px;
+}
+.buy-flash-advice { font-size: 12px; color: #ffd0d0; margin-bottom: 6px; }
+.buy-flash-fab {
+  position: fixed; right: 16px; bottom: 16px; z-index: 120;
+  width: 48px; height: 48px; border-radius: 50%;
+  background: #8b1a1a; color: #ffd0d0; border: 1px solid #ff5252;
+  cursor: pointer; font-weight: 800; font-size: 16px;
+  box-shadow: 0 0 16px rgba(255,82,82,.55);
+  animation: hl-code 1.6s ease-in-out infinite;
+}
+#flowTrendChart { min-height: 320px; }
+
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }

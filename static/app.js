@@ -336,14 +336,24 @@ async function loadAlerts() {
     }
     const feed = $("#alertFeed");
     if (!feed) return;
-    const item = (a) => `
-      <div class="alert-item">
+    const item = (a) => {
+      const code = a.code || "";
+      const name = a.name || "";
+      const canStock = !!(code && a.alert_type === "buy_point");
+      const watchBtn = canStock
+        ? `<button class="btn small" type="button" onclick="event.stopPropagation(); addWatchCode('${esc(code)}','${esc(name)}')">+自选</button>`
+        : "";
+      const attrs = canStock ? ` data-code="${esc(code)}" data-name="${esc(name)}"` : "";
+      return `
+      <div class="alert-item"${attrs}>
         <span class="time">${esc((a.created_at || "").slice(5, 16).replace("T", " "))}</span>
         <div class="body">
           <span class="badge at-${a.alert_type}">${esc(a.type_name)}</span> ${esc(a.title)}
           ${a.detail ? `<div class="detail">${esc(a.detail)}</div>` : ""}
         </div>
+        ${watchBtn}
       </div>`;
+    };
     const buys = items.filter((a) => a.alert_type === "buy_point");
     const sells = items.filter((a) => a.alert_type === "sell_point");
     const others = items.filter((a) => a.alert_type !== "buy_point" && a.alert_type !== "sell_point");
@@ -359,6 +369,16 @@ async function loadAlerts() {
       ${others.length ? `<div class="alert-other">${others.map(item).join("")}</div>` : ""}`;
   } catch (err) { console.warn(err); }
 }
+
+window.addWatchCode = async (code, name) => {
+  if (!code) return;
+  const res = await post(`/api/watchlist/add?code=${encodeURIComponent(code)}`);
+  if (!res.ok) { alert(res.error || "添加失败"); return; }
+  watchCodes.add(res.code || code);
+  $$(`[data-code="${code}"] button`).forEach((b) => {
+    if ((b.textContent || "").includes("自选")) b.textContent = "已加自选";
+  });
+};
 
 async function loadMarketSentiment() {
   try {
@@ -1658,7 +1678,8 @@ for (const [id, key] of [["flowBarDir", "dir"], ["flowBarView", "view"]]) {
     const raw = btn.getAttribute(`data-${key}`);
     flowBarState[key] = raw === "all" ? "" : (raw || "");
     $$(`#${id} .opt`).forEach((b) => b.classList.toggle("active", b === btn));
-    paintFlowBar();
+    if (key === "view") paintFlowBar();
+    else loadFlowBar();
   });
 }
 $("#flowBarMin")?.addEventListener("click", (e) => {
@@ -1666,11 +1687,11 @@ $("#flowBarMin")?.addEventListener("click", (e) => {
   if (!btn) return;
   flowBarState.minStocks = Number(btn.dataset.min || 0);
   $$("#flowBarMin .opt").forEach((b) => b.classList.toggle("active", b === btn));
-  paintFlowBar();
+  loadFlowBar();
 });
 $("#flowBarSearch")?.addEventListener("input", debounce(() => {
   flowBarState.q = ($("#flowBarSearch").value || "").trim();
-  paintFlowBar();
+  loadFlowBar();
 }, 200));
 $("#flowBarFin")?.addEventListener("click", (e) => {
   const btn = e.target.closest(".opt");
@@ -1816,22 +1837,41 @@ function paintFlowDayChip() {
     + ` <button class="btn small ghost" type="button" onclick="clearFlowDay()">看区间合计</button>`;
 }
 
+function flowFilterQuery() {
+  let qs = `dim=${encodeURIComponent(flowBarState.dim)}&range=${encodeURIComponent(flowBarState.range)}&sort=${encodeURIComponent(flowBarState.sort)}`;
+  if (flowBarState.day) qs += `&day=${encodeURIComponent(flowBarState.day)}`;
+  if (flowBarState.dir) qs += `&dir=${encodeURIComponent(flowBarState.dir)}`;
+  if (flowBarState.minStocks) qs += `&min_stocks=${encodeURIComponent(flowBarState.minStocks)}`;
+  if (flowBarState.q) qs += `&q=${encodeURIComponent(flowBarState.q)}`;
+  return qs;
+}
+
+function flowFilterLabel() {
+  const dimLabel = flowBarState.dim === "concept" ? "题材概念" : "行业板块";
+  const rangeMap = { "1d": "当天", "3d": "过去3天", "5d": "过去5天", "10d": "过去10天", "20d": "过去20天", "1m": "过去一月", "3m": "过去3个月" };
+  const sortMap = { inflow: "流入最多", outflow: "流出最多", abs: "绝对额" };
+  const dirMap = { in: "仅流入", out: "仅流出", "": "全部方向" };
+  const bits = [dimLabel, rangeMap[flowBarState.range] || flowBarState.range, sortMap[flowBarState.sort] || "", dirMap[flowBarState.dir] || "全部方向"];
+  if (flowBarState.minStocks) bits.push(`成分股≥${flowBarState.minStocks}`);
+  if (flowBarState.q) bits.push(`名称含「${flowBarState.q}」`);
+  if (flowBarState.day) bits.push(`横截面 ${flowBarState.day}`);
+  return bits.filter(Boolean).join(" · ");
+}
+
 async function loadFlowBar() {
   const box = $("#flowBarList");
   if (!box && !$("#flowBarChart")) return;
   if (box) box.innerHTML = '<div class="empty">正在汇总全市场板块资金…</div>';
   paintFlowDayChip();
   try {
-    let url = `/api/sector/flow-bar?dim=${encodeURIComponent(flowBarState.dim)}&range=${encodeURIComponent(flowBarState.range)}&sort=${encodeURIComponent(flowBarState.sort)}`;
-    if (flowBarState.day) url += `&day=${encodeURIComponent(flowBarState.day)}`;
-    const d = await api(url);
+    const d = await api(`/api/sector/flow-bar?${flowFilterQuery()}`);
     const cov = d.coverage || {};
     const note = d.note || "";
     const noteEl = $("#flowBarNote");
-    const dimLabel = flowBarState.dim === "concept" ? "题材概念" : "行业板块";
     if (noteEl) {
-      noteEl.dataset.base = `${d.range_label || "当天"} · 共 ${d.count || (d.items || []).length} 个${dimLabel}`
-        + ` · 账本 ${d.asof || "-"} · 已覆盖 ${cov.have || 0}/${cov.target || 0} 个交易日`;
+      noteEl.dataset.base = `${flowFilterLabel()} · ${d.count || (d.items || []).length} 个板块`
+        + ` · 账本 ${d.asof || "-"} · ${cov.have || 0}/${cov.target || 0} 日`
+        + (d.value_source === "snapshot_d5" ? " · 柱高=快照近5日" : " · 柱高=账本合计");
     }
     flowBarRawItems = d.items || [];
     paintFlowBar(note);
@@ -1883,17 +1923,17 @@ async function loadFlowTrend() {
   if (!host) return;
   if (noteEl) noteEl.textContent = "加载中…";
   try {
-    let url = `/api/sector/flow-trend?dim=${encodeURIComponent(flowBarState.dim)}&range=${encodeURIComponent(flowBarState.range)}`;
+    let url = `/api/sector/flow-trend?${flowFilterQuery()}`;
     if (flowBarState.selected) url += `&name=${encodeURIComponent(flowBarState.selected)}`;
     const d = await api(url);
     if (noteEl) noteEl.textContent = d.title ? `· ${d.title}` : "";
     const k = d.kpis || {};
     if (kpisEl) {
       kpisEl.innerHTML = `
-        <div class="flow-kpi"><span>区间合计</span><b class="${cls(k.sum_net_yi)}">${kpiNum(k.sum_net_yi, 2)}</b></div>
-        <div class="flow-kpi"><span>账本最新日 ${esc(k.last_date || "-")}</span><b class="${cls(k.last_net_yi)}">${kpiNum(k.last_net_yi, 2)}</b></div>
+        <div class="flow-kpi"><span>折线条数</span><b>${k.line_count || (d.lines || []).length}</b></div>
+        <div class="flow-kpi"><span>最新账本日</span><b>${esc(k.last_date || d.asof || "-")}</b></div>
         <div class="flow-kpi"><span>覆盖交易日</span><b>${k.days_have || 0}/${k.days_target || 0}</b></div>
-        <div class="flow-kpi"><span>账本日</span><b>${esc(d.asof || "-")}</b></div>`;
+        <div class="flow-kpi"><span>当前筛选</span><b style="font-size:12px">${esc(flowFilterLabel())}</b></div>`;
     }
     paintFlowTrend(d);
   } catch (err) {
@@ -1907,77 +1947,51 @@ function paintFlowTrend(d) {
   const host = $("#flowTrendChart");
   if (!host || typeof echarts === "undefined") return;
   host.innerHTML = "";
-  const series = d.series || [];
-  if (!series.length) {
+  const dates = d.dates || [];
+  const lines = d.lines || [];
+  if (!dates.length || !lines.length) {
     try { flowTrendChart?.dispose(); } catch { /* ignore */ }
     flowTrendChart = null;
     host.innerHTML = `<div class="empty">${esc(d.note || "尚无日频点。全量同步后会按天落库，不会用涨跌幅填补。")}</div>`;
     return;
   }
   try { flowTrendChart?.dispose(); } catch { /* ignore */ }
+  host.style.height = Math.max(320, 280 + Math.min(8, lines.length) * 8) + "px";
   flowTrendChart = echarts.init(host, "dark");
-  const dates = series.map((p) => p.date);
-  const nets = series.map((p) => {
-    const v = p.missing ? null : p.net_in_yi;
-    return {
-      value: v,
-      itemStyle: {
-        color: v == null ? "#3a4558" : (v >= 0 ? "#ff5252" : "#26c281"),
-        opacity: flowBarState.day && p.date !== flowBarState.day ? 0.35 : 1,
-      },
-    };
-  });
-  const cums = series.map((p) => p.cum_yi);
+  const palette = ["#ff5252", "#4a9eff", "#26c281", "#ffa940", "#c084fc", "#22d3ee", "#f472b6", "#a3e635", "#fb7185", "#60a5fa", "#fbbf24", "#34d399"];
   flowTrendChart.setOption({
     backgroundColor: "transparent",
     tooltip: {
       trigger: "axis",
       backgroundColor: "#1a2230", borderColor: "#2a3548",
       textStyle: { color: "#dbe4f0", fontSize: 12 },
-      formatter: (ps) => {
-        const idx = (ps[0] || {}).dataIndex;
-        const p = series[idx] || {};
-        if (p.missing) return `${p.date}<br>该日账本缺失（不是 0）`;
-        return `${p.date}<br>当日净流入 <b>${p.net_in_yi > 0 ? "+" : ""}${Number(p.net_in_yi).toFixed(2)} 亿</b>`
-          + `<br>区间累计 ${p.cum_yi > 0 ? "+" : ""}${Number(p.cum_yi).toFixed(2)} 亿`
-          + (p.stocks ? `<br>成分股 ${p.stocks} 只` : "");
-      },
     },
-    legend: { data: ["当日净流入", "区间累计"], textStyle: { color: "#9aa8bc" }, top: 0 },
-    grid: { left: 52, right: 52, top: 32, bottom: 28 },
+    legend: {
+      type: "scroll", top: 0, textStyle: { color: "#9aa8bc", fontSize: 11 },
+      data: lines.map((l) => l.name),
+    },
+    grid: { left: 52, right: 24, top: 36, bottom: 28 },
     xAxis: {
       type: "category", data: dates,
       axisLabel: { color: "#7d8aa0", fontSize: 11 },
       axisLine: { lineStyle: { color: "#2a3548" } },
     },
-    yAxis: [
-      {
-        type: "value", name: "当日(亿)",
-        splitLine: { lineStyle: { color: "#202a3b" } },
-        axisLabel: { color: "#7d8aa0" },
-      },
-      {
-        type: "value", name: "累计(亿)",
-        splitLine: { show: false },
-        axisLabel: { color: "#7d8aa0" },
-      },
-    ],
-    series: [
-      {
-        name: "当日净流入", type: "bar", data: nets, barMaxWidth: 22, yAxisIndex: 0,
-      },
-      {
-        name: "区间累计", type: "line", data: cums, yAxisIndex: 1, smooth: true,
-        symbol: "circle", symbolSize: 7,
-        lineStyle: { color: "#4a9eff", width: 2 },
-        itemStyle: { color: "#4a9eff" },
-      },
-    ],
+    yAxis: {
+      type: "value", name: "净流入(亿)",
+      splitLine: { lineStyle: { color: "#202a3b" } },
+      axisLabel: { color: "#7d8aa0" },
+    },
+    series: lines.map((l, i) => ({
+      name: l.name, type: "line", data: l.data, showSymbol: dates.length < 8,
+      smooth: true, symbol: "circle", symbolSize: l.selected ? 9 : 6,
+      lineStyle: { width: l.selected ? 3 : 1.6, color: palette[i % palette.length] },
+      itemStyle: { color: palette[i % palette.length] },
+      emphasis: { focus: "series" },
+    })),
   }, true);
   flowTrendChart.off("click");
   flowTrendChart.on("click", (p) => {
-    const day = (p && (p.name || (series[p.dataIndex] || {}).date)) || "";
-    if (day) selectFlowDay(day);
+    if (p && p.seriesName) selectFlowBar(p.seriesName);
   });
   requestAnimationFrame(() => flowTrendChart?.resize());
   const noteEl = $("#flowTrendNote");
@@ -3111,6 +3125,58 @@ window.runSmartpickAi = async () => {
   }
 };
 
+/* ---------------- 全局最佳买点弹窗 ---------------- */
+const BUY_FLASH_KEY = "daatool_buy_flash";
+function buyFlashCollapsed() {
+  try { return localStorage.getItem(BUY_FLASH_KEY) === "1"; } catch { return false; }
+}
+function setBuyFlashCollapsed(v) {
+  const panel = $("#buyFlash");
+  const fab = $("#buyFlashFab");
+  if (panel) panel.style.display = v ? "none" : "";
+  if (fab) fab.style.display = v ? "" : "none";
+  try { localStorage.setItem(BUY_FLASH_KEY, v ? "1" : "0"); } catch { /* ignore */ }
+}
+async function loadBuyPoints() {
+  const body = $("#buyFlashBody");
+  const countEl = $("#buyFlashCount");
+  try {
+    const d = await api("/api/alerts/buy-points");
+    const items = d.items || [];
+    if (countEl) countEl.textContent = items.length ? `${items.length} 只` : "";
+    if (!body) return;
+    if (!items.length) {
+      body.innerHTML = `<div class="empty">${esc(d.note || "暂无最佳买点")}</div>`;
+      return;
+    }
+    body.innerHTML = items.map((r) => `
+      <div class="buy-flash-row" data-code="${esc(r.code)}" data-name="${esc(r.name)}">
+        <div class="buy-flash-main">
+          <span class="hl-name">${esc(r.name)}</span>
+          <span class="hl-code">${esc(r.code)}</span>
+          <span class="num ${cls(r.pct)}">${pct(r.pct)}</span>
+        </div>
+        <div class="buy-flash-meta">
+          <span>板块 ${esc(r.industry || "—")}</span>
+          <span>购买指数 <b>${fmt(r.buy_index, 0)}</b> ${esc(r.buy_level || "")}</span>
+          <span>量比 ${fmt(r.volume_ratio)}</span>
+          <span>评级 ${esc(r.finance_grade || "—")}</span>
+          <span>情绪 ${fmt(r.sentiment, 0)} ${esc(r.sent_level || "")}</span>
+        </div>
+        <div class="buy-flash-advice">${esc(r.advice || "")}</div>
+        <button class="btn small" type="button" onclick="event.stopPropagation(); addWatchCode('${esc(r.code)}','${esc(r.name)}')">+自选</button>
+      </div>`).join("");
+  } catch (err) {
+    if (body) body.innerHTML = `<div class="empty">买点加载失败</div>`;
+  }
+}
+$("#buyFlashMin")?.addEventListener("click", () => setBuyFlashCollapsed(true));
+$("#buyFlashFab")?.addEventListener("click", () => { setBuyFlashCollapsed(false); loadBuyPoints(); });
+$("#buyFlashBody")?.addEventListener("dblclick", (e) => {
+  const row = e.target.closest("[data-code]");
+  if (row) openStock(row.dataset.code, row.dataset.name);
+});
+
 /* ---------------- 工具与启动 ---------------- */
 function debounce(fn, ms) {
   let t;
@@ -3141,6 +3207,7 @@ schedule("global", loadGlobal, 60000);
 schedule("recommend", loadRecommend, 60000);
 schedule("ranks", loadRanks, 60000);
 schedule("smartpick", loadAlerts, 10000);
+setInterval(loadBuyPoints, 15000);
 schedule("settings", loadSettings, 10000);
 setInterval(loadSettingsHealthOnly, 30000);
 async function loadSettingsHealthOnly() {
@@ -3160,3 +3227,5 @@ loadSettingsHealthOnly();
 loadTopAlmanac();
 bindAlertDock();
 applyAlertDock();
+setBuyFlashCollapsed(buyFlashCollapsed());
+loadBuyPoints();

@@ -150,14 +150,20 @@ def add_watch(code: str) -> dict:
     norm = normalize_code(code)
     if not norm:
         return {"ok": False, "error": f"无效代码: {code}"}
+    name = ""
     quotes = get_quotes([norm])
-    q = quotes.get(norm)
-    if not q or q.get("price") is None:
-        return {"ok": False, "error": f"拉取不到 {norm} 的行情，请检查代码"}
+    q = quotes.get(norm) or {}
+    if q.get("name"):
+        name = q["name"]
+    if not name:
+        rows = query("SELECT name FROM stock_list WHERE code=?", (norm,))
+        name = (rows[0]["name"] if rows else "") or ""
+    if not name:
+        return {"ok": False, "error": f"本地没有 {norm}，请先全量同步或检查代码"}
     execute("INSERT OR IGNORE INTO watchlist(code,name,pinned,created_at) VALUES(?,?,0,?)",
-            (norm, q.get("name") or norm, datetime.now().isoformat(timespec="seconds")))
+            (norm, name, datetime.now().isoformat(timespec="seconds")))
     cache.delete("watchlist")
-    return {"ok": True, "code": norm, "name": q.get("name")}
+    return {"ok": True, "code": norm, "name": name}
 
 
 def remove_watch(code: str) -> dict:
