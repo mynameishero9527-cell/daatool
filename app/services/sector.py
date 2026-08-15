@@ -708,7 +708,7 @@ def get_flow_trend(dim: str = "industry", name: str = "",
                 continue
             if direction == "out" and ssum >= 0:
                 continue
-            if min_stocks and stocks_map.get(nm, 0) < min_stocks:
+            if min_stocks and not use_dim.startswith("remote") and stocks_map.get(nm, 0) < min_stocks:
                 continue
             if q and q not in nm.lower():
                 continue
@@ -746,10 +746,10 @@ def get_flow_trend(dim: str = "industry", name: str = "",
         f"折线数据源：{src_label}（与直方图的本地成分股汇总分开）",
         f"折线=每个{dim_label}一条，横轴={spec['label']}，纵轴={y_desc}",
         f"账本覆盖 {have} 个交易日（最多取近 {spec['lookback']} 日再按{spec['label']}重采样）",
-        "缺日不填 0、不用涨跌幅冒充资金；点折线可选中该板块",
+        "缺日不填 0、不用涨跌幅冒充资金；点图可选中该板块",
     ]
     if have < 2:
-        notes.append("目前只有 1 个交易日点，独立源会按交易日继续落库，折线随后拉长")
+        notes.append("目前只有 1 个交易日，前端改画各板块当日横条；独立源会按交易日继续落库，满 2 日后改成时间折线")
     return {
         "dim": dim, "name": name, "title": title,
         "grain": grain, "grain_label": spec["label"],

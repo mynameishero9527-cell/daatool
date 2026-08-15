@@ -1480,7 +1480,10 @@ function showSectorPage(page) {
   try {
     if (page === "flow") { loadSector(); sectorChart?.resize(); }
     else if (page === "recommend") loadSectorRecommend();
-    else if (page === "flowbar") loadFlowBar();
+    else if (page === "flowbar") {
+      loadFlowBar();
+      setTimeout(() => flowTrendChart?.resize(), 300);
+    }
   } catch (err) { console.warn(err); }
 }
 $("#sectorPageTabs")?.addEventListener("click", (e) => {
@@ -1935,17 +1938,15 @@ async function loadFlowTrend() {
   if (noteEl) noteEl.textContent = "加载中…";
   try {
     let url = `/api/sector/flow-trend?dim=${encodeURIComponent(flowBarState.dim)}&grain=${encodeURIComponent(flowBarState.trendGrain || "1d")}`;
-    if (flowBarState.dir) url += `&dir=${encodeURIComponent(flowBarState.dir)}`;
-    if (flowBarState.minStocks) url += `&min_stocks=${encodeURIComponent(flowBarState.minStocks)}`;
-    if (flowBarState.q) url += `&q=${encodeURIComponent(flowBarState.q)}`;
     if (flowBarState.selected) url += `&name=${encodeURIComponent(flowBarState.selected)}`;
     const d = await api(url);
     if (noteEl) noteEl.textContent = d.title ? `· ${d.title}` : "";
     const k = d.kpis || {};
     if (kpisEl) {
+      const oneDay = (d.dates || []).length < 2;
       kpisEl.innerHTML = `
         <div class="flow-kpi"><span>横轴</span><b>${esc(k.grain_label || d.grain_label || "日")}</b></div>
-        <div class="flow-kpi"><span>折线条数</span><b>${k.line_count || (d.lines || []).length}</b></div>
+        <div class="flow-kpi"><span>${oneDay ? "板块数" : "折线条数"}</span><b>${k.line_count || (d.lines || []).length}</b></div>
         <div class="flow-kpi"><span>横轴点数</span><b>${k.bucket_count || (d.dates || []).length}</b></div>
         <div class="flow-kpi"><span>账本交易日</span><b>${k.days_have || 0}</b></div>
         <div class="flow-kpi"><span>最新账本日</span><b>${esc(k.last_date || d.asof || "-")}</b></div>`;
@@ -1958,88 +1959,152 @@ async function loadFlowTrend() {
   }
 }
 
+function renderFlowTrendTable(lines) {
+  const box = $("#flowTrendTable");
+  if (!box) return;
+  const rows = (lines || []).slice().sort((a, b) => Math.abs(b.sum_yi || 0) - Math.abs(a.sum_yi || 0));
+  if (!rows.length) { box.innerHTML = ""; return; }
+  box.innerHTML = `<table><thead><tr><th>板块</th><th class="num">区间净流入</th></tr></thead><tbody>${
+    rows.slice(0, 24).map((r) => {
+      const v = Number(r.sum_yi) || 0;
+      return `<tr class="js-trend-row" data-name="${esc(r.local_name || r.name)}" style="cursor:pointer">
+        <td>${esc(r.name)}${r.local_name && r.local_name !== r.name ? ` <span class="muted">${esc(r.local_name)}</span>` : ""}</td>
+        <td class="num ${cls(v)}">${v > 0 ? "+" : ""}${fmt(v, 2)} 亿</td>
+      </tr>`;
+    }).join("")
+  }</tbody></table>
+  <div class="muted" style="margin-top:6px;font-size:12px">共 ${rows.length} 个板块 · 点行可选中并联动直方图</div>`;
+  box.querySelectorAll(".js-trend-row").forEach((el) => {
+    el.addEventListener("click", () => selectFlowBar(el.dataset.name || ""));
+  });
+}
+
+function resetFlowTrendHost(host) {
+  try { flowTrendChart?.dispose(); } catch { /* ignore */ }
+  flowTrendChart = null;
+  host.innerHTML = "";
+}
+
+function paintFlowTrendOneDay(host, lines, dateLabel) {
+  resetFlowTrendHost(host);
+  host.style.height = "auto";
+  host.style.minHeight = "0";
+  host.style.maxHeight = "640px";
+  host.style.overflow = "auto";
+  const items = (lines || []).map((l) => ({
+    name: l.name,
+    local_name: l.local_name || l.name,
+    net_in_yi: Number((l.data && l.data[0]) != null ? l.data[0] : l.sum_yi) || 0,
+  }));
+  const maxAbs = Math.max(...items.map((it) => Math.abs(it.net_in_yi)), 0.01);
+  host.innerHTML = `<div class="muted" style="margin-bottom:6px">${esc(dateLabel || "当日")} · 共 ${items.length} 个板块 · 账本仅 1 日，先画当日净流入横条</div>`
+    + `<div class="hbar-axis"><span class="hbar-name">-</span><span class="hbar-track"></span><span class="hbar-val">亿</span></div>`
+    + items.map((it) => {
+      const v = it.net_in_yi;
+      const pctw = Math.min(100, Math.abs(v) / maxAbs * 100);
+      const selected = flowBarState.selected === it.local_name || flowBarState.selected === it.name ? " selected" : "";
+      const fill = v >= 0
+        ? `<div class="hbar-neg"></div><div class="hbar-pos"><div class="hbar-fill in" style="width:${pctw}%"></div></div>`
+        : `<div class="hbar-neg"><div class="hbar-fill out" style="width:${pctw}%"></div></div><div class="hbar-pos"></div>`;
+      return `<div class="hbar-row${selected}" data-name="${esc(it.local_name || it.name)}" title="${esc(it.name)}">
+        <span class="hbar-name">${esc(it.name)}</span>
+        <span class="hbar-track">${fill}</span>
+        <span class="hbar-val num ${cls(v)}">${v > 0 ? "+" : ""}${fmt(v, 1)}亿</span>
+      </div>`;
+    }).join("");
+  host.querySelectorAll(".hbar-row").forEach((el) => {
+    el.addEventListener("click", () => selectFlowBar(el.dataset.name || ""));
+  });
+}
+
 function paintFlowTrend(d) {
   const host = $("#flowTrendChart");
-  if (!host || typeof echarts === "undefined") return;
-  host.innerHTML = "";
+  if (!host) return;
   const dates = d.dates || [];
   const lines = d.lines || [];
   const yName = d.y_name || "净流入(亿)";
-  if (!dates.length || !lines.length) {
-    try { flowTrendChart?.dispose(); } catch { /* ignore */ }
-    flowTrendChart = null;
-    host.innerHTML = `<div class="empty">${esc(d.note || "尚无日频点。全量同步后会按天落库，不会用涨跌幅填补。")}</div>`;
-    return;
-  }
-  try { flowTrendChart?.dispose(); } catch { /* ignore */ }
-  host.style.height = "440px";
-  flowTrendChart = echarts.init(host, "dark");
-  const palette = ["#ff5252", "#4a9eff", "#26c281", "#ffa940", "#c084fc", "#22d3ee", "#f472b6", "#a3e635", "#fb7185", "#60a5fa", "#fbbf24", "#34d399", "#e879f9", "#38bdf8", "#f97316", "#84cc16"];
-  const buckets = d.buckets || [];
-  flowTrendChart.setOption({
-    backgroundColor: "transparent",
-    color: palette,
-    tooltip: {
-      trigger: "axis",
-      backgroundColor: "#1a2230", borderColor: "#2a3548",
-      textStyle: { color: "#dbe4f0", fontSize: 12 },
-      formatter: (ps) => {
-        if (!ps || !ps.length) return "";
-        const idx = ps[0].dataIndex;
-        const b = buckets[idx] || {};
-        const head = b.start && b.end && b.start !== b.end
-          ? `${ps[0].axisValue}<br>${b.start}～${b.end} · ${b.days || ""}日`
-          : `${ps[0].axisValue}`;
-        const rows = ps
-          .filter((p) => p.value != null && p.value !== "-")
-          .sort((a, b2) => Math.abs(b2.value) - Math.abs(a.value))
-          .slice(0, 12)
-          .map((p) => {
-            const v = Number(p.value) || 0;
-            return `${p.marker}${p.seriesName} <b class="${v >= 0 ? "up" : "down"}">${v > 0 ? "+" : ""}${v.toFixed(2)} 亿</b>`;
-          });
-        return [head, ...rows].join("<br>");
-      },
-    },
-    legend: {
-      type: "scroll", top: 0, textStyle: { color: "#9aa8bc", fontSize: 11 },
-      data: lines.map((l) => l.name),
-    },
-    grid: { left: 58, right: 24, top: 48, bottom: 72 },
-    dataZoom: [
-      { type: "inside", xAxisIndex: 0, filterMode: "none" },
-      { type: "slider", xAxisIndex: 0, height: 18, bottom: 8, borderColor: "#2a3548",
-        fillerColor: "rgba(74,158,255,.15)", textStyle: { color: "#7d8aa0" } },
-    ],
-    xAxis: {
-      type: "category", data: dates, boundaryGap: false, name: d.grain_label ? `${d.grain_label}` : "",
-      axisLabel: { color: "#7d8aa0", fontSize: 11, hideOverlap: true },
-      axisLine: { lineStyle: { color: "#2a3548" } },
-    },
-    yAxis: {
-      type: "value", name: yName,
-      splitLine: { lineStyle: { color: "#202a3b" } },
-      axisLabel: { color: "#7d8aa0", formatter: (v) => `${v}` },
-      nameTextStyle: { color: "#7d8aa0", fontSize: 11 },
-    },
-    series: lines.map((l, i) => ({
-      name: l.name, type: "line", data: l.data,
-      showSymbol: dates.length <= 8, connectNulls: false,
-      smooth: dates.length >= 4, symbol: "circle", symbolSize: l.selected ? 9 : 6,
-      lineStyle: { width: l.selected ? 3 : 1.6, color: palette[i % palette.length] },
-      itemStyle: { color: palette[i % palette.length] },
-      emphasis: { focus: "series" },
-    })),
-  }, true);
-  flowTrendChart.off("click");
-  flowTrendChart.on("click", (p) => {
-    if (!p || !p.seriesName) return;
-    const hit = lines.find((l) => l.name === p.seriesName);
-    selectFlowBar((hit && hit.local_name) || p.seriesName);
-  });
-  requestAnimationFrame(() => flowTrendChart?.resize());
+  renderFlowTrendTable(lines);
   const noteEl = $("#flowTrendNote");
   if (noteEl && d.note) noteEl.textContent = `· ${d.title || ""} · ${d.note}`;
+  if (!dates.length || !lines.length) {
+    resetFlowTrendHost(host);
+    host.style.height = "220px";
+    host.style.maxHeight = "";
+    host.style.overflow = "";
+    host.innerHTML = `<div class="empty">${esc(d.note || "尚无日频点。设置页可点「拉取板块资金」。")}</div>`;
+    return;
+  }
+  if (dates.length < 2) {
+    paintFlowTrendOneDay(host, lines, dates[0] || d.asof);
+    return;
+  }
+  if (typeof echarts === "undefined") {
+    resetFlowTrendHost(host);
+    host.style.height = "auto";
+    host.innerHTML = `<div class="empty">图表库未加载，下方表格仍可看各板块净流入。</div>`;
+    return;
+  }
+  const draw = (tries) => {
+    if (host.offsetWidth < 40 && tries < 25) {
+      setTimeout(() => draw(tries + 1), 80);
+      return;
+    }
+    resetFlowTrendHost(host);
+    host.style.height = "440px";
+    host.style.minHeight = "440px";
+    host.style.maxHeight = "";
+    host.style.overflow = "";
+    flowTrendChart = echarts.init(host, "dark");
+    const palette = ["#ff5252", "#4a9eff", "#26c281", "#ffa940", "#c084fc", "#22d3ee", "#f472b6", "#a3e635", "#fb7185", "#60a5fa", "#fbbf24", "#34d399", "#e879f9", "#38bdf8", "#f97316", "#84cc16"];
+    flowTrendChart.setOption({
+      backgroundColor: "transparent",
+      color: palette,
+      tooltip: {
+        trigger: "axis",
+        backgroundColor: "#1a2230", borderColor: "#2a3548",
+        textStyle: { color: "#dbe4f0", fontSize: 12 },
+      },
+      legend: {
+        type: "scroll", top: 0, textStyle: { color: "#9aa8bc", fontSize: 11 },
+        data: lines.map((l) => l.name),
+      },
+      grid: { left: 58, right: 24, top: 48, bottom: dates.length >= 4 ? 72 : 36 },
+      dataZoom: dates.length >= 4 ? [
+        { type: "inside", xAxisIndex: 0, filterMode: "none" },
+        { type: "slider", xAxisIndex: 0, height: 18, bottom: 8, borderColor: "#2a3548",
+          fillerColor: "rgba(74,158,255,.15)", textStyle: { color: "#7d8aa0" } },
+      ] : [],
+      xAxis: {
+        type: "category", data: dates, boundaryGap: true,
+        axisLabel: { color: "#7d8aa0", fontSize: 11, hideOverlap: true },
+        axisLine: { lineStyle: { color: "#2a3548" } },
+      },
+      yAxis: {
+        type: "value", name: yName,
+        splitLine: { lineStyle: { color: "#202a3b" } },
+        axisLabel: { color: "#7d8aa0" },
+        nameTextStyle: { color: "#7d8aa0", fontSize: 11 },
+      },
+      series: lines.map((l, i) => ({
+        name: l.name, type: "line", data: l.data,
+        showSymbol: true, connectNulls: false,
+        smooth: dates.length >= 4, symbol: "circle", symbolSize: l.selected ? 9 : 6,
+        lineStyle: { width: l.selected ? 3 : 1.6, color: palette[i % palette.length] },
+        itemStyle: { color: palette[i % palette.length] },
+        emphasis: { focus: "series" },
+      })),
+    }, true);
+    flowTrendChart.off("click");
+    flowTrendChart.on("click", (p) => {
+      const nm = p && p.seriesName;
+      if (!nm) return;
+      const hit = lines.find((l) => l.name === nm);
+      selectFlowBar((hit && hit.local_name) || nm);
+    });
+    requestAnimationFrame(() => flowTrendChart?.resize());
+    setTimeout(() => flowTrendChart?.resize(), 200);
+  };
+  draw(0);
 }
 
 async function loadFlowBarStocks(name) {

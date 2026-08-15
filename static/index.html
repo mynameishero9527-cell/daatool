@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>A股量化工具</title>
-<link rel="stylesheet" href="/static/style.css?v=11.0.9">
-<script src="/static/vendor/echarts.min.js?v=11.0.9"></script>
+<link rel="stylesheet" href="/static/style.css?v=11.0.10">
+<script src="/static/vendor/echarts.min.js?v=11.0.10"></script>
 </head>
 <body>
 <header class="topbar">
@@ -263,7 +263,8 @@
         </div>
         <div id="flowTrendKpis" class="flow-kpis"></div>
         <div id="flowTrendChart" class="chart-lg" style="height:440px"></div>
-        <div class="muted" style="margin-top:6px;font-size:12px">折线来自<strong>新浪板块资金独立源</strong>（已缓存本地）。横轴按「日 / 5日 / 周 / 12日 / 20日 / 月」切换，纵轴=该周期主力净流入（亿）。直方图仍用本地成分股汇总，两者分开。点折线可尝试联动选中。</div>
+        <div id="flowTrendTable"></div>
+        <div class="muted" style="margin-top:6px;font-size:12px">独立源有数就会显示：账本只有 1 个交易日时先画各板块当日净流入横条（单点折线看起来像空白）；满 2 日后自动改成时间折线。下方表格同步列出净流入。</div>
       </div>
       <div class="card" id="flowBarStocks" style="display:none">
         <div class="card-title" id="flowBarStocksTitle"><span id="flowBarStocksLabel">个股</span>
@@ -628,6 +629,6 @@
   <div class="ctx-item" id="ctxNewsAi" style="display:none">🤖 发送AI分析（消息）</div>
 </div>
 
-<script src="/static/app.js?v=11.0.9"></script>
+<script src="/static/app.js?v=11.0.10"></script>
 </body>
 </html>
