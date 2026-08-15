@@ -45,7 +45,7 @@ OUTPUTS = [
     {"id": "MarketRegime", "name": "市场体制", "use": "环境分、引擎快照页"},
     {"id": "SectorRotation", "name": "板块轮动", "use": "流入/流出 Top、热词/政策标签"},
     {"id": "MacroCatalyst", "name": "宏观催化", "use": "政策/热词/日历 → 板块 → 个股"},
-    {"id": "StockVector", "name": "个股向量", "use": "智能选股综合分"},
+    {"id": "StockVector", "name": "个股向量", "use": "策略选股综合分"},
     {"id": "SignalBundle", "name": "信号包", "use": "买点池/卖点池"},
     {"id": "EngineBrief", "name": "关键信息清单", "use": "快照页与 AI 语境"},
 ]
@@ -111,7 +111,7 @@ FLOW = [
     {"step": "1 采集", "text": "只读本地库与缓存，记录每个域是否可用、条数、asof"},
     {"step": "2 提取", "text": "压成关键指标与短文本事实，空值保留并写 missing_reason"},
     {"step": "3 分析", "text": "规则计算体制、轮动、催化、个股向量、买/卖信号包"},
-    {"step": "4 快照", "text": "按交易日落盘，供智能选股与其它入口消费"},
+    {"step": "4 快照", "text": "按交易日落盘，供策略选股与其它入口消费"},
     {"step": "5 消费", "text": "综合分=向量加权；命中页=信号包；催化页=Brief；缺快照则回退现场计算"},
     {"step": "6 验证", "text": "signal_task 用后续日 K 跟踪；无 factor_daily 不开放回测"},
 ]
@@ -146,7 +146,7 @@ def blueprint() -> dict:
         "run": run,
         "config": cfg,
         "title": "策略引擎配置",
-        "subtitle": "已落地采集→快照→信号任务。默认关闭自动拍；未启用时智能选股仍现场计算。",
+        "subtitle": "已落地采集→快照→信号任务。默认关闭自动拍；未启用时策略选股仍现场计算。",
         "doc": "需求优化文档13.0.md",
         "domains": domains,
         "weights": weights,

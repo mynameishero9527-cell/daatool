@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>A股量化工具</title>
-<link rel="stylesheet" href="/static/style.css?v=13.0.5">
+<link rel="stylesheet" href="/static/style.css?v=13.0.6">
 <script>
 (function () {
   try {
@@ -35,7 +35,8 @@
     <button class="tab" data-tab="commodity">大宗商品</button>
     <button class="tab" data-tab="global">全球指数</button>
     <button class="tab" data-tab="recommend">个股推荐</button>
-    <button class="tab" data-tab="smartpick">智能选股</button>
+    <button class="tab" data-tab="smartpick">策略选股</button>
+    <button class="tab" data-tab="intelpick">智能选股</button>
     <button class="tab" data-tab="aipick">AI选股</button>
     <button class="tab" data-tab="ai">AI分析</button>
     <button class="tab" data-tab="settings">设置</button>
@@ -438,7 +439,7 @@
     </div>
   </section>
 
-  <!-- 智能选股 -->
+  <!-- 策略选股（原智能选股综合打分） -->
   <section class="page" id="page-smartpick">
     <div class="btn-group sub-tabs" id="smartpickTabs">
       <button class="opt active" data-view="composite">综合选股</button>
@@ -451,7 +452,7 @@
 
     <div id="spPaneComposite">
     <div class="card">
-      <div class="card-title">智能选股 <span class="muted">综合本地行情/资金/量化/财报/板块 · 名单不依赖 AI</span></div>
+      <div class="card-title">策略选股 <span class="muted">综合本地行情/资金/量化/财报/板块 · 名单不依赖 AI</span></div>
       <div class="cond-inline" style="margin-bottom:10px;gap:16px">
         <span><span class="g-label muted">策略模板</span>
           <span class="btn-group" id="spTemplates"></span></span>
@@ -516,10 +517,27 @@
     </div>
   </section>
 
+  <!-- 智能选股：股价未来涨跌方向 -->
+  <section class="page" id="page-intelpick">
+    <div class="btn-group sub-tabs" id="intelpickTabs">
+      <button class="opt active" data-side="up">上涨预测</button>
+      <button class="opt" data-side="down">下跌预测</button>
+    </div>
+    <div class="card">
+      <div class="card-title">智能选股 <span class="muted">股价未来涨跌方向分析 · 量化参考，不承诺涨跌</span></div>
+      <div class="muted" id="ipNote" style="margin-bottom:10px"></div>
+      <div id="ipMarket"><div class="empty">加载中…</div></div>
+    </div>
+    <div class="card">
+      <div class="card-title" id="ipListTitle">上涨预测 <span class="muted" id="ipCount"></span></div>
+      <div id="ipTable"><div class="empty">加载中…</div></div>
+    </div>
+  </section>
+
   <!-- AI 选股 -->
   <section class="page" id="page-aipick">
     <div class="card">
-      <div class="card-title">AI 选股 <span class="muted">自然语言描述 → 语义解析 + 本地库筛选 · 综合打分请用「智能选股」</span></div>
+      <div class="card-title">AI 选股 <span class="muted">自然语言描述 → 语义解析 + 本地库筛选 · 综合打分请用「策略选股」</span></div>
       <div class="inline-form" style="width:100%;margin-bottom:10px">
         <input id="aiPickInput" placeholder="如：低估值放量的银行股、华为产业链小市值企稳" style="flex:1">
         <button class="btn" onclick="runAiPick()">开始选股</button>
@@ -712,7 +730,7 @@
         <div id="engineWeights" class="sp-weights"></div>
       </div>
       <div class="card">
-        <div class="card-title">消费开关 <span class="muted">未启用引擎时智能选股仍现场计算</span></div>
+        <div class="card-title">消费开关 <span class="muted">未启用引擎时策略选股仍现场计算</span></div>
         <div id="engineConsume" class="cond-inline" style="gap:16px"></div>
         <div class="muted" style="margin-top:10px" id="engineRules"></div>
       </div>
@@ -781,6 +799,6 @@
   <div class="ctx-item" id="ctxKbRevert" style="display:none">↩ 还原内置解释</div>
 </div>
 
-<script src="/static/app.js?v=13.0.5"></script>
+<script src="/static/app.js?v=13.0.6"></script>
 </body>
 </html>

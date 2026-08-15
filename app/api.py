@@ -10,7 +10,7 @@ from . import scheduler as sched_mod
 from .services import (
     ai, alerts, announcement, attribution, commodity, cycle, darkpool, finance,
     forecast, global_index, holders, hot_terms, intel_ai, kline, knowledge, macro, market, ranks, rating,
-    recommend, screener, sector, smartpick, stock_ai, stocklist, strategy, wuxing,
+    intelpick, recommend, screener, sector, smartpick, stock_ai, stocklist, strategy, wuxing,
 )
 from .services import metrics as metrics_svc
 from .services import policy_archive
@@ -697,6 +697,12 @@ def engine_tasks_get(side: str = "", status: str = "", limit: int = Query(80, le
     return engine.list_signal_tasks(side, status, limit)
 
 
+@router.get("/intelpick")
+def intelpick_page(side: str = "up"):
+    """智能选股：股价未来涨跌方向分析。本轮返回菜单骨架，不编造个股名单。"""
+    return intelpick.get_page(side)
+
+
 @router.get("/smartpick/meta")
 def smartpick_meta():
     return smartpick.meta()
@@ -721,7 +727,7 @@ def smartpick_policy_save(payload: dict):
 def smartpick_ai_comment(payload: dict):
     return smartpick.comment(
         payload.get("items") or [],
-        payload.get("template_name") or "智能选股",
+        payload.get("template_name") or "策略选股",
         payload.get("summary") or "",
         force=True)
 

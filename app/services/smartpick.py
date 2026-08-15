@@ -1,4 +1,4 @@
-"""智能选股（FR11-01）：本地综合多维指标打分，AI 点评受开关与频率约束。"""
+"""策略选股（原智能选股 FR11-01）：本地综合多维指标打分，AI 点评受开关与频率约束。"""
 import hashlib
 import logging
 import time

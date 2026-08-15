@@ -295,7 +295,7 @@ main { padding: 16px 18px; max-width: 1500px; margin: 0 auto; }
 /* 表格 */
 table { width: 100%; border-collapse: collapse; font-size: calc(13px * var(--font-scale)); }
 th, td { white-space: nowrap; }
-#watchTable, #screenerResult, #recommendTable, #rankTable, #aiPickTable, #spTable,
+#watchTable, #screenerResult, #recommendTable, #rankTable, #aiPickTable, #spTable, #ipTable,
 #sectorDrillTable, #flowBarStocksTable, #etfHoldings, #ckRelatedTable, #flowTrendTable,
 #holdersSec { overflow-x: auto; }
 th, td { padding: 9px 11px; text-align: right; white-space: nowrap; }

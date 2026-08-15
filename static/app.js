@@ -4939,8 +4939,8 @@ window.saveEngineConfig = async () => {
     engineBlueprint = null;
     if (msg) {
       msg.textContent = d.enabled
-        ? "已保存并启用。交易日 15:50 将自动拍；智能选股可消费向量。"
-        : "已保存。引擎未启用，智能选股仍现场计算。手动「跑一次」仍可预览快照。";
+        ? "已保存并启用。交易日 15:50 将自动拍；策略选股可消费向量。"
+        : "已保存。引擎未启用，策略选股仍现场计算。手动「跑一次」仍可预览快照。";
     }
     loadEngineBlueprint();
   } catch (err) {
@@ -5034,7 +5034,7 @@ async function loadEngineBlueprint() {
   const c = d.consume || {};
   if (cons) {
     cons.innerHTML = `
-      <label class="muted" style="font-size:calc(13px * var(--font-scale))"><input type="checkbox" id="engConsVector" ${c.smartpick_vector !== false ? "checked" : ""}> 智能选股综合分接入向量</label>
+      <label class="muted" style="font-size:calc(13px * var(--font-scale))"><input type="checkbox" id="engConsVector" ${c.smartpick_vector !== false ? "checked" : ""}> 策略选股综合分接入向量</label>
       <label class="muted" style="font-size:calc(13px * var(--font-scale))"><input type="checkbox" id="engConsSignals" ${c.smartpick_signals !== false ? "checked" : ""}> 策略命中页走信号包</label>
       <label class="muted" style="font-size:calc(13px * var(--font-scale))"><input type="checkbox" id="engConsCatalyst" ${c.smartpick_catalyst !== false ? "checked" : ""}> 宏观催化页走 Brief</label>
       <label class="muted" style="font-size:calc(13px * var(--font-scale))"><input type="checkbox" disabled ${d.llm_brief ? "checked" : ""}> LLM 写 Brief 句子（默认关）</label>`;
@@ -5251,7 +5251,7 @@ window.fullSync = async () => {
   }, 2000);
 };
 
-/* ---------------- 智能选股（FR11-01） ---------------- */
+/* ---------------- 策略选股（原智能选股综合打分 FR11-01） ---------------- */
 const SP_HARD = [
   { key: "exclude_st", label: "剔除ST/退市", def: true },
   { key: "need_main_in", label: "必须主力净流入>0", def: false },
@@ -5889,6 +5889,68 @@ function bindBuyFlash() {
   applyBuyFlashPos();
 }
 
+/* ---------------- 智能选股（股价未来涨跌方向，菜单骨架） ---------------- */
+let intelpickSub = "up";
+async function loadIntelpick() {
+  const box = $("#ipTable");
+  const marketBox = $("#ipMarket");
+  const note = $("#ipNote");
+  if (!box) return;
+  box.innerHTML = '<div class="empty">加载中…</div>';
+  try {
+    const d = await api(`/api/intelpick?side=${encodeURIComponent(intelpickSub)}`);
+    if (note) note.textContent = (d.note || "") + " " + (d.disclaimer || "");
+    const m = d.market || {};
+    const prob = m.prob_up;
+    const factors = Array.isArray(m.factors) ? m.factors : [];
+    if (marketBox) {
+      marketBox.innerHTML = (prob == null)
+        ? '<div class="empty">大盘方向暂无数据</div>'
+        : `<div style="margin-bottom:8px">
+            <span class="prob-num ${prob >= 58 ? "up" : prob <= 42 ? "down" : "flat"}">${esc(prob)}%</span>
+            <span class="badge ${prob >= 58 ? "level-4" : prob <= 42 ? "level-1" : "level-2"}">明日大盘${esc(m.view || "")}</span>
+            <span class="muted" style="margin-left:8px">${esc(m.desc || "")}</span>
+          </div>
+          <div class="prob-bar"><div class="p" style="width:${Number(prob) || 0}%"></div></div>
+          ${factors.map((x) => `<div class="kv"><span class="k">${esc(x.name)}</span>
+            <span>${esc(x.value)} <span class="num ${cls(x.impact)}">${sign(x.impact)}${fmt(x.impact, 1)}</span></span></div>`).join("")}
+          <div class="muted" style="font-size:calc(12px * var(--font-scale));margin-top:6px">${esc(m.disclaimer || "")}</div>`;
+    }
+    const sideName = intelpickSub === "down" ? "下跌预测" : "上涨预测";
+    const title = $("#ipListTitle");
+    if (title) title.innerHTML = `${sideName} <span class="muted" id="ipCount"></span>`;
+    const items = Array.isArray(d.items) ? d.items : [];
+    const countEl = $("#ipCount");
+    if (countEl) countEl.textContent = items.length ? `共 ${items.length} 只` : "";
+    if (!items.length) {
+      box.innerHTML = `<div class="empty">${esc(d.empty_reason || "暂无预测名单")}</div>`;
+      return;
+    }
+    box.innerHTML = `<table><thead><tr>
+      <th>#</th><th>名称</th><th>现价</th><th>涨跌幅</th><th>方向</th><th>依据</th>
+    </tr></thead><tbody>${items.map((r, i) => `
+      <tr data-code="${escAttr(r.code)}" data-name="${escAttr(r.name)}" onclick="openStock('${esc(r.code)}','${esc(r.name)}')">
+        <td>${i + 1}</td>
+        <td>${esc(r.name)} <span class="muted">${esc(r.code)}</span></td>
+        <td class="num">${pxHtml(r.price, r.pct)}</td>
+        <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
+        <td><span class="badge ${intelpickSub === "down" ? "dir-利空" : "dir-利好"}">${esc(r.direction || sideName)}</span></td>
+        <td>${esc(r.reason || "")}</td>
+      </tr>`).join("")}</tbody></table>
+      <div class="muted" style="margin-top:8px;font-size:calc(12px * var(--font-scale))">${esc(d.disclaimer || "")}</div>`;
+  } catch (err) {
+    box.innerHTML = '<div class="empty">加载失败</div>';
+    console.warn(err);
+  }
+}
+$("#intelpickTabs")?.addEventListener("click", (e) => {
+  const btn = e.target.closest(".opt");
+  if (!btn) return;
+  intelpickSub = btn.dataset.side || "up";
+  $$("#intelpickTabs .opt").forEach((b) => b.classList.toggle("active", b === btn));
+  loadIntelpick();
+});
+
 /* ---------------- 工具与启动 ---------------- */
 function debounce(fn, ms) {
   let t;
@@ -5905,6 +5967,7 @@ loaders.global = loadGlobal;
 loaders.recommend = loadRecommend;
 loaders.ranks = loadRanks;
 loaders.smartpick = loadSmartpick;
+loaders.intelpick = loadIntelpick;
 loaders.aipick = loadAiPick;
 loaders.ai = loadAiConfig;
 loaders.settings = () => {
