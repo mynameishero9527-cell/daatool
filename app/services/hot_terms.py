@@ -420,7 +420,7 @@ def list_hot_terms(kind: str = "") -> dict:
         "items": items, "count": len(items),
         "window_days": WINDOW_DAYS,
         "last_sync": get_meta("hot_terms_last_sync", "从未"),
-        "update": "每小时根据近14天本地快讯/官方政策重算；右键可让 AI 分析利好/利空并回填。",
+        "update": "可点「手动更新全部热词」立即重算；「一键AI回填」按当前列表写入利好/利空。小时任务仍会重算热度，不冲掉已回填。",
         "empty_reason": empty_reason,
     }
 
@@ -684,6 +684,59 @@ def analyze_hot_term_ai(term: str) -> dict:
         "text": (raw or "") + ai_svc.DISCLAIMER,
         "error": "", "hint": "",
         "reason": reason,
+    }
+
+
+def analyze_hot_terms_ai_batch(kind: str = "", terms: list | None = None) -> dict:
+    """一键回填当前热词列表的利好/利空。未配置或单词语失败不覆盖已有结果。"""
+    from . import ai as ai_svc
+    listed = list_hot_terms(kind or "")
+    names: list[str] = []
+    if isinstance(terms, list) and terms:
+        want = {str(t).strip() for t in terms if str(t).strip()}
+        names = [x["term"] for x in (listed.get("items") or []) if x.get("term") in want]
+        extra = [t for t in (str(x).strip() for x in terms) if t and t not in names]
+        names.extend(extra)
+    else:
+        names = [x["term"] for x in (listed.get("items") or []) if x.get("term")]
+    cfg = ai_svc.get_config(masked=False)
+    base_url = ai_svc.normalize_api_base(cfg.get("api_base", "") or "")
+    if not names:
+        return {
+            "ok": True, "configured": bool(cfg.get("api_key") and base_url),
+            "applied": 0, "failed": 0, "skipped": 0, "total": 0, "items": [],
+            "error": "", "hint": "当前没有可回填的热词。请先手动更新全部热词。",
+        }
+    if not (cfg.get("api_key") and base_url):
+        return {
+            "ok": True, "configured": False, "applied": 0, "failed": 0,
+            "skipped": len(names), "total": len(names), "items": [],
+            "error": "",
+            "hint": "到 AI 分析页填写地址、密钥、模型并测试连通后再一键回填。",
+            "source": "本地规则（未配置AI大模型）",
+        }
+    items = []
+    applied = failed = 0
+    for name in names:
+        one = analyze_hot_term_ai(name)
+        row = {
+            "term": name,
+            "applied": bool(one.get("applied")),
+            "error": one.get("error") or "",
+            "reason": one.get("reason") or one.get("impact_summary") or "",
+        }
+        items.append(row)
+        if row["applied"]:
+            applied += 1
+        else:
+            failed += 1
+    return {
+        "ok": True, "configured": True,
+        "applied": applied, "failed": failed, "skipped": 0,
+        "total": len(names), "items": items,
+        "source": f"AI大模型（{cfg.get('model') or '默认'}）",
+        "error": "", "hint": "",
+        "note": "仅成功解析出板块的热词会覆盖回填；失败的保留词库，不假装成功。",
     }
 
 

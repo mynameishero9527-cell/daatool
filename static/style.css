@@ -702,6 +702,7 @@ tr.score-95 td { background: rgba(255, 60, 60, .30); }
 .hot-group-title.up { color: var(--up); }
 .hot-group-title.down { color: var(--down); }
 .hot-tile .impact { margin-top: 6px; font-size: 11px; line-height: 1.45; color: var(--muted); }
+.hot-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
 .hot-tile .ai-flag, .hot-ai-flag {
   display: inline-block; margin-left: 6px; font-size: 10px; padding: 1px 6px;
   border-radius: 8px; background: rgba(74,158,255,.18); color: var(--accent); vertical-align: middle;

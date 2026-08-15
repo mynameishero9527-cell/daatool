@@ -1339,6 +1339,7 @@ const newsFilter = { level: 0, direction: "", region: "", days: 0 };  // FR5-01-
 let sectorEvGroup = "day";
 const policyFilter = { days: 180, scope: "", country: "", doc_type: "" };
 let hotKind = "";
+let hotAiToken = 0;
 const hotFocus = { term: "", sector: "" };
 
 function newsFilterBar() {
@@ -1664,14 +1665,19 @@ async function renderHotWords(box) {
   const rows = d.items || [];
   box.innerHTML = `
     <div class="muted" style="margin-bottom:8px">
-      近两周热门词汇（板块区域）· ${esc(d.update || "每小时重算")}
+      近两周热门词汇（板块区域）· ${esc(d.update || "可手动更新")}
       · 上次 ${esc(d.last_sync || "从未")} · 点击热词看利好/利空板块，再点板块看个股 TOP20
-      · <b>右键热词</b>可让 AI 分析利好/利空并回填（未配置大模型时保留词库，不假装成功）
+      · 右键单词回填；也可用下方按钮一键更新全部热词或 AI 回填当前列表
     </div>
-    <div class="btn-group" style="margin-bottom:10px" id="hotKindBtns">
-      ${[["", "全部"], ["rise", "热度上升"], ["fall", "热度下降"]].map(([v, t]) =>
-        `<button class="opt ${v === hotKind ? "active" : ""}" data-v="${v}">${t}</button>`).join("")}
+    <div class="hot-toolbar">
+      <div class="btn-group" id="hotKindBtns">
+        ${[["", "全部"], ["rise", "热度上升"], ["fall", "热度下降"]].map(([v, t]) =>
+          `<button type="button" class="opt ${v === hotKind ? "active" : ""}" data-v="${v}">${t}</button>`).join("")}
+      </div>
+      <button type="button" class="btn ghost small" id="hotRebuildBtn">手动更新全部热词</button>
+      <button type="button" class="btn small" id="hotAiBatchBtn">一键AI回填利好/利空</button>
     </div>
+    <div id="hotBatchStatus" class="muted" style="margin-bottom:8px"></div>
     <div id="hotDetailBox"></div>
     ${rows.length ? `<div class="hot-grid">${rows.map((t) => {
       const clsName = t.trend === "上升" ? "rising" : t.trend === "下降" ? "falling" : "";
@@ -1690,14 +1696,91 @@ async function renderHotWords(box) {
   $("#hotKindBtns")?.addEventListener("click", (e) => {
     const btn = e.target.closest(".opt");
     if (!btn) return;
+    hotAiToken += 1;
     hotKind = btn.dataset.v || "";
     loadMacro();
   });
+  $("#hotRebuildBtn")?.addEventListener("click", () => rebuildAllHotTerms());
+  $("#hotAiBatchBtn")?.addEventListener("click", () => batchHotTermAi());
   if (hotFocus.term) {
     await openHotTerm(hotFocus.term, false);
     if (hotFocus.sector) await openHotSector(hotFocus.sector, hotFocus.term);
   }
 }
+
+window.rebuildAllHotTerms = async () => {
+  hotAiToken += 1;
+  const btn = $("#hotRebuildBtn");
+  const st = $("#hotBatchStatus");
+  if (btn) { btn.disabled = true; btn.textContent = "正在更新…"; }
+  if (st) st.textContent = "正在根据近两周本地快讯/官方政策重算全部热词（不编造热度）…";
+  try {
+    const d = await post("/api/macro/hot-terms-rebuild");
+    await loadMacro();
+    const st2 = $("#hotBatchStatus");
+    if (st2) st2.textContent = `已更新 ${d.count || 0} 个热词 · ${esc(d.last_sync || "")}。已回填的 AI 利好/利空不会被冲掉。`;
+  } catch (err) {
+    if (st) st.innerHTML = `<span class="down">更新失败：${esc(err.message || err)}</span>`;
+    if (btn) { btn.disabled = false; btn.textContent = "手动更新全部热词"; }
+  }
+};
+
+window.batchHotTermAi = async () => {
+  const my = ++hotAiToken;
+  const btn = $("#hotAiBatchBtn");
+  const st = $("#hotBatchStatus");
+  const rebuild = $("#hotRebuildBtn");
+  if (btn) { btn.disabled = true; btn.textContent = "回填中…"; }
+  if (rebuild) rebuild.disabled = true;
+  if (st) st.textContent = "正在读取当前热词列表…";
+  try {
+    const listed = await api(`/api/macro/hot-terms?kind=${encodeURIComponent(hotKind)}`);
+    const terms = (listed.items || []).map((t) => t.term).filter(Boolean);
+    if (!terms.length) {
+      if (st) st.textContent = listed.empty_reason || "当前没有可回填的热词。请先手动更新全部热词。";
+      return;
+    }
+    if (st) st.textContent = `AI回填 1/${terms.length}「${terms[0]}」…`;
+    const cfgProbe = await api("/api/macro/hot-term-ai", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ term: terms[0] }),
+    });
+    if (my !== hotAiToken) return;
+    if (!cfgProbe.applied && String(cfgProbe.source || "").includes("未配置")) {
+      if (st) st.innerHTML = aiErrBanner({ error: "未配置AI大模型", hint: cfgProbe.hint }, "。未改写任何热词。")
+        || `<div class="muted">${esc(cfgProbe.hint || "请先配置大模型")}</div>`;
+      return;
+    }
+    let applied = cfgProbe.applied ? 1 : 0;
+    let failed = cfgProbe.applied ? 0 : 1;
+    if (st) {
+      st.textContent = `AI回填 1/${terms.length}「${terms[0]}」${cfgProbe.applied ? "已写入" : "未覆盖词库"}`;
+    }
+    for (let i = 1; i < terms.length; i++) {
+      if (my !== hotAiToken) return;
+      if (st) st.textContent = `AI回填 ${i + 1}/${terms.length}「${terms[i]}」…`;
+      const d = await api("/api/macro/hot-term-ai", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ term: terms[i] }),
+      });
+      if (d.applied) applied += 1;
+      else failed += 1;
+    }
+    if (my !== hotAiToken) return;
+    if (st) st.textContent = `完成：成功回填 ${applied} 个，未覆盖 ${failed} 个（失败保留词库，不假装成功）。`;
+    await loadMacro();
+    const st2 = $("#hotBatchStatus");
+    if (st2) st2.textContent = `完成：成功回填 ${applied} 个，未覆盖 ${failed} 个（失败保留词库，不假装成功）。`;
+  } catch (err) {
+    if (st) st.innerHTML = `<span class="down">一键回填失败：${esc(err.message || err)}</span>`;
+  } finally {
+    if (my !== hotAiToken) return;
+    const b1 = $("#hotAiBatchBtn");
+    const b2 = $("#hotRebuildBtn");
+    if (b1) { b1.disabled = false; b1.textContent = "一键AI回填利好/利空"; }
+    if (b2) b2.disabled = false;
+  }
+};
 
 window.openHotTerm = async (term, resetSector = true) => {
   hotFocus.term = term || "";

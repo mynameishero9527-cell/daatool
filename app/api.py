@@ -338,6 +338,13 @@ def macro_hot_term_ai(payload: dict = Body(default={})):
     return hot_terms.analyze_hot_term_ai(term)
 
 
+@router.post("/macro/hot-terms-ai-batch")
+def macro_hot_terms_ai_batch(payload: dict = Body(default={})):
+    """一键回填当前热词列表的利好/利空。未配置或解析失败不覆盖。"""
+    body = payload or {}
+    return hot_terms.analyze_hot_terms_ai_batch(body.get("kind") or "", body.get("terms"))
+
+
 @router.post("/commodities/watch")
 def commodities_watch(symbol: str):
     return commodity.toggle_watch(symbol)
