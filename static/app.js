@@ -2000,6 +2000,12 @@ function kpiNum(v, digits) {
   const n = Number(v);
   return `${n > 0 ? "+" : ""}${fmt(n, digits)}亿`;
 }
+function yiWan(v, digits) {
+  if (v === null || v === undefined || Number.isNaN(Number(v))) return "-";
+  const n = Number(v);
+  if (Math.abs(n) >= 10000) return `${(n / 10000).toFixed(digits == null ? 2 : digits)}万亿`;
+  return `${fmt(n, digits == null ? 0 : digits)}亿`;
+}
 
 async function loadFlowTrend() {
   const host = $("#flowTrendChart");
@@ -2018,9 +2024,13 @@ async function loadFlowTrend() {
       kpisEl.innerHTML = `
         <div class="flow-kpi"><span>横轴</span><b>${esc(k.grain_label || d.grain_label || "日")}</b></div>
         <div class="flow-kpi"><span>${oneDay ? "板块数" : "折线条数"}</span><b>${k.line_count || (d.lines || []).length}</b></div>
-        <div class="flow-kpi"><span>横轴点数</span><b>${k.bucket_count || (d.dates || []).length}</b></div>
         <div class="flow-kpi"><span>账本交易日</span><b>${k.days_have || 0}</b></div>
-        <div class="flow-kpi"><span>最新账本日</span><b>${esc(k.last_date || d.asof || "-")}</b></div>`;
+        <div class="flow-kpi"><span>全A成交额</span><b>${esc(yiWan(k.market_amount_yi))}</b></div>
+        <div class="flow-kpi"><span>上证成交额</span><b>${esc(yiWan(k.sh_amount_yi))}</b></div>
+        <div class="flow-kpi"><span>深证成交额</span><b>${esc(yiWan(k.sz_amount_yi))}</b></div>
+        <div class="flow-kpi"><span>北证成交额</span><b>${esc(yiWan(k.bj_amount_yi, 1))}</b></div>
+        <div class="flow-kpi"><span>全A成交量</span><b>${k.market_volume_yi != null ? fmt(k.market_volume_yi, 2) + "亿手" : "-"}</b></div>
+        <div class="flow-kpi"><span>量比</span><b>${k.vol_ratio != null ? fmt(k.vol_ratio, 2) : "-"}</b></div>`;
     }
     paintFlowTrend(d);
   } catch (err) {
@@ -2097,7 +2107,9 @@ function paintFlowTrend(d) {
   renderFlowTrendTable(lines);
   const noteEl = $("#flowTrendNote");
   if (noteEl && d.note) noteEl.textContent = `· ${d.title || ""} · ${d.note}`;
-  if (!dates.length || !lines.length) {
+  const mv0 = d.market_vol || {};
+  const hasVol0 = (mv0.volume || []).some((v) => v != null);
+  if (!dates.length || (!lines.length && !hasVol0)) {
     resetFlowTrendHost(host);
     host.style.height = "220px";
     host.style.maxHeight = "";
@@ -2105,7 +2117,7 @@ function paintFlowTrend(d) {
     host.innerHTML = `<div class="empty">${esc(d.note || "尚无日频点。设置页可点「拉取板块资金」。")}</div>`;
     return;
   }
-  if (dates.length < 2) {
+  if (dates.length < 2 && lines.length) {
     paintFlowTrendOneDay(host, lines, dates[0] || d.asof);
     return;
   }
@@ -2115,59 +2127,116 @@ function paintFlowTrend(d) {
     host.innerHTML = `<div class="empty">图表库未加载，下方表格仍可看各板块净流入。</div>`;
     return;
   }
+  const mv = d.market_vol || {};
+  const volData = mv.volume || [];
+  const amtData = mv.amount || [];
+  const volUp = mv.up || [];
+  const volName = mv.name || "大A量能";
   const draw = (tries) => {
     if (host.offsetWidth < 40 && tries < 25) {
       setTimeout(() => draw(tries + 1), 80);
       return;
     }
     resetFlowTrendHost(host);
-    host.style.height = "440px";
-    host.style.minHeight = "440px";
+    host.style.height = "560px";
+    host.style.minHeight = "560px";
     host.style.maxHeight = "";
     host.style.overflow = "";
     flowTrendChart = echarts.init(host, "dark");
     const palette = ["#ff5252", "#4a9eff", "#26c281", "#ffa940", "#c084fc", "#22d3ee", "#f472b6", "#a3e635", "#fb7185", "#60a5fa", "#fbbf24", "#34d399", "#e879f9", "#38bdf8", "#f97316", "#84cc16"];
+    const hasVol = volData.some((v) => v != null);
     flowTrendChart.setOption({
       backgroundColor: "transparent",
       color: palette,
+      axisPointer: { link: [{ xAxisIndex: "all" }], type: "cross" },
       tooltip: {
         trigger: "axis",
         backgroundColor: "#1a2230", borderColor: "#2a3548",
         textStyle: { color: "#dbe4f0", fontSize: 12 },
+        formatter: (ps) => {
+          if (!ps || !ps.length) return "";
+          const idx = ps[0].dataIndex;
+          const head = [`${ps[0].axisValue || ""}`];
+          ps.filter((p) => p.seriesType === "line").forEach((p) => {
+            if (p.value == null) return;
+            const v = Number(p.value);
+            head.push(`${p.marker}${p.seriesName} <b>${v > 0 ? "+" : ""}${v.toFixed(2)} 亿</b>`);
+          });
+          if (volData[idx] != null) head.push(`大A量能 <b>${Number(volData[idx]).toFixed(2)} 亿手</b>`);
+          if (amtData[idx] != null) head.push(`全A成交额 <b>${yiWan(amtData[idx])}</b>`);
+          return head.join("<br>");
+        },
       },
       legend: {
         type: "scroll", top: 0, textStyle: { color: "#9aa8bc", fontSize: 11 },
-        data: lines.map((l) => l.name),
+        data: lines.map((l) => l.name).concat(hasVol ? [volName] : []),
       },
-      grid: { left: 58, right: 24, top: 48, bottom: dates.length >= 4 ? 72 : 36 },
+      grid: hasVol ? [
+        { left: 58, right: 24, top: 44, height: "48%" },
+        { left: 58, right: 24, top: "68%", height: "16%" },
+      ] : { left: 58, right: 24, top: 48, bottom: dates.length >= 4 ? 72 : 36 },
       dataZoom: dates.length >= 4 ? [
-        { type: "inside", xAxisIndex: 0, filterMode: "none" },
-        { type: "slider", xAxisIndex: 0, height: 18, bottom: 8, borderColor: "#2a3548",
-          fillerColor: "rgba(74,158,255,.15)", textStyle: { color: "#7d8aa0" } },
+        { type: "inside", xAxisIndex: hasVol ? [0, 1] : 0, filterMode: "none" },
+        { type: "slider", xAxisIndex: hasVol ? [0, 1] : 0, height: 16, bottom: 6,
+          borderColor: "#2a3548", fillerColor: "rgba(74,158,255,.15)",
+          textStyle: { color: "#7d8aa0" } },
       ] : [],
-      xAxis: {
+      xAxis: hasVol ? [
+        { type: "category", data: dates, gridIndex: 0, boundaryGap: true,
+          axisLabel: { show: false }, axisTick: { show: false },
+          axisLine: { lineStyle: { color: "#2a3548" } } },
+        { type: "category", data: dates, gridIndex: 1, boundaryGap: true,
+          axisLabel: { color: "#7d8aa0", fontSize: 11, hideOverlap: true },
+          axisLine: { lineStyle: { color: "#2a3548" } } },
+      ] : {
         type: "category", data: dates, boundaryGap: true,
         axisLabel: { color: "#7d8aa0", fontSize: 11, hideOverlap: true },
         axisLine: { lineStyle: { color: "#2a3548" } },
       },
-      yAxis: {
-        type: "value", name: yName,
+      yAxis: hasVol ? [
+        { type: "value", name: yName, gridIndex: 0, scale: true,
+          splitLine: { lineStyle: { color: "#202a3b" } },
+          axisLabel: { color: "#7d8aa0" },
+          nameTextStyle: { color: "#7d8aa0", fontSize: 11 },
+        },
+        { type: "value", name: "亿手", gridIndex: 1, scale: true,
+          splitNumber: 2,
+          splitLine: { lineStyle: { color: "#202a3b" } },
+          axisLabel: { color: "#7d8aa0", fontSize: 10 },
+          nameTextStyle: { color: "#7d8aa0", fontSize: 11 },
+        },
+      ] : {
+        type: "value", name: yName, scale: true,
         splitLine: { lineStyle: { color: "#202a3b" } },
         axisLabel: { color: "#7d8aa0" },
         nameTextStyle: { color: "#7d8aa0", fontSize: 11 },
       },
       series: lines.map((l, i) => ({
         name: l.name, type: "line", data: l.data,
+        xAxisIndex: 0, yAxisIndex: 0,
         showSymbol: true, connectNulls: false,
-        smooth: dates.length >= 4, symbol: "circle", symbolSize: l.selected ? 9 : 6,
-        lineStyle: { width: l.selected ? 3 : 1.6, color: palette[i % palette.length] },
+        smooth: false, symbol: "circle", symbolSize: l.selected ? 8 : 5,
+        lineStyle: { width: l.selected ? 2.6 : 1.5, color: palette[i % palette.length] },
         itemStyle: { color: palette[i % palette.length] },
+        markLine: i === 0 ? {
+          silent: true, symbol: "none",
+          data: [{ yAxis: 0 }],
+          lineStyle: { color: "#5a6a80", type: "dashed", width: 1 },
+          label: { show: false },
+        } : undefined,
         emphasis: { focus: "series" },
-      })),
+      })).concat(hasVol ? [{
+        name: volName, type: "bar", data: volData,
+        xAxisIndex: 1, yAxisIndex: 1, barMaxWidth: 18,
+        itemStyle: {
+          color: (p) => (volUp[p.dataIndex] ? "rgba(255,82,82,.75)" : "rgba(38,194,129,.75)"),
+        },
+      }] : []),
     }, true);
     flowTrendChart.off("click");
     flowTrendChart.on("click", (p) => {
-      const nm = p && p.seriesName;
+      if (!p || p.seriesType === "bar") return;
+      const nm = p.seriesName;
       if (!nm) return;
       const hit = lines.find((l) => l.name === nm);
       selectFlowBar((hit && hit.local_name) || nm);

@@ -3,7 +3,7 @@ from datetime import datetime
 
 from ..cache import cache, cached
 from ..config import DEFAULT_WATCHLIST, TTL_INDEX, TTL_REALTIME
-from ..database import execute, query
+from ..database import execute, executemany, query
 from ..datasources import offline, sina, tencent
 from ..datasources.base import with_failover
 
@@ -178,3 +178,76 @@ def remove_watch(code: str) -> dict:
 def toggle_pin(code: str) -> dict:
     execute("UPDATE watchlist SET pinned = 1 - pinned WHERE code=?", (code,))
     return {"ok": True}
+
+
+def record_market_volume(asof: str = "") -> dict:
+    """落库大A每日量能：成交额优先中证全指；成交量来自指数日K。不编造历史成交额。"""
+    from . import kline as kline_svc
+    from ..datasources import eastmoney
+
+    day = (asof or "").strip()
+    if len(day) < 10:
+        rows = query("SELECT MAX(updated_at) AS t FROM stock_snapshot")
+        raw = ((rows[0]["t"] if rows else "") or "").strip()
+        day = raw[:10] if len(raw) >= 10 else datetime.now().strftime("%Y-%m-%d")
+
+    amounts = {}
+    try:
+        amounts = eastmoney.fetch_market_amounts() or {}
+    except Exception:  # noqa: BLE001
+        amounts = {}
+    if not amounts.get("amount_yi"):
+        quotes = get_quotes(["sh000001", "sz399001", "bj899050", "sh000985"])
+
+        def yi(code: str) -> float | None:
+            wan = (quotes.get(code) or {}).get("amount")
+            return round(wan / 10000.0, 1) if wan else None
+
+        sh, sz, bj, csi = yi("sh000001"), yi("sz399001"), yi("bj899050"), yi("sh000985")
+        amounts = {
+            "amount_yi": csi if csi else round((sh or 0) + (sz or 0) + (bj or 0), 1),
+            "sh_amount_yi": sh, "sz_amount_yi": sz, "bj_amount_yi": bj,
+            "csi_amount_yi": csi, "source": "腾讯财经",
+        }
+
+    k_csi = kline_svc.get_kline("sh000985", "day", 80)
+    k_sh = kline_svc.get_kline("sh000001", "day", 80)
+    sh_vol = {d: v for d, v in zip(k_sh.get("dates") or [], k_sh.get("volumes") or [])}
+    dates = k_csi.get("dates") or k_sh.get("dates") or []
+    vols = k_csi.get("volumes") or k_sh.get("volumes") or []
+    closes = [row[1] for row in (k_csi.get("kline") or k_sh.get("kline") or [])]
+    payload = []
+    for i, d in enumerate(dates):
+        close = closes[i] if i < len(closes) else None
+        prev = closes[i - 1] if i > 0 and i - 1 < len(closes) else None
+        pct = round((close / prev - 1) * 100, 2) if close and prev else None
+        vol = vols[i] if i < len(vols) else None
+        is_today = d == day
+        payload.append((
+            d,
+            amounts.get("amount_yi") if is_today else None,
+            amounts.get("sh_amount_yi") if is_today else None,
+            amounts.get("sz_amount_yi") if is_today else None,
+            amounts.get("bj_amount_yi") if is_today else None,
+            vol, sh_vol.get(d), close, pct,
+            amounts.get("source") if is_today else "kline",
+        ))
+    if payload:
+        executemany(
+            """INSERT INTO market_volume_daily(
+                   trade_date, amount_yi, sh_amount_yi, sz_amount_yi, bj_amount_yi,
+                   volume, sh_volume, close, pct, source)
+               VALUES(?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(trade_date) DO UPDATE SET
+                 amount_yi=COALESCE(excluded.amount_yi, market_volume_daily.amount_yi),
+                 sh_amount_yi=COALESCE(excluded.sh_amount_yi, market_volume_daily.sh_amount_yi),
+                 sz_amount_yi=COALESCE(excluded.sz_amount_yi, market_volume_daily.sz_amount_yi),
+                 bj_amount_yi=COALESCE(excluded.bj_amount_yi, market_volume_daily.bj_amount_yi),
+                 volume=COALESCE(excluded.volume, market_volume_daily.volume),
+                 sh_volume=COALESCE(excluded.sh_volume, market_volume_daily.sh_volume),
+                 close=COALESCE(excluded.close, market_volume_daily.close),
+                 pct=COALESCE(excluded.pct, market_volume_daily.pct),
+                 source=COALESCE(excluded.source, market_volume_daily.source)""",
+            payload)
+    latest = query("SELECT * FROM market_volume_daily WHERE trade_date=? ", (day,))
+    return {"date": day, "days": len(payload), **(latest[0] if latest else amounts)}

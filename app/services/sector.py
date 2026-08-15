@@ -3,15 +3,20 @@
 板块资金全部由本地快照按 行业/概念 维度聚合计算，treemap 数据结构：
 方块大小=成交额，颜色值=主力净流入率。
 """
+import logging
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from ..cache import cached
-from ..database import execute, executemany, query, set_meta
-from ..datasources import sina, tencent
+from ..database import execute, executemany, get_meta, query, set_meta
+from ..datasources import eastmoney, sina, tencent
+from . import market as market_svc
 from . import metrics as metrics_svc
 from . import rating
+
+log = logging.getLogger("sector")
 
 # 泛化标签型概念（不具题材意义），同步时剔除
 _CONCEPT_BLACKLIST = ("融资融券", "转融券", "深股通", "沪股通", "富时罗素", "MSCI",
@@ -364,6 +369,8 @@ def flow_history_stats() -> dict:
         "concept_days": (by_dim.get("concept") or {}).get("days", 0),
         "remote_hy_days": (by_dim.get("remote_hy") or {}).get("days", 0),
         "remote_gn_days": (by_dim.get("remote_gn") or {}).get("days", 0),
+        "em_hy_days": (by_dim.get("em_hy") or {}).get("days", 0),
+        "em_gn_days": (by_dim.get("em_gn") or {}).get("days", 0),
         "last_date": max(lasts, default=""),
         "first_date": min(firsts, default=""),
         "remote_last": max(
@@ -418,6 +425,106 @@ def pull_remote_flow() -> dict:
                 [(dim, r["name"], asof, r["net_in"], r["amount"], 0) for dim, r in pairs])
     set_meta("sector_flow_remote_sync", datetime.now(_FLOW_TZ).isoformat(timespec="seconds"))
     return {"date": asof, "industry": len(hy), "concept": len(gn), "source": "sina", "rows": len(pairs)}
+
+
+def _em_distinct_days(em_dim: str) -> int:
+    return query("SELECT COUNT(DISTINCT trade_date) AS n FROM sector_flow_daily WHERE dim=?",
+                 (em_dim,))[0]["n"]
+
+
+def pull_em_flow_history(kind: str = "industry", lookback: int = 40,
+                         force: bool = False) -> dict:
+    """拉取东方财富板块资金日K写入 em_hy/em_gn。按真实主力净流入落库，不用涨跌幅填日。"""
+    kind = "concept" if kind == "concept" else "industry"
+    em_dim = "em_gn" if kind == "concept" else "em_hy"
+    asof = snapshot_asof_date()
+    have = _em_distinct_days(em_dim)
+    today_n = query("SELECT COUNT(*) AS n FROM sector_flow_daily WHERE dim=? AND trade_date=?",
+                    (em_dim, asof))[0]["n"]
+    last_sync = get_meta("sector_flow_em_sync") or ""
+    recent = False
+    if last_sync:
+        try:
+            ts = datetime.fromisoformat(last_sync)
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=_FLOW_TZ)
+            recent = (datetime.now(_FLOW_TZ) - ts).total_seconds() < 1800
+        except Exception:  # noqa: BLE001
+            recent = False
+    if today_n > 0 and not force and (have >= 5 or recent):
+        return {"skipped": True, "dim": em_dim, "days": have, "today": today_n, "rows": 0}
+    boards = eastmoney.fetch_board_list(kind, pz=200)
+    if kind == "industry":
+        local = {r["industry"] for r in query(
+            "SELECT DISTINCT industry FROM stock_list WHERE industry!=''")}
+        matched = [b for b in boards if b["name"] in local]
+        extra = [b for b in boards if b["name"] not in local][:8]
+        boards = (matched + extra) if matched else boards[:36]
+    else:
+        local = {r["concept"] for r in query("SELECT DISTINCT concept FROM concept_map")}
+        matched = [b for b in boards if b["name"] in local]
+        boards = matched[:24] if matched else boards[:24]
+    boards = boards[:40]
+    lookback = max(10, min(int(lookback or 40), 80))
+    today_payload = [
+        (em_dim, b["name"], asof, b["net_in"], b.get("amount") or 0, 0, "eastmoney", b["board_code"])
+        for b in boards
+    ]
+
+    def write(rows: list[tuple]) -> None:
+        if not rows:
+            return
+        try:
+            executemany(
+                """INSERT INTO sector_flow_daily(dim,name,trade_date,net_in,amount,stocks,source,board_code)
+                   VALUES(?,?,?,?,?,?,?,?)
+                   ON CONFLICT(dim,name,trade_date) DO UPDATE SET
+                     net_in=excluded.net_in, amount=COALESCE(excluded.amount, sector_flow_daily.amount),
+                     source=excluded.source, board_code=excluded.board_code""",
+                rows)
+        except Exception:  # noqa: BLE001
+            executemany(
+                """INSERT INTO sector_flow_daily(dim,name,trade_date,net_in,amount,stocks)
+                   VALUES(?,?,?,?,?,?)
+                   ON CONFLICT(dim,name,trade_date) DO UPDATE SET net_in=excluded.net_in""",
+                [(a, b, c, d, e, f) for a, b, c, d, e, f, *_ in rows])
+
+    write(today_payload)
+    payload: list[tuple] = []
+    ok = fail = 0
+    sample = []
+    if boards:
+        try:
+            sample = eastmoney.fetch_board_fflow_history(boards[0]["board_code"], lookback)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("板块资金日K探测失败: %s", exc)
+    if len(sample) >= 2:
+        def one(board: dict) -> tuple[dict, list]:
+            return board, eastmoney.fetch_board_fflow_history(board["board_code"], lookback)
+
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            futs = [pool.submit(one, b) for b in boards]
+            for fut in as_completed(futs):
+                try:
+                    board, hist = fut.result()
+                    ok += 1
+                    for p in hist:
+                        payload.append((
+                            em_dim, board["name"], p["trade_date"], p["net_in"], 0, 0,
+                            "eastmoney", board["board_code"],
+                        ))
+                except Exception as exc:  # noqa: BLE001
+                    fail += 1
+                    log.warning("板块资金日K失败: %s", exc)
+        write(payload)
+    elif sample:
+        ok = 1
+        write([(em_dim, boards[0]["name"], p["trade_date"], p["net_in"], 0, 0,
+                "eastmoney", boards[0]["board_code"]) for p in sample])
+    days = _em_distinct_days(em_dim)
+    set_meta("sector_flow_em_sync", datetime.now(_FLOW_TZ).isoformat(timespec="seconds"))
+    return {"dim": em_dim, "boards": ok or len(boards), "fail": fail, "rows": len(today_payload) + len(payload),
+            "days": days, "date": asof, "source": "eastmoney"}
 
 
 def _flow_from_snapshot(dim: str, field: str) -> list[dict]:
@@ -666,10 +773,18 @@ def get_flow_trend(dim: str = "industry", name: str = "",
     min_stocks = max(0, min(int(min_stocks or 0), 200))
     q = (q or "").strip().lower()
     spec = TREND_GRAINS[grain]
-    default_n = 48 if dim == "industry" else 24
+    default_n = 12 if dim == "industry" else 8
     top_n = max(3, min(int(top_n or default_n), 80))
     asof = _ensure_ledger()
+    em_dim = "em_hy" if dim == "industry" else "em_gn"
     remote_dim = "remote_hy" if dim == "industry" else "remote_gn"
+    em_days = _em_distinct_days(em_dim)
+    if em_days < 2:
+        try:
+            pull_em_flow_history(dim, lookback=min(spec["lookback"], 40))
+            em_days = _em_distinct_days(em_dim)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("拉取板块资金日K失败: %s", exc)
     remote_n = query("SELECT COUNT(*) AS n FROM sector_flow_daily WHERE dim=?", (remote_dim,))[0]["n"]
     if not remote_n:
         try:
@@ -677,18 +792,31 @@ def get_flow_trend(dim: str = "industry", name: str = "",
             remote_n = query("SELECT COUNT(*) AS n FROM sector_flow_daily WHERE dim=?", (remote_dim,))[0]["n"]
         except Exception:  # noqa: BLE001
             remote_n = 0
-    use_dim = remote_dim if remote_n else dim
-    source_name = "sina" if use_dim.startswith("remote") else "local_ledger"
-    dates = query(
+    if em_days >= 1:
+        use_dim, source_name = em_dim, "eastmoney"
+    elif remote_n:
+        use_dim, source_name = remote_dim, "sina"
+    else:
+        use_dim, source_name = dim, "local_ledger"
+    try:
+        market_svc.record_market_volume(asof)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("大A量能落库失败: %s", exc)
+    flow_dates = [d["trade_date"] for d in query(
         "SELECT DISTINCT trade_date FROM sector_flow_daily WHERE dim=? AND trade_date<=? "
-        "ORDER BY trade_date DESC LIMIT ?", (use_dim, asof, spec["lookback"]))
-    date_list = [d["trade_date"] for d in dates]
-    date_list.reverse()
+        "ORDER BY trade_date DESC LIMIT ?", (use_dim, asof, spec["lookback"]))]
+    flow_dates.reverse()
+    cal_n = spec["lookback"] if len(flow_dates) >= 5 else min(spec["lookback"], 20)
+    cal = [r["trade_date"] for r in query(
+        "SELECT trade_date FROM market_volume_daily WHERE trade_date<=? "
+        "ORDER BY trade_date DESC LIMIT ?", (asof, cal_n))]
+    cal.reverse()
+    date_list = cal if len(cal) >= 2 else flow_dates
     buckets = _bucket_trade_dates(date_list, grain)
     x_labels = [b["label"] for b in buckets]
     dim_label = "题材概念" if dim == "concept" else "行业板块"
     lines: list[dict] = []
-    have = len(date_list)
+    have = len(flow_dates)
     if date_list:
         ph = ",".join("?" * len(date_list))
         rows = query(
@@ -708,7 +836,7 @@ def get_flow_trend(dim: str = "industry", name: str = "",
                 continue
             if direction == "out" and ssum >= 0:
                 continue
-            if min_stocks and not use_dim.startswith("remote") and stocks_map.get(nm, 0) < min_stocks:
+            if min_stocks and not use_dim.startswith(("remote", "em")) and stocks_map.get(nm, 0) < min_stocks:
                 continue
             if q and q not in nm.lower():
                 continue
@@ -726,9 +854,34 @@ def get_flow_trend(dim: str = "industry", name: str = "",
                 vals = [pts[d] for d in b["days"] if d in pts]
                 data.append(round(sum(vals), 2) if vals else None)
             ssum = round(sum(v for v in data if v is not None), 2)
-            local_name = REMOTE_TO_SW.get(nm, "") if use_dim.startswith("remote") else nm
+            local_name = REMOTE_TO_SW.get(nm, nm) if use_dim.startswith("remote") else nm
             lines.append({"name": nm, "data": data, "sum_yi": ssum, "selected": nm == name,
                           "local_name": local_name or nm})
+    vol_map: dict[str, dict] = {}
+    if date_list:
+        ph = ",".join("?" * len(date_list))
+        for r in query(
+            f"""SELECT trade_date, amount_yi, volume, pct FROM market_volume_daily
+                WHERE trade_date IN ({ph})""", tuple(date_list)):
+            vol_map[r["trade_date"]] = r
+    vol_series, amt_series, vol_up = [], [], []
+    for b in buckets:
+        vols = [vol_map[d]["volume"] for d in b["days"]
+                if d in vol_map and vol_map[d].get("volume") is not None]
+        amts = [vol_map[d]["amount_yi"] for d in b["days"]
+                if d in vol_map and vol_map[d].get("amount_yi") is not None]
+        last = next((vol_map[d] for d in reversed(b["days"]) if d in vol_map), None)
+        vol_series.append(round(sum(vols) / 1e8, 2) if vols else None)
+        amt_series.append(round(sum(amts), 1) if amts else None)
+        vol_up.append(bool(last and (last.get("pct") or 0) >= 0))
+    latest_vol = query("SELECT * FROM market_volume_daily ORDER BY trade_date DESC LIMIT 5")
+    latest = latest_vol[0] if latest_vol else {}
+    vol5 = [r["volume"] for r in latest_vol if r.get("volume")]
+    vol_ratio = None
+    if latest.get("volume") and len(vol5) >= 2:
+        avg = sum(vol5[1:]) / max(1, len(vol5) - 1)
+        if avg:
+            vol_ratio = round(latest["volume"] / avg, 2)
     kpis = {
         "sum_net_yi": round(sum(l["sum_yi"] for l in lines), 2) if lines else 0,
         "last_date": date_list[-1] if date_list else "",
@@ -738,18 +891,27 @@ def get_flow_trend(dim: str = "industry", name: str = "",
         "bucket_count": len(buckets),
         "grain": grain,
         "grain_label": spec["label"],
+        "market_amount_yi": latest.get("amount_yi"),
+        "sh_amount_yi": latest.get("sh_amount_yi"),
+        "sz_amount_yi": latest.get("sz_amount_yi"),
+        "bj_amount_yi": latest.get("bj_amount_yi"),
+        "market_volume_yi": round((latest.get("volume") or 0) / 1e8, 2) if latest.get("volume") else None,
+        "vol_ratio": vol_ratio,
+        "market_asof": latest.get("trade_date") or "",
     }
     y_desc = "当日主力净流入（亿）" if grain == "1d" else f"该{spec['label']}周期内主力净流入合计（亿）"
-    src_label = "新浪板块资金独立源" if source_name == "sina" else "本地成分股账本"
+    src_map = {"eastmoney": "东方财富板块资金日K", "sina": "新浪板块资金独立源",
+               "local_ledger": "本地成分股账本"}
+    src_label = src_map.get(source_name, source_name)
     title = f"「{name}」及对照板块 · 横轴{spec['label']}" if name else f"{dim_label}资金走势 · 横轴{spec['label']}"
     notes = [
-        f"折线数据源：{src_label}（与直方图的本地成分股汇总分开）",
-        f"折线=每个{dim_label}一条，横轴={spec['label']}，纵轴={y_desc}",
+        f"走势数据源：{src_label}",
+        f"上图=每个{dim_label}一条资金折线，下图=大A量能（中证全指成交量，亿手）",
         f"账本覆盖 {have} 个交易日（最多取近 {spec['lookback']} 日再按{spec['label']}重采样）",
-        "缺日不填 0、不用涨跌幅冒充资金；点图可选中该板块",
+        "缺日不填 0、不用涨跌幅冒充资金；点折线可选中该板块",
     ]
     if have < 2:
-        notes.append("目前只有 1 个交易日，前端改画各板块当日横条；独立源会按交易日继续落库，满 2 日后改成时间折线")
+        notes.append("板块资金日K目前主要覆盖最新交易日，下图先用大A近20日量能铺时间轴；历史接口恢复后折线自动拉长")
     return {
         "dim": dim, "name": name, "title": title,
         "grain": grain, "grain_label": spec["label"],
@@ -760,6 +922,8 @@ def get_flow_trend(dim: str = "industry", name: str = "",
         "dates": x_labels, "buckets": [{"label": b["label"], "start": b["start"], "end": b["end"],
                                        "days": len(b["days"])} for b in buckets],
         "lines": lines, "kpis": kpis, "y_name": y_desc,
+        "market_vol": {"volume": vol_series, "amount": amt_series, "up": vol_up,
+                       "unit": "亿手", "name": "大A量能"},
         "note": "。".join(notes) + "。",
         "source": source_name, "ledger_dim": use_dim,
     }

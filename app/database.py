@@ -207,6 +207,20 @@ CREATE TABLE IF NOT EXISTS intel_sector (
     PRIMARY KEY (sector, item_id)
 );
 CREATE INDEX IF NOT EXISTS idx_intel_sector ON intel_sector(sector, event_time);
+
+-- 11.0.12：大A每日量能（成交额/成交量），供板块资金走势副图
+CREATE TABLE IF NOT EXISTS market_volume_daily (
+    trade_date    TEXT PRIMARY KEY,
+    amount_yi     REAL,                 -- 全A成交额（亿），优先中证全指
+    sh_amount_yi  REAL,
+    sz_amount_yi  REAL,
+    bj_amount_yi  REAL,
+    volume        REAL,                 -- 中证全指成交量（手）
+    sh_volume     REAL,                 -- 上证成交量（手）
+    close         REAL,                 -- 中证全指收盘
+    pct           REAL,
+    source        TEXT
+);
 """
 
 # 已有表的增量列迁移（幂等）

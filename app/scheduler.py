@@ -77,6 +77,15 @@ def _job_sector_flow():
     from .services import sector as sector_svc
     sector_svc.record_daily_flow()
     sector_svc.pull_remote_flow()
+    try:
+        sector_svc.pull_em_flow_history("industry")
+        sector_svc.pull_em_flow_history("concept")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("板块资金日K同步失败: %s", exc)
+    try:
+        market.record_market_volume()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("大A量能落库失败: %s", exc)
 
 
 def _job_snapshot_sync():

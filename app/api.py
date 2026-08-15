@@ -325,7 +325,11 @@ def sector_flow_trend(dim: str = "industry", name: str = "",
 def sector_flow_sync():
     local = sector.record_daily_flow()
     remote = sector.pull_remote_flow()
-    return {"ok": True, "local": local, "remote": remote, "stats": sector.flow_history_stats()}
+    em_hy = sector.pull_em_flow_history("industry", force=True)
+    em_gn = sector.pull_em_flow_history("concept", force=True)
+    vol = market.record_market_volume(local.get("date") or "")
+    return {"ok": True, "local": local, "remote": remote, "em_hy": em_hy, "em_gn": em_gn,
+            "market_vol": vol, "stats": sector.flow_history_stats()}
 
 
 @router.get("/sector/flow-bar/stocks")
