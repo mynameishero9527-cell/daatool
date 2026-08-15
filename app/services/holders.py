@@ -378,9 +378,9 @@ def get_holders(code: str) -> dict:
     """持股情况：F10 优先、数据中心兜底；成功缓存 24h，失败不长期当空数据。"""
     code = (code or "").strip().lower()
     if not code or not eastmoney.f10_code(code):
-        return _empty(code, "该代码没有股东披露数据")
+        return _with_ai(code, _empty(code, "该代码没有股东披露数据"))
     if code.startswith(("sh000", "sz399", "bj899", "sh880")):
-        return _empty(code, "指数没有股东持股披露")
+        return _with_ai(code, _empty(code, "指数没有股东持股披露"))
 
     key = f"holders:v4:{code}"
     hit = cache.get(key)
@@ -488,6 +488,13 @@ def save_holder_ai(code: str, payload: dict) -> dict:
 def _with_ai(code: str, data: dict) -> dict:
     out = dict(data or {})
     out["ai"] = load_holder_ai(code) or _empty_ai()
+    try:
+        from . import stock_ai as stock_ai_svc
+        out["brief"] = stock_ai_svc.load_brief(code)
+        out["wuxing_ai"] = stock_ai_svc.load_wuxing(code)
+    except Exception:  # noqa: BLE001
+        out["brief"] = {"applied": False, "text": "", "source": "", "analyzed_at": ""}
+        out["wuxing_ai"] = {"applied": False, "text": "", "source": "", "analyzed_at": ""}
     return out
 
 

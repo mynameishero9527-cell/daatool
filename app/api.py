@@ -10,7 +10,7 @@ from . import scheduler as sched_mod
 from .services import (
     ai, alerts, announcement, attribution, commodity, cycle, darkpool, finance,
     forecast, global_index, holders, hot_terms, intel_ai, kline, knowledge, macro, market, ranks, rating,
-    recommend, screener, sector, smartpick, stocklist, strategy, wuxing,
+    recommend, screener, sector, smartpick, stock_ai, stocklist, strategy, wuxing,
 )
 from .services import metrics as metrics_svc
 from .services import policy_archive
@@ -591,8 +591,23 @@ def ai_test():
 
 @router.post("/ai/analyze")
 def ai_analyze(payload: dict):
-    return ai.analyze(payload.get("mode", "market"), payload.get("code", ""),
-                      payload.get("question", ""))
+    mode = payload.get("mode", "market")
+    code = payload.get("code", "")
+    if mode == "stock" and code:
+        return stock_ai.analyze_brief(code)
+    return ai.analyze(mode, code, payload.get("question", ""))
+
+
+@router.get("/ai/brief")
+def ai_brief_get(code: str):
+    """读取已保存的个股简明诊断与五行判定，不调用大模型。"""
+    return stock_ai.bundle(code)
+
+
+@router.post("/ai/brief")
+def ai_brief_post(payload: dict = Body(default={})):
+    """手动更新个股简明诊断。成功才落库；失败保留旧结果。"""
+    return stock_ai.analyze_brief((payload or {}).get("code") or "")
 
 
 @router.post("/ai/pick")
@@ -602,7 +617,9 @@ def ai_pick(payload: dict):
 
 @router.post("/ai/wuxing")
 def ai_wuxing(payload: dict):
-    return ai.classify_wuxing(payload.get("code", ""))
+    d = ai.classify_wuxing(payload.get("code", ""))
+    saved = stock_ai.save_wuxing_result(payload.get("code", ""), d)
+    return {**d, "saved": bool(saved.get("applied")), "saved_at": saved.get("analyzed_at") or ""}
 
 
 @router.get("/engine/blueprint")

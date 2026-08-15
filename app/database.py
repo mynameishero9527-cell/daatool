@@ -282,6 +282,15 @@ CREATE TABLE IF NOT EXISTS stock_holder_ai (
     updated_at TEXT NOT NULL
 );
 
+-- 13.0.1：个股右键 AI 简明诊断 / 五行判定（失败不覆盖）
+CREATE TABLE IF NOT EXISTS stock_ai_brief (
+    code       TEXT NOT NULL,
+    kind       TEXT NOT NULL,            -- diagnose / wuxing
+    payload    TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (code, kind)
+);
+
 -- 12.0.9：宏观情报条目的 AI 利好/利空、解读、关键词（失败不覆盖）
 CREATE TABLE IF NOT EXISTS intel_item_ai (
     item_key      TEXT PRIMARY KEY,      -- source:ident

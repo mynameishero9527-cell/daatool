@@ -1211,6 +1211,7 @@ let holdTab = "structure";
 let holdOrgType = "";
 let holdStructSub = "top10";
 let holdAiBusy = false;
+let holdBriefBusy = false;
 
 function normalizeHoldTab() {
   if (holdTab === "funds") {
@@ -1230,11 +1231,14 @@ function holdTabBtns(h) {
     ["counts", "股东户数变化"],
     ["unlocks", "限售解禁"],
     ["ai", "AI分析结果"],
+    ["brief", "AI简明诊断"],
   ];
   return `<div class="btn-group sub-tabs hold-tabs" id="holdTabs">${tabs.map(([id, title]) => {
     const extra = id === "unlocks" && unlockN ? `（${unlockN}）` : "";
     const aiOn = id === "ai" && h.ai && h.ai.applied;
-    return `<button type="button" class="opt js-hold-tab ${holdTab === id ? "active" : ""}" data-tab="${id}">${title}${extra}${aiOn ? " · 已存" : ""}</button>`;
+    const briefOn = id === "brief" && h.brief && h.brief.applied;
+    const mark = aiOn || briefOn ? " · 已存" : "";
+    return `<button type="button" class="opt js-hold-tab ${holdTab === id ? "active" : ""}" data-tab="${id}">${title}${extra}${mark}</button>`;
   }).join("")}</div>`;
 }
 
@@ -1361,17 +1365,58 @@ function holderAiPane(h) {
     <div id="holderAiBody">${body}${kwHtml}</div>`;
 }
 
+function briefPane(h) {
+  const b = h.brief || {};
+  const wx = h.wuxing_ai || {};
+  const text = (b.text || "").trim();
+  const has = !!(b.applied && text);
+  const when = b.analyzed_at || b.updated_at || "";
+  const stamp = has
+    ? `上次诊断 ${esc(when)} · ${esc(b.source || "")}`
+    : "尚未保存简明诊断。全站右键「AI 分析该股」会写入这里；也可点「更新AI简明诊断」。失败不覆盖旧结果。";
+  const body = has
+    ? `<div class="hold-ai-text">${esc(b.text).replace(/\n/g, "<br>")}</div>`
+    : (text
+      ? `<div class="muted" style="margin-bottom:6px">未落库预览：</div><div class="hold-ai-text">${esc(b.text).replace(/\n/g, "<br>")}</div>`
+      : `<div class="empty">暂无已保存的 AI 简明诊断</div>`);
+  const lastErr = b.error
+    ? aiErrBanner(b, b.kept ? "。已保留上次成功诊断，未覆盖。" : "。未假装成功。")
+    : "";
+  const wxHas = !!(wx.applied && (wx.text || "").trim());
+  const wxBlock = wxHas
+    ? `<div class="hold-sub" style="margin-top:16px">五行判定（右键已保存）</div>
+       <div class="muted" style="font-size:calc(12px * var(--font-scale));margin-bottom:6px">${esc(wx.analyzed_at || wx.updated_at || "")} · ${esc(wx.source || "")}${wx.tags && wx.tags.length ? " · " + wx.tags.join("、") : ""}</div>
+       <div class="hold-ai-text">${esc(wx.text).replace(/\n/g, "<br>")}</div>`
+    : `<div class="muted" style="margin-top:14px;font-size:calc(12px * var(--font-scale))">右键「发送AI五行分类」成功后也会保存在本页下方，便于回显。</div>`;
+  return `<div class="hold-ai-bar">
+      <div class="muted" style="font-size:calc(12px * var(--font-scale))">${stamp}</div>
+      <button type="button" class="btn small" id="briefAiBtn">更新AI简明诊断</button>
+    </div>
+    <div id="briefAiBanner">${lastErr}</div>
+    <div id="briefAiBody">${body}</div>
+    ${wxBlock}`;
+}
+
 function holdPaneHtml(h) {
   normalizeHoldTab();
   if (holdTab === "counts") return countsPane(h);
   if (holdTab === "unlocks") return unlocksPane(h);
   if (holdTab === "ai") return holderAiPane(h);
+  if (holdTab === "brief") return briefPane(h);
   return structurePane(h);
 }
 
 function paintHoldersCard(h) {
   const box = $("#holdersSec");
-  if (!box || !h || h.empty) return;
+  if (!box || !h) return;
+  if (h.empty) {
+    box.innerHTML = `
+      ${holdTabBtns(h)}
+      <div class="hold-pane" id="holdPane">${holdPaneHtml(h)}</div>
+      <div class="muted" style="font-size:calc(11px * var(--font-scale));margin-top:8px">${esc(h.note || "暂无持股数据")} · 仍可查看或更新 AI 简明诊断
+        <button class="btn ghost small" type="button" onclick="loadHolders()">重新加载持股</button></div>`;
+    return;
+  }
   const L = h.latest || {};
   const inst = h.institution_ratio;
   const person = h.person_ratio;
@@ -1419,8 +1464,7 @@ async function loadHolders() {
     const h = await api(`/api/holders?code=${encodeURIComponent(currentStock.code)}`);
     holdersData = h;
     if (h.empty) {
-      if (box) box.innerHTML = `<div class="empty">${esc(h.note || "暂无持股数据")}
-        <div style="margin-top:10px"><button class="btn ghost" type="button" onclick="loadHolders()">重新加载</button></div></div>`;
+      if (box) paintHoldersCard(h);
       if (meta) meta.textContent = h.offline ? "拉取失败" : "";
       if (mini) mini.innerHTML = `<div class="hold-mini"><span class="muted">${esc(h.note || "暂无持股摘要")}</span>
         <button class="btn ghost small" type="button" onclick="loadHolders()">重试</button></div>`;
@@ -1456,6 +1500,76 @@ async function loadHolders() {
 }
 window.loadHolders = loadHolders;
 
+window.refreshStockBrief = async (code) => {
+  const target = code || (currentStock && currentStock.code);
+  if (!target || holdBriefBusy) return;
+  holdBriefBusy = true;
+  holdTab = "brief";
+  const btn = $("#briefAiBtn");
+  const banner = $("#briefAiBanner");
+  const body = $("#briefAiBody");
+  if (btn) { btn.disabled = true; btn.textContent = "分析中…"; }
+  if (body) body.innerHTML = '<div class="empty">分析中，大模型最长约 1 分钟，请稍候…</div>';
+  if (banner) banner.innerHTML = "";
+  try {
+    const d = await api("/api/ai/brief", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: target }),
+    });
+    applyBriefToHolders(target, d);
+    const b = $("#briefAiBanner");
+    if (b) {
+      if (d.applied) {
+        b.innerHTML = `<div class="muted" style="margin-bottom:8px">已保存本次简明诊断 · ${esc(d.analyzed_at || d.updated_at || "")}</div>`;
+      } else {
+        const err = d.error || "未写入简明诊断";
+        const extra = d.kept ? "。已保留上次成功诊断，未覆盖。" : "。未假装成功。";
+        b.innerHTML = aiErrBanner({ error: err, hint: d.hint }, extra);
+      }
+    }
+    return d;
+  } catch (err) {
+    if (holdersData && currentStock && currentStock.code === target) {
+      const prev = holdersData.brief || {};
+      holdersData.brief = {
+        ...prev,
+        error: err.message || String(err),
+        hint: "请确认从 http 页面打开，并已在 AI 分析页配置密钥。",
+        kept: !!(prev.applied && prev.text),
+      };
+    }
+    const body2 = $("#briefAiBody");
+    if (body2) body2.innerHTML = `<div class="empty">分析失败：${esc(err.message || err)}</div>`;
+    const b = $("#briefAiBanner");
+    if (b) b.innerHTML = aiErrBanner({ error: err.message || String(err), hint: "请确认从 http 页面打开，并已在 AI 分析页配置密钥。" });
+    return null;
+  } finally {
+    holdBriefBusy = false;
+    const b2 = $("#briefAiBtn");
+    if (b2) { b2.disabled = false; b2.textContent = "更新AI简明诊断"; }
+  }
+};
+
+function applyBriefToHolders(code, d) {
+  if (!d || !holdersData) return;
+  const page = (holdersData.code || (currentStock && currentStock.code) || "").toLowerCase();
+  const got = (d.code || code || "").toLowerCase();
+  if (!page || !got || page !== got) return;
+  holdersData.brief = {
+    applied: !!(d.applied || (d.kept && d.text)),
+    ai: !!d.ai,
+    text: d.text || "",
+    source: d.source || "",
+    updated_at: d.updated_at || "",
+    analyzed_at: d.analyzed_at || d.updated_at || "",
+    error: d.error || "",
+    hint: d.hint || "",
+    kept: !!d.kept,
+  };
+  if (d.wuxing) holdersData.wuxing_ai = d.wuxing;
+  paintHoldersCard(holdersData);
+}
+
 window.refreshHolderAi = async () => {
   if (!currentStock || holdAiBusy) return;
   holdAiBusy = true;
@@ -1483,7 +1597,7 @@ window.refreshHolderAi = async () => {
       };
     }
     holdTab = "ai";
-    if (holdersData && !holdersData.empty) paintHoldersCard(holdersData);
+    if (holdersData) paintHoldersCard(holdersData);
     const b = $("#holderAiBanner");
     if (b) {
       if (d.applied) {
@@ -1521,7 +1635,7 @@ document.addEventListener("click", (e) => {
     e.preventDefault();
     e.stopPropagation();
     holdTab = tab.dataset.tab || "structure";
-    if (holdersData && !holdersData.empty) paintHoldersCard(holdersData);
+    if (holdersData) paintHoldersCard(holdersData);
     return;
   }
   const sub = e.target.closest(".js-hold-struct");
@@ -1530,7 +1644,7 @@ document.addEventListener("click", (e) => {
     e.stopPropagation();
     holdTab = "structure";
     holdStructSub = sub.dataset.sub || "top10";
-    if (holdersData && !holdersData.empty) paintHoldersCard(holdersData);
+    if (holdersData) paintHoldersCard(holdersData);
     return;
   }
   const org = e.target.closest(".js-hold-org");
@@ -1538,13 +1652,19 @@ document.addEventListener("click", (e) => {
     e.preventDefault();
     e.stopPropagation();
     holdOrgType = org.dataset.org || "";
-    if (holdersData && !holdersData.empty) paintHoldersCard(holdersData);
+    if (holdersData) paintHoldersCard(holdersData);
     return;
   }
   if (e.target.closest("#holderAiBtn")) {
     e.preventDefault();
     e.stopPropagation();
     refreshHolderAi();
+    return;
+  }
+  if (e.target.closest("#briefAiBtn")) {
+    e.preventDefault();
+    e.stopPropagation();
+    refreshStockBrief();
   }
 });
 
@@ -4066,9 +4186,15 @@ window.runAiAnalyze = async () => {
       body: JSON.stringify({ mode: aiMode, code: aiMode === "stock" ? input : "", question: aiMode === "custom" ? input : "" }),
     });
     const errHtml = aiErrBanner(d, "。以下为本地规则分析结果。");
+    const savedNote = (aiMode === "stock" && d.applied)
+      ? " · 已保存到个股分析 → AI简明诊断"
+      : (aiMode === "stock" && d.kept ? " · 已保留上次诊断" : "");
     $("#aiOutput").innerHTML = errHtml
-      + `<div class="muted" style="margin-bottom:8px">来源：${esc(d.source)}</div>`
-      + esc(d.text).replace(/\n/g, "<br>");
+      + `<div class="muted" style="margin-bottom:8px">来源：${esc(d.source || "")}${savedNote}</div>`
+      + esc(d.text || "").replace(/\n/g, "<br>");
+    if (aiMode === "stock" && d.code && currentStock && currentStock.code === d.code) {
+      applyBriefToHolders(currentStock.code, d);
+    }
   } catch (err) {
     $("#aiOutput").innerHTML = `<div class="empty">分析失败：${esc(err.message || "请检查配置与网络")}。可在左侧点「测试连通」查看具体原因。</div>`;
   }
@@ -4231,7 +4357,7 @@ $("#ctxWxAi").addEventListener("click", async () => {
       body: JSON.stringify({ code }),
     });
     $("#aiModalBody").innerHTML = `<div class="muted" style="margin-bottom:6px">来源：${esc(d.source)}
-      ${d.applied ? " · 已回填标签 " + wxBadges(d.tags) : " · 建议 " + wxBadges(d.tags)}</div>`
+      ${d.applied ? " · 已回填标签 " + wxBadges(d.tags) : " · 建议 " + wxBadges(d.tags)}${d.saved ? " · 已保存到 AI简明诊断" : ""}</div>`
       + esc(d.text).replace(/\n/g, "<br>")
       + (d.applied ? "" : `<div style="margin-top:10px"><button class="btn small" id="applyWxBtn">应用建议标签</button></div>`);
     const btn = $("#applyWxBtn");
@@ -4244,6 +4370,13 @@ $("#ctxWxAi").addEventListener("click", async () => {
       if (currentStock && currentStock.code === code) loadProfile();
     });
     if (d.applied && currentStock && currentStock.code === code) loadProfile();
+    if (d.saved && holdersData && currentStock && currentStock.code === code) {
+      holdersData.wuxing_ai = {
+        applied: true, text: d.text || "", source: d.source || "",
+        tags: d.tags || [], analyzed_at: d.saved_at || "",
+      };
+      paintHoldersCard(holdersData);
+    }
   } catch (err) { $("#aiModalBody").innerHTML = '<div class="empty">分类失败</div>'; }
 });
 $("#ctxNewsAi").addEventListener("click", async () => {
@@ -4371,15 +4504,18 @@ $("#ctxHotRevert")?.addEventListener("click", async () => {
 window.openAiModal = async (code, name) => {
   const modal = $("#aiModal");
   modal.style.display = "";
-  $("#aiModalTitle").textContent = `🤖 AI 分析：${name}（${code}）`;
-  $("#aiModalBody").innerHTML = '<div class="empty">分析中，请稍候…</div>';
+  $("#aiModalTitle").textContent = `🤖 AI 简明诊断：${name}（${code}）`;
+  $("#aiModalBody").innerHTML = '<div class="empty">分析中，请稍候…已保存的结果可在个股分析 → AI简明诊断回显</div>';
   try {
-    const d = await api("/api/ai/analyze", {
+    const d = await api("/api/ai/brief", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode: "stock", code }),
+      body: JSON.stringify({ code }),
     });
-    $("#aiModalBody").innerHTML = aiErrBanner(d)
-      + `<div class="muted" style="margin-bottom:6px">来源：${esc(d.source)}</div>` + esc(d.text).replace(/\n/g, "<br>");
+    const saved = d.applied ? " · 已保存到个股分析 → AI简明诊断" : (d.kept ? " · 已保留上次诊断" : " · 未覆盖");
+    $("#aiModalBody").innerHTML = aiErrBanner(d, d.kept ? "。已保留上次成功诊断。" : "。未假装成功。")
+      + `<div class="muted" style="margin-bottom:6px">来源：${esc(d.source || "")}${saved}</div>`
+      + esc(d.text || "").replace(/\n/g, "<br>");
+    applyBriefToHolders(code, d);
   } catch (err) { $("#aiModalBody").innerHTML = `<div class="empty">分析失败：${esc(err.message || err)}</div>`; }
 };
 window.closeAiModal = () => { $("#aiModal").style.display = "none"; };
