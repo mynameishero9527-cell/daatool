@@ -1741,12 +1741,19 @@ function mergeIntelSectors(key, fallback, direction) {
   const orig = parseSectors(fallback);
   const it = intelAiIndex[key] || {};
   const skip = new Set(["", "无明显利空", "未映射影响板块", "政策", "A股", "大盘"]);
+  const aliases = { 房产: "地产", 房地产: "地产", 楼市: "地产", 券商股: "金融", 银行股: "金融",
+    黄金股: "有色", 芯片: "半导体", AI: "科技", 人工智能: "科技" };
+  const canon = (name) => {
+    let n = String(name || "").trim().replace(/板块$/g, "");
+    if (aliases[n]) n = aliases[n];
+    return n;
+  };
   const bull = [];
   const bear = [];
   const seenB = new Set();
   const seenW = new Set();
   const add = (arr, seen, name) => {
-    const n = String(name || "").trim();
+    const n = canon(name);
     if (!n || skip.has(n) || seen.has(n) || seenB.has(n) || seenW.has(n)) return;
     seen.add(n);
     arr.push(n);
@@ -1758,7 +1765,33 @@ function mergeIntelSectors(key, fallback, direction) {
     if (dir === "利空") add(bear, seenW, s);
     else add(bull, seenB, s);
   }
-  return { bull, bear, hasAi: !!(it.has_boards || it.has_reading) };
+  return exclusiveBoards(bull, bear);
+}
+function exclusiveBoards(bull, bear) {
+  const skip = new Set(["", "无明显利空", "未映射影响板块", "政策", "A股", "大盘"]);
+  const aliases = { 房产: "地产", 房地产: "地产", 楼市: "地产", 券商股: "金融", 银行股: "金融",
+    黄金股: "有色", 芯片: "半导体", AI: "科技", 人工智能: "科技" };
+  const canon = (name) => {
+    let n = String(name || "").trim().replace(/板块$/g, "");
+    if (aliases[n]) n = aliases[n];
+    return n;
+  };
+  const outB = [];
+  const outW = [];
+  const seen = new Set();
+  for (const s of bull || []) {
+    const n = canon(s);
+    if (!n || skip.has(n) || seen.has(n)) continue;
+    seen.add(n);
+    outB.push(n);
+  }
+  for (const s of bear || []) {
+    const n = canon(s);
+    if (!n || skip.has(n) || seen.has(n)) continue;
+    seen.add(n);
+    outW.push(n);
+  }
+  return { bull: outB, bear: outW };
 }
 function intelSectorBadges(key, fallback, title, direction) {
   const { bull, bear } = mergeIntelSectors(key, fallback, direction);
@@ -2220,8 +2253,7 @@ async function renderHotIntel(box) {
       const att = it.attention != null ? `关注度 ${fmt(it.attention, 0)}` : "关注度 —";
       const heat = it.heat != null ? `热度 ${fmt(it.heat, 0)}` : "热度 —";
       const kws = (it.keywords || []).slice(0, 8);
-      const bull = it.bull || [];
-      const bear = it.bear || [];
+      const { bull, bear } = exclusiveBoards(it.bull, it.bear);
       const ident = it.ident || String(it.item_key || "").split(":").slice(1).join(":");
       const key = it.item_key || intelKey(it.source || "news", ident);
       return `<div class="intel-card ${on} js-hot-intel js-intel-row" data-key="${esc(key)}" data-source="${esc(it.source || "")}"
@@ -2261,8 +2293,12 @@ window.openHotIntelCard = async (key, resetSector = true) => {
   box.innerHTML = '<div class="empty">加载分析…</div>';
   try {
     const d = await api(`/api/macro/intel-ai?item_key=${encodeURIComponent(key)}`);
-    const bull = (d.bull || []).map((x) => (typeof x === "string" ? { name: x } : x));
-    const bear = (d.bear || []).map((x) => (typeof x === "string" ? { name: x } : x));
+    const split = exclusiveBoards(
+      (d.bull || []).map((x) => (typeof x === "string" ? x : x.name)),
+      (d.bear || []).map((x) => (typeof x === "string" ? x : x.name)),
+    );
+    const bull = split.bull.map((name) => ({ name }));
+    const bear = split.bear.map((name) => ({ name }));
     const tile = (s, kind) => {
       const name = s.name || s;
       const clsName = kind === "利好" ? "bull" : "bear";
@@ -2331,8 +2367,12 @@ window.showSavedIntelAi = async (key) => {
       $("#aiModalBody").innerHTML = `<div class="empty">${esc(d.hint || "尚未保存 AI 分析")}</div>`;
       return;
     }
-    const bull = (d.bull || []).map((x) => x.name || x).filter(Boolean);
-    const bear = (d.bear || []).map((x) => x.name || x).filter(Boolean);
+    const split = exclusiveBoards(
+      (d.bull || []).map((x) => x.name || x),
+      (d.bear || []).map((x) => x.name || x),
+    );
+    const bull = split.bull;
+    const bear = split.bear;
     const kws = d.keywords || [];
     $("#aiModalBody").innerHTML =
       `<div class="muted" style="margin-bottom:6px">来源：${esc(d.source_label || "")} · ${esc(d.ai_source || "")} · ${esc(d.updated_at || "")}</div>`
@@ -2496,11 +2536,12 @@ window.openHotSector = async (sector, term) => {
 function renderHotSectorStockTable(stocks, sector) {
   if (!stocks || !stocks.length) return '<div class="muted">未匹配到相关个股</div>';
   return `<table><thead><tr>
-    <th>名称</th><th>代码</th><th>行业</th><th>财报</th><th>涨跌幅</th><th>量比</th>${flowMetricHeaders()}<th>购买指数</th><th>标签</th>
+    <th>名称</th><th>代码</th><th>现价</th><th>行业</th><th>财报</th><th>涨跌幅</th><th>量比</th>${flowMetricHeaders()}<th>购买指数</th><th>标签</th>
   </tr></thead><tbody>${stocks.map((r) => `
     <tr data-code="${r.code}" data-name="${esc(r.name)}" onclick="openStock('${r.code}','${esc(r.name)}')">
       <td>${esc(r.name)}</td>
       <td class="muted">${esc(r.code)}</td>
+      <td class="num">${pxHtml(r.price, r.pct)}</td>
       <td class="muted">${esc(r.industry || sector || "-")}</td>
       <td>${finBadge(r)}</td>
       <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
@@ -2543,11 +2584,12 @@ function relatedTags(r, withFin = true) {
 function renderRelatedStockTable(stocks) {
   if (!stocks || !stocks.length) return '<div class="muted">未匹配到相关个股</div>';
   return `<table><thead><tr>
-    <th>名称</th><th>代码</th><th>财报</th><th>涨跌幅</th><th>量比</th>${flowMetricHeaders()}<th>购买指数</th><th>标签</th>
+    <th>名称</th><th>代码</th><th>现价</th><th>财报</th><th>涨跌幅</th><th>量比</th>${flowMetricHeaders()}<th>购买指数</th><th>标签</th>
   </tr></thead><tbody>${stocks.map((r) => `
     <tr data-code="${r.code}" data-name="${esc(r.name)}" onclick="openStock('${r.code}','${esc(r.name)}')">
       <td>${esc(r.name)}</td>
       <td class="muted">${esc(r.code)}</td>
+      <td class="num">${pxHtml(r.price, r.pct)}</td>
       <td>${finBadge(r)}</td>
       <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
       <td class="num">${fmt(r.volume_ratio)}</td>${flowMetricCells(r)}
@@ -2562,8 +2604,9 @@ window.showNewsStocks = (sectors, title) => showEventDetail(title, sectors);
 window.showMergedBoards = async (title, merged, focusSector) => {
   const box = $("#eventDetailBox");
   if (!box) return;
-  const bull = (merged && merged.bull) || [];
-  const bear = (merged && merged.bear) || [];
+  const split = exclusiveBoards((merged && merged.bull) || [], (merged && merged.bear) || []);
+  const bull = split.bull;
+  const bear = split.bear;
   const chip = (s, kind) => {
     const on = s === focusSector ? " active" : "";
     return `<span class="badge dir-${kind} js-sector${on}" data-sector="${esc(s)}" data-title="${esc(title || s)}" title="点击查看该板块个股 TOP20–50">${esc(s)}</span>`;
@@ -4519,8 +4562,12 @@ async function runIntelAi(mode, title) {
       body: JSON.stringify(payload),
     });
     const applied = d.applied ? " · 已保存到本地" : (d.kept ? " · 已保留上次结果" : " · 未覆盖");
-    const bull = (d.bull || []).map((x) => x.name || x).filter(Boolean);
-    const bear = (d.bear || []).map((x) => x.name || x).filter(Boolean);
+    const split = exclusiveBoards(
+      (d.bull || []).map((x) => x.name || x),
+      (d.bear || []).map((x) => x.name || x),
+    );
+    const bull = split.bull;
+    const bear = split.bear;
     const kws = d.keywords || [];
     $("#aiModalBody").innerHTML = aiErrBanner(d, "。未假装成功。")
       + `<div class="muted" style="margin-bottom:6px">${esc(d.source_call || d.ai_source || d.source || "")}${applied}</div>`

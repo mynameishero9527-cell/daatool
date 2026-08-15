@@ -87,6 +87,7 @@ def load(item_key: str) -> dict | None:
     payload = _parse_payload(r.get("payload"))
     bull = hot_terms._norm_ai_side(payload.get("bull") or [])  # noqa: SLF001
     bear = hot_terms._norm_ai_side(payload.get("bear") or [])  # noqa: SLF001
+    bull, bear = exclusive_boards(bull, bear)
     keywords = _norm_keywords(payload.get("keywords") or [])
     reading = str(payload.get("reading") or "").strip()
     return {
@@ -139,8 +140,7 @@ def _norm_keywords(items) -> list[str]:
 
 
 def _row_public(rec: dict) -> dict:
-    bull = rec.get("bull") or []
-    bear = rec.get("bear") or []
+    bull, bear = exclusive_boards(rec.get("bull") or [], rec.get("bear") or [])
     kws = rec.get("keywords") or []
     return {
         "item_key": rec["item_key"],
@@ -192,6 +192,9 @@ def save(meta: dict, patch: dict) -> dict:
         if k == "reading" and not str(v).strip():
             continue
         body[k] = v
+    prefer = "bear" if (patch or {}).get("bear") and not (patch or {}).get("bull") else "bull"
+    if body.get("bull") or body.get("bear"):
+        body["bull"], body["bear"] = exclusive_boards(body.get("bull"), body.get("bear"), prefer)
     now = _now()
     body["updated_at"] = now
     title = (meta.get("title") or prev.get("title") or "")[:160]
@@ -242,6 +245,7 @@ def index() -> dict:
         payload = _parse_payload(r.get("payload"))
         bull = hot_terms._norm_ai_side(payload.get("bull") or [])  # noqa: SLF001
         bear = hot_terms._norm_ai_side(payload.get("bear") or [])  # noqa: SLF001
+        bull, bear = exclusive_boards(bull, bear)
         reading = str(payload.get("reading") or "").strip()
         kws = _norm_keywords(payload.get("keywords") or [term])
         if not bull and not bear and not reading and not kws:
@@ -306,11 +310,12 @@ def get_detail(item_key: str) -> dict:
         detail = hot_terms.hot_term_sectors(term)
         if detail.get("ai_applied"):
             reading = str(detail.get("ai_reading") or detail.get("ai_reason") or "").strip()
+            bull, bear = exclusive_boards(detail.get("bull_sectors") or [], detail.get("bear_sectors") or [])
             return {
                 "ok": True, "item_key": item_key, "ident": term, "source": "hot_term",
                 "source_label": "热度词汇", "title": term,
-                "bull": detail.get("bull_sectors") or [],
-                "bear": detail.get("bear_sectors") or [],
+                "bull": bull,
+                "bear": bear,
                 "keywords": detail.get("ai_keywords") or [term],
                 "reading": reading,
                 "reason": detail.get("impact_summary") or "",
@@ -325,6 +330,19 @@ def get_detail(item_key: str) -> dict:
         "error": "", "hint": "尚未保存 AI 分析。右键可分析利好/利空或解读。",
         "bull": [], "bear": [], "keywords": [], "reading": "",
     }
+
+
+def exclusive_boards(bull: list, bear: list, prefer: str = "bull") -> tuple[list, list]:
+    """同一板块不可同时利好和利空。名称先规范化；冲突时 prefer 侧保留。"""
+    bull_n = hot_terms._norm_ai_side(bull or [])  # noqa: SLF001
+    bear_n = hot_terms._norm_ai_side(bear or [])  # noqa: SLF001
+    if prefer == "bear":
+        names = {x["name"] for x in bear_n}
+        bull_n = [x for x in bull_n if x["name"] not in names]
+    else:
+        names = {x["name"] for x in bull_n}
+        bear_n = [x for x in bear_n if x["name"] not in names]
+    return bull_n, bear_n
 
 
 def _skip_board_name(name: str) -> bool:
@@ -374,7 +392,7 @@ def merge_orig_boards(bull: list, bear: list, orig_sectors=None, direction: str 
             bull.append(item)
             bull_names.add(resolved)
     bear = [x for x in bear if x["name"] not in bull_names]
-    return bull, bear
+    return exclusive_boards(bull, bear)
 
 
 def _safe_num(v):
@@ -524,8 +542,7 @@ def analyze(body: dict) -> dict:
             parsed = None
     bull = hot_terms._norm_ai_side((parsed or {}).get("bull") or [])  # noqa: SLF001
     bear = hot_terms._norm_ai_side((parsed or {}).get("bear") or [])  # noqa: SLF001
-    bull_names = {x["name"] for x in bull}
-    bear = [x for x in bear if x["name"] not in bull_names]
+    bull, bear = exclusive_boards(bull, bear)
     keywords = _norm_keywords((parsed or {}).get("keywords") or [])
     reading = str((parsed or {}).get("reading") or "").strip()
     if mode == "reading" and not reading:

@@ -19,6 +19,7 @@ class IntelAiMenuTests(unittest.TestCase):
     def tearDown(self):
         execute("DELETE FROM intel_item_ai WHERE item_key LIKE ?", ("knowledge:__t1302_%",))
         execute("DELETE FROM intel_item_ai WHERE item_key LIKE ?", ("hot_term:__t1302_%",))
+        execute("DELETE FROM intel_item_ai WHERE item_key LIKE ?", ("news:__t1302_%",))
         execute("DELETE FROM hot_term_ai WHERE term LIKE ?", ("__t1302_%",))
 
     def test_all_macro_sources_allowed(self):
@@ -116,6 +117,29 @@ class IntelAiMenuTests(unittest.TestCase):
         self.assertIn("半导体", bear_names)
         self.assertIn("新能源", bear_names)
         self.assertEqual(next(x["why"] for x in bear if x["name"] == "半导体"), "AI回填")
+
+    def test_exclusive_boards_rejects_same_name_and_alias(self):
+        bull, bear = intel_ai.exclusive_boards(
+            [{"name": "半导体", "why": "利好"}],
+            [{"name": "半导体", "why": "利空"}, {"name": "芯片", "why": "利空"}, {"name": "银行", "why": "利空"}],
+        )
+        bull_names = {x["name"] for x in bull}
+        bear_names = {x["name"] for x in bear}
+        self.assertIn("半导体", bull_names)
+        self.assertNotIn("半导体", bear_names)
+        self.assertNotIn("芯片", bear_names)
+        self.assertIn("银行", bear_names)
+        rec = intel_ai.save(
+            {"source": "news", "ident": "__t1302_conflict", "title": "冲突"},
+            {"bull": [{"name": "半导体", "why": "AI"}], "bear": [{"name": "半导体", "why": "冲突"}, {"name": "新能源", "why": "AI"}],
+             "source": "测试写入"},
+        )
+        saved_bull = {x["name"] if isinstance(x, dict) else x for x in (rec.get("bull") or [])}
+        saved_bear = {x["name"] if isinstance(x, dict) else x for x in (rec.get("bear") or [])}
+        self.assertIn("半导体", saved_bull)
+        self.assertNotIn("半导体", saved_bear)
+        self.assertTrue(saved_bull.isdisjoint(saved_bear))
+        execute("DELETE FROM intel_item_ai WHERE item_key=?", ("news:__t1302_conflict",))
 
 
 if __name__ == "__main__":
