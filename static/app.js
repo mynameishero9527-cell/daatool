@@ -3125,18 +3125,104 @@ window.runSmartpickAi = async () => {
   }
 };
 
-/* ---------------- 全局最佳买点弹窗 ---------------- */
+/* ---------------- 全局最佳买点灵魂窗 ---------------- */
 const BUY_FLASH_KEY = "daatool_buy_flash";
-function buyFlashCollapsed() {
-  try { return localStorage.getItem(BUY_FLASH_KEY) === "1"; } catch { return false; }
+function readBuyFlashState() {
+  try { return JSON.parse(localStorage.getItem(BUY_FLASH_KEY) || "") || {}; }
+  catch { return {}; }
+}
+const buyFlashState = (() => {
+  const s = readBuyFlashState();
+  return {
+    collapsed: !!s.collapsed,
+    win: s.win && Number.isFinite(s.win.left) ? s.win : null,
+    logo: s.logo && Number.isFinite(s.logo.left) ? s.logo : null,
+  };
+})();
+function saveBuyFlashState() {
+  try { localStorage.setItem(BUY_FLASH_KEY, JSON.stringify(buyFlashState)); } catch { /* ignore */ }
+}
+function clampSoulPos(left, top, w, h) {
+  const maxL = Math.max(0, window.innerWidth - w);
+  const maxT = Math.max(0, window.innerHeight - h);
+  return { left: Math.min(maxL, Math.max(0, left)), top: Math.min(maxT, Math.max(0, top)) };
+}
+function applyBuyFlashPos() {
+  const panel = $("#buyFlash");
+  const fab = $("#buyFlashFab");
+  if (panel && buyFlashState.win) {
+    const p = clampSoulPos(buyFlashState.win.left, buyFlashState.win.top, panel.offsetWidth || 430, Math.min(panel.offsetHeight || 200, window.innerHeight));
+    panel.style.left = p.left + "px";
+    panel.style.top = p.top + "px";
+    panel.style.right = "auto";
+    panel.style.bottom = "auto";
+    buyFlashState.win = p;
+  }
+  if (fab && buyFlashState.logo) {
+    const p = clampSoulPos(buyFlashState.logo.left, buyFlashState.logo.top, 56, 56);
+    fab.style.left = p.left + "px";
+    fab.style.top = p.top + "px";
+    fab.style.right = "auto";
+    fab.style.bottom = "auto";
+    buyFlashState.logo = p;
+  }
 }
 function setBuyFlashCollapsed(v) {
+  buyFlashState.collapsed = !!v;
   const panel = $("#buyFlash");
   const fab = $("#buyFlashFab");
   if (panel) panel.style.display = v ? "none" : "";
   if (fab) fab.style.display = v ? "" : "none";
-  try { localStorage.setItem(BUY_FLASH_KEY, v ? "1" : "0"); } catch { /* ignore */ }
+  if (v && panel && !buyFlashState.logo) {
+    const r = panel.getBoundingClientRect();
+    buyFlashState.logo = { left: Math.max(0, r.right - 56), top: Math.max(0, r.top) };
+  }
+  applyBuyFlashPos();
+  saveBuyFlashState();
 }
+function bindSoulDrag(el, kind) {
+  if (!el) return;
+  let start = null, moved = false;
+  el.addEventListener("pointerdown", (e) => {
+    if (kind === "win" && e.target.closest("button")) return;
+    if (kind === "win" && !e.target.closest("#buyFlashHead")) return;
+    const rect = el.getBoundingClientRect();
+    start = { x: e.clientX, y: e.clientY, left: rect.left, top: rect.top };
+    moved = false;
+    el.classList.add("dragging");
+    try { el.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+    e.preventDefault();
+  });
+  el.addEventListener("pointermove", (e) => {
+    if (!start) return;
+    const dx = e.clientX - start.x, dy = e.clientY - start.y;
+    if (Math.abs(dx) + Math.abs(dy) > 5) moved = true;
+    if (!moved) return;
+    const pos = clampSoulPos(start.left + dx, start.top + dy, el.offsetWidth, el.offsetHeight);
+    el.style.left = pos.left + "px";
+    el.style.top = pos.top + "px";
+    el.style.right = "auto";
+    el.style.bottom = "auto";
+    if (kind === "win") buyFlashState.win = pos;
+    else buyFlashState.logo = pos;
+  });
+  const end = () => {
+    if (!start) return;
+    start = null;
+    el.classList.remove("dragging");
+    saveBuyFlashState();
+  };
+  el.addEventListener("pointerup", (e) => {
+    const wasMoved = moved;
+    end();
+    if (kind === "logo" && !wasMoved) {
+      setBuyFlashCollapsed(false);
+      loadBuyPoints();
+    }
+  });
+  el.addEventListener("pointercancel", end);
+}
+
 async function loadBuyPoints() {
   const body = $("#buyFlashBody");
   const countEl = $("#buyFlashCount");
@@ -3170,12 +3256,20 @@ async function loadBuyPoints() {
     if (body) body.innerHTML = `<div class="empty">买点加载失败</div>`;
   }
 }
-$("#buyFlashMin")?.addEventListener("click", () => setBuyFlashCollapsed(true));
-$("#buyFlashFab")?.addEventListener("click", () => { setBuyFlashCollapsed(false); loadBuyPoints(); });
-$("#buyFlashBody")?.addEventListener("dblclick", (e) => {
-  const row = e.target.closest("[data-code]");
-  if (row) openStock(row.dataset.code, row.dataset.name);
-});
+function bindBuyFlash() {
+  $("#buyFlashMin")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    setBuyFlashCollapsed(true);
+  });
+  $("#buyFlashBody")?.addEventListener("dblclick", (e) => {
+    const row = e.target.closest("[data-code]");
+    if (row) openStock(row.dataset.code, row.dataset.name);
+  });
+  bindSoulDrag($("#buyFlash"), "win");
+  bindSoulDrag($("#buyFlashFab"), "logo");
+  setBuyFlashCollapsed(buyFlashState.collapsed);
+  applyBuyFlashPos();
+}
 
 /* ---------------- 工具与启动 ---------------- */
 function debounce(fn, ms) {
@@ -3218,7 +3312,7 @@ async function loadSettingsHealthOnly() {
   } catch { $("#healthDot").className = "dot bad"; }
 }
 
-window.addEventListener("resize", () => { klineChart?.resize(); sectorChart?.resize(); ckChart?.resize(); miniChart?.resize(); flowBarChart?.resize(); flowTrendChart?.resize(); applyAlertDock(); });
+window.addEventListener("resize", () => { klineChart?.resize(); sectorChart?.resize(); ckChart?.resize(); miniChart?.resize(); flowBarChart?.resize(); flowTrendChart?.resize(); applyAlertDock(); applyBuyFlashPos(); });
 
 /* 首屏 */
 loadDashboard();
@@ -3227,5 +3321,5 @@ loadSettingsHealthOnly();
 loadTopAlmanac();
 bindAlertDock();
 applyAlertDock();
-setBuyFlashCollapsed(buyFlashCollapsed());
+bindBuyFlash();
 loadBuyPoints();
