@@ -49,14 +49,36 @@ def get_forecast() -> dict:
                          "调整下行": -5, "熊市寻底": -4}.get(c.get("stage"), 0)
             prob += stage_adj
             factors.append({"name": "周期阶段", "value": c.get("stage", "未知"), "impact": float(stage_adj)})
+            panic = c.get("panic_index")
+            if panic is not None:
+                padj = -4.0 if panic >= 60 else 2.0 if panic < 35 else 0.0
+                if padj:
+                    prob += padj
+                    factors.append({"name": "恐慌指数", "value": f"{panic}", "impact": padj})
         except Exception:  # noqa: BLE001
             pass
+
+        flow = query("SELECT SUM(main_net_in) AS f, "
+                     "SUM(CASE WHEN pct<=-9.8 THEN 1 ELSE 0 END) AS ld "
+                     "FROM stock_snapshot WHERE pct IS NOT NULL")
+        if flow:
+            fsum = flow[0]["f"]
+            if fsum is not None:
+                fadj = 2.5 if fsum > 0 else -2.5
+                prob += fadj
+                factors.append({"name": "主力资金",
+                                "value": f"全市场合计净{'流入' if fsum > 0 else '流出'} {abs(fsum) / 10000:.0f} 亿",
+                                "impact": fadj})
+            ld = flow[0]["ld"] or 0
+            if ld >= 40:
+                prob -= 3
+                factors.append({"name": "跌停压力", "value": f"跌停 {ld} 家", "impact": -3.0})
 
         prob = round(max(20.0, min(80.0, prob)), 1)
         view = ("偏多" if prob >= 58 else "偏空" if prob <= 42 else "震荡")
         return {
             "prob_up": prob, "view": view,
-            "desc": f"综合宽度/动量/量能/周期，明日大盘看涨概率约 {prob}%（{view}）",
+            "desc": f"综合宽度/动量/量能/周期/恐慌/资金，明日大盘看涨概率约 {prob}%（{view}）",
             "factors": factors,
             "disclaimer": "概率为启发式量化估计，仅供参考，不构成投资建议",
         }

@@ -59,8 +59,20 @@ def _news_score(sectors_hit: list[dict]) -> tuple[float, str]:
     return _clamp(score), "、".join(reasons) or "事件方向中性"
 
 
+def _industry_events(industry: str, events: list[dict]) -> list[dict]:
+    """优先保留与个股行业重叠的事件（FR9-01）。"""
+    if not industry:
+        return events
+    hit = []
+    for ev in events:
+        sectors = ev.get("affected_sectors") or []
+        if any(industry in (s or "") or (s or "") in industry for s in sectors if s):
+            hit.append(ev)
+    return hit or events[:2]
+
+
 def score_stock(code: str) -> dict:
-    """基于本地快照 + 宏观事件计算综合评分与操作提示。"""
+    """综合评分（FR9-01）：技术40% + 资金30% + 基本面20% + 行业消息10%。"""
     rows = query("SELECT * FROM stock_snapshot WHERE code=?", (code,))
     if not rows:
         return {
@@ -68,58 +80,121 @@ def score_stock(code: str) -> dict:
             "message": "本地暂无该股快照数据，请先在设置页执行全量同步",
         }
     s = rows[0]
+    m_rows = query("SELECT * FROM stock_metrics WHERE code=?", (code,))
+    m = m_rows[0] if m_rows else {}
+    ind_rows = query("SELECT industry FROM stock_list WHERE code=?", (code,))
+    industry = (ind_rows[0]["industry"] if ind_rows else "") or ""
 
-    # 技术面（40%）：多周期动量
-    tech = 50.0
-    for pct, weight in ((s["pct"], 2.0), (s["pct_d5"], 1.5), (s["pct_d20"], 1.0), (s["pct_d60"], 0.5)):
+    # 技术面（40%）：多周期动量 + RSI/MACD/均线/位置
+    tech, tech_notes = 50.0, []
+    for pct, weight, label in ((s["pct"], 1.6, "今日"), (s["pct_d5"], 1.2, "5日"),
+                               (s["pct_d20"], 0.8, "20日"), (s["pct_d60"], 0.4, "60日")):
         if pct is not None:
             tech += pct * weight
+            tech_notes.append(f"{label}{pct:+.1f}%")
+    rsi = m.get("rsi14")
+    if rsi is not None:
+        if rsi < 30:
+            tech += 8
+            tech_notes.append(f"RSI{rsi:.0f}超卖")
+        elif rsi > 75:
+            tech -= 8
+            tech_notes.append(f"RSI{rsi:.0f}超买")
+        else:
+            tech += (50 - abs(rsi - 50)) * 0.08
+            tech_notes.append(f"RSI{rsi:.0f}")
+    if m.get("macd_gold"):
+        tech += 6
+        tech_notes.append("MACD金叉")
+    if m.get("ma_bull"):
+        tech += 6
+        tech_notes.append("均线多头")
+    pos60 = m.get("pos60")
+    if pos60 is not None:
+        if pos60 <= 0.35:
+            tech += 4
+            tech_notes.append(f"60日低位{pos60 * 100:.0f}%")
+        elif pos60 >= 0.90:
+            tech -= 5
+            tech_notes.append(f"60日高位{pos60 * 100:.0f}%")
     tech = _clamp(tech)
 
-    # 资金面（30%）：主力净流入相对流通市值 + 量比
-    fund = 50.0
+    # 资金面（30%）：主力 + 量比 + 暗盘 + 购买指数
+    fund, fund_notes = 50.0, []
     if s["main_net_in"] is not None and s["float_mv"]:
-        ratio = s["main_net_in"] / (s["float_mv"] * 10000) * 100  # 万元 / 亿元*1e4 → %
+        ratio = s["main_net_in"] / (s["float_mv"] * 10000) * 100
         fund += _clamp(ratio * 400, -30, 30)
+        fund_notes.append(f"主力净{'流入' if s['main_net_in'] > 0 else '流出'} {abs(s['main_net_in']) / 10000:.2f}亿")
     if s["volume_ratio"] is not None:
         fund += _clamp((s["volume_ratio"] - 1) * 10, -15, 15)
+        fund_notes.append(volume_desc(s["volume_ratio"]))
+    if m.get("dark_power") is not None:
+        fund += (m["dark_power"] - 50) * 0.25
+        fund_notes.append(f"暗盘{m['dark_power']:.0f}")
+    if m.get("buy_index") is not None:
+        fund += (m["buy_index"] - 50) * 0.15
+        fund_notes.append(f"购买指数{m['buy_index']:.0f}")
+    if m.get("divergence") == "暗中吸筹":
+        fund += 6
+        fund_notes.append("暗中吸筹")
+    elif m.get("divergence") == "暗中派发":
+        fund -= 6
+        fund_notes.append("暗中派发")
     fund = _clamp(fund)
 
     # 基本面（20%）：估值合理性
-    fundamental = 50.0
+    fundamental, funda_notes = 50.0, []
     if s["pe_ttm"] is not None:
-        if 0 < s["pe_ttm"] <= 20:
+        pe = s["pe_ttm"]
+        if 0 < pe <= 20:
             fundamental += 20
-        elif 20 < s["pe_ttm"] <= 40:
+            funda_notes.append(f"PE {pe:.1f}偏低")
+        elif 20 < pe <= 40:
             fundamental += 10
-        elif s["pe_ttm"] > 80 or s["pe_ttm"] <= 0:
+            funda_notes.append(f"PE {pe:.1f}适中")
+        elif pe > 80 or pe <= 0:
             fundamental -= 20
-    if s["pb"] is not None and 0 < s["pb"] <= 2:
-        fundamental += 10
+            funda_notes.append("PE极端/亏损" if pe <= 0 else f"PE {pe:.0f}偏高")
+        else:
+            funda_notes.append(f"PE {pe:.1f}")
+    if s["pb"] is not None:
+        if 0 < s["pb"] <= 1.5:
+            fundamental += 12
+            funda_notes.append(f"PB {s['pb']:.2f}偏低")
+        elif 0 < s["pb"] <= 2:
+            fundamental += 8
+            funda_notes.append(f"PB {s['pb']:.2f}")
+        elif s["pb"] > 8:
+            fundamental -= 8
+            funda_notes.append(f"PB {s['pb']:.1f}偏高")
     fundamental = _clamp(fundamental)
 
-    # 消息面（10%）：所属板块命中的高影响事件
-    events = macro.get_major_events(30)
-    news, news_reason = _news_score(events[:2])
+    # 消息面（10%）：优先行业相关事件
+    events = macro.get_major_events(40)
+    events_use = _industry_events(industry, events)
+    news, news_reason = _news_score(events_use[:3])
 
     score = round(tech * 0.4 + fund * 0.3 + fundamental * 0.2 + news * 0.1, 1)
     grade = grade_of(score)
     vol_desc = volume_desc(s["volume_ratio"])
 
-    # 操作提示（产品文档 §5.2）
     main_in = s["main_net_in"] or 0
-    bad_news = any(e["impact_direction"] == "利空" and e["impact_level"] >= 4 for e in events[:5])
-    if score >= 70 and main_in > 0 and not bad_news:
+    buy = m.get("buy_index")
+    bad_news = any(e["impact_direction"] == "利空" and e["impact_level"] >= 4 for e in events_use[:5])
+    if score >= 70 and main_in > 0 and not bad_news and (buy is None or buy >= 50):
         advice, advice_css = "增持", "advice-buy"
         reason = f"综合评分 {score}，主力净流入 {main_in / 10000:.2f} 亿，{vol_desc}"
-    elif score <= 44 or (main_in < -8000 and bad_news):
+    elif score <= 44 or (buy is not None and buy <= 28) or (main_in < -8000 and bad_news):
         advice, advice_css = "减持", "advice-sell"
         reason = f"综合评分 {score}，" + ("主力净流出明显，" if main_in < 0 else "") + f"{vol_desc}"
+        if buy is not None and buy <= 28:
+            reason += f"；购买指数 {buy:.0f} 偏低"
     else:
         advice, advice_css = "保持不变", "advice-hold"
         reason = f"综合评分 {score}，多空信号均衡，{vol_desc}"
+    if m.get("stabilize_score"):
+        reason += f"；已过企稳四闸门（强度 {m['stabilize_score']}）"
 
-    # 攻守语境（FR6-01-4）
     from . import cycle as cycle_svc
     stance_info = cycle_svc.get_stance()
     stance = stance_info["stance"]
@@ -140,6 +215,13 @@ def score_stock(code: str) -> dict:
             "技术面": round(tech, 1), "资金面": round(fund, 1),
             "基本面": round(fundamental, 1), "消息面": round(news, 1),
         },
+        "component_notes": {
+            "技术面": "、".join(tech_notes) or "动量中性",
+            "资金面": "、".join(fund_notes) or "资金中性",
+            "基本面": "、".join(funda_notes) or "估值数据不足",
+            "消息面": news_reason,
+        },
+        "algorithm": "v9 综合评分：技术40%（动量+RSI+MACD+均线+位置）+ 资金30%（主力+量比+暗盘+购买指数）+ 基本面20%（PE/PB）+ 消息10%（行业事件）",
         "news_reason": news_reason,
         "snapshot": {
             "price": s["price"], "pct": s["pct"], "pe_ttm": s["pe_ttm"], "pb": s["pb"],
@@ -153,7 +235,7 @@ def score_stock(code: str) -> dict:
 
 
 def quick_score(r: dict) -> tuple[float, str]:
-    """轻量评分（榜单/持仓列表通用）：技术55% + 资金45%。"""
+    """轻量评分（FR9-02）：动量45% + 资金30% + 购买指数15% + 暗盘10%。"""
     tech = 50.0
     for pct_v, w in ((r.get("pct"), 2.0), (r.get("pct_d5"), 1.5),
                      (r.get("pct_d20"), 1.0), (r.get("pct_d60"), 0.5)):
@@ -166,7 +248,14 @@ def quick_score(r: dict) -> tuple[float, str]:
     if r.get("volume_ratio") is not None:
         fund += _clamp((r["volume_ratio"] - 1) * 10, -15, 15)
     fund = _clamp(fund)
-    score = round(tech * 0.55 + fund * 0.45, 1)
+    buy = r.get("buy_index")
+    dark = r.get("dark_power") if r.get("dark_power") is not None else r.get("dark")
+    if buy is not None or dark is not None:
+        buy_s = _clamp(buy if buy is not None else 50)
+        dark_s = _clamp(dark if dark is not None else 50)
+        score = round(tech * 0.45 + fund * 0.30 + buy_s * 0.15 + dark_s * 0.10, 1)
+    else:
+        score = round(tech * 0.55 + fund * 0.45, 1)
     main_in = r.get("main_net_in") or 0
     advice = "增持" if score >= 70 and main_in > 0 else "减持" if score <= 44 else "保持不变"
     return score, advice

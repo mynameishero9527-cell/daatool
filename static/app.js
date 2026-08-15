@@ -254,7 +254,8 @@ async function loadMarketCycle() {
       <div class="kv"><span class="k">大周期阶段</span>
         <span><span class="badge ${c.stage_css}">${esc(c.stage)}</span></span></div>
       <div class="kv"><span class="k">大盘量能</span><span>${esc(c.vol_desc)}（5日/20日均量比 ${fmt(c.vol_ratio)}）</span></div>
-      <div class="muted" style="font-size:12px">${esc(c.stage_desc)} · 市场宽度 ${fmt(c.breadth, 0)}% · 年化波动 ${fmt(c.volatility20, 0)}%</div>`;
+      <div class="muted" style="font-size:12px">${esc(c.stage_desc)} · 市场宽度 ${fmt(c.breadth, 0)}% · 年化波动 ${fmt(c.volatility20, 0)}%${
+        c.consec_days ? ` · ${c.consec_days > 0 ? "连涨" + c.consec_days + "日" : "连跌" + Math.abs(c.consec_days) + "日"}` : ""}</div>`;
   } catch (err) { console.warn(err); }
 }
 
@@ -606,7 +607,10 @@ async function loadAnalysis() {
       ${Object.entries(r.components).map(([k, v]) => `
         <div class="comp-bar"><span class="label">${k}</span>
           <div class="track"><div class="fill" style="width:${v}%"></div></div>
-          <span class="num">${v}</span></div>`).join("")}
+          <span class="num">${v}</span></div>
+        ${r.component_notes && r.component_notes[k]
+          ? `<div class="muted" style="font-size:11px;margin:-2px 0 8px 52px">${esc(r.component_notes[k])}</div>` : ""}`).join("")}
+      ${r.algorithm ? `<div class="muted" style="font-size:11px;margin:4px 0 8px">${esc(r.algorithm)}</div>` : ""}
       <hr style="border-color:var(--border);margin:10px 0">
       ${pullSmashHtml(d.pull_smash)}
       ${metrics2Html(d.metrics, d.dark)}

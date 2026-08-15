@@ -44,9 +44,21 @@ def get_cycle() -> dict:
         win250 = closes[-250:] if len(closes) >= 250 else closes
         pos_year = (price - min(win250)) / (max(win250) - min(win250)) if max(win250) > min(win250) else 0.5
         vol5 = sum(vols[-5:]) / 5
-        vol20 = sum(vols[-20:]) / 20
-        vol_ratio = vol5 / vol20 if vol20 else None
+        vol20_avg = sum(vols[-20:]) / 20
+        vol_ratio = vol5 / vol20_avg if vol20_avg else None
         conv10 = (max(closes[-10:]) - min(closes[-10:])) / price if price else 1
+        consec = 0
+        for i in range(-1, -min(8, len(closes)), -1):
+            if closes[i] > closes[i - 1]:
+                if consec < 0:
+                    break
+                consec += 1
+            elif closes[i] < closes[i - 1]:
+                if consec > 0:
+                    break
+                consec -= 1
+            else:
+                break
 
         rows = query(
             "SELECT SUM(CASE WHEN pct>0 THEN 1 ELSE 0 END) AS up, COUNT(*) AS n, "
@@ -57,9 +69,9 @@ def get_cycle() -> dict:
 
         # ---- 恐慌指数与攻守姿态（FR6-01） ----
         rets = [(closes[i] / closes[i - 1] - 1) for i in range(-19, 0)]
-        vol20 = (sum(r * r for r in rets) / len(rets)) ** 0.5 * (250 ** 0.5) * 100  # 年化波动%
+        volatility20 = (sum(r * r for r in rets) / len(rets)) ** 0.5 * (250 ** 0.5) * 100
         panic = 0.0
-        panic += min(35.0, max(0.0, (vol20 - 12) / 28 * 35))          # 波动率 12%~40% 映射
+        panic += min(35.0, max(0.0, (volatility20 - 12) / 28 * 35))
         panic += (100 - breadth) / 100 * 25                            # 下跌家数占比
         lu, ld = (rows[0]["lu"] or 0), (rows[0]["ld"] or 0)
         if lu + ld > 0:
@@ -105,13 +117,20 @@ def get_cycle() -> dict:
             {"name": "市场宽度", "ok": breadth > 50, "text": f"上涨家数占比 {breadth:.0f}%"},
             {"name": "量能趋势", "ok": (vol_ratio or 1) >= 1,
              "text": f"5日均量/20日均量 = {vol_ratio:.2f}" if vol_ratio else "量能数据不足"},
+            {"name": "均线多头", "ok": price > ma20 > ma60 > ma120,
+             "text": "指数位于 MA20>MA60>MA120 多头排列" if price > ma20 > ma60 > ma120
+                     else "均线未形成完整多头"},
+            {"name": "短线连续", "ok": consec >= 2,
+             "text": (f"指数连涨 {consec} 日" if consec > 0 else
+                      f"指数连跌 {abs(consec)} 日" if consec < 0 else "近端收盘未连续同向")},
         ]
         return {
             "stage": name, "stage_desc": desc, "stage_css": css,
             "index_price": round(price, 2), "pos60": round(pos60, 2),
             "breadth": round(breadth, 1),
             "vol_desc": _vol_desc(vol_ratio), "vol_ratio": round(vol_ratio, 2) if vol_ratio else None,
-            "panic_index": panic, "volatility20": round(vol20, 1),
+            "panic_index": panic, "volatility20": round(volatility20, 1),
+            "consec_days": consec,
             "stance": stance, "stance_css": stance_css, "stance_desc": stance_desc,
             "signals": signals,
         }

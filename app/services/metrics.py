@@ -218,9 +218,13 @@ def _compute_one(code: str, snap: dict, kl: list[dict], market_env: float) -> tu
     f_sent = _clamp(100 - abs(sentiment - 60) * 1.8)  # 过热/过冷都扣分，60 附近最佳
     if sentiment < 15:
         f_sent += 15  # 恐慌冰点反向加分
+    if rsi14 is not None and rsi14 < 30:
+        f_pos = _clamp(f_pos + 8)
     buy_index = round(_clamp(
         f_pos * 0.25 + f_trend * 0.20 + f_fund * 0.20 + dark * 0.15
         + f_sent * 0.10 + market_env * 0.10), 1)
+    if stabilize_score:
+        buy_index = round(_clamp(buy_index + min(6.0, stabilize_score / 20)), 1)
 
     now = datetime.now().isoformat(timespec="seconds")
     return (code, ma5, ma10, ma20, ma60, rsi14, macd_bar, macd_gold, ma_bull, above_ma20,

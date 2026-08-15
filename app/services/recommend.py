@@ -186,11 +186,15 @@ def _build(board: str, limit: int) -> list[dict]:
                 AND s.main_net_in IS NOT NULL AND s.volume_ratio IS NOT NULL
                 ORDER BY (COALESCE(s.pct_d5,0) * 1.5 + COALESCE(s.pct_d20,0) * 0.5
                           + s.main_net_in / 5000.0
-                          + (s.volume_ratio - 1) * 8) DESC""", limit=limit)
+                          + (s.volume_ratio - 1) * 8
+                          + COALESCE(m.buy_index, 50) * 0.15
+                          + COALESCE(m.dark_power, 50) * 0.08) DESC""", limit=limit)
         metric = ("综合动量", lambda r: round(
             (r["pct_d5"] or 0) * 1.5 + (r["pct_d20"] or 0) * 0.5
-            + (r["main_net_in"] or 0) / 5000.0 + ((r["volume_ratio"] or 1) - 1) * 8, 1))
-        reason = lambda r: f"动量+资金+量能综合居前，5日涨幅 {r['pct_d5']}%"
+            + (r["main_net_in"] or 0) / 5000.0 + ((r["volume_ratio"] or 1) - 1) * 8
+            + (r.get("buy_index") or 50) * 0.15 + (r.get("dark_power") or 50) * 0.08, 1))
+        reason = lambda r: (f"动量+资金+量能+购买指数综合居前，5日涨幅 {r['pct_d5']}%"
+                            + (f"，购买指数 {r['buy_index']:.0f}" if r.get("buy_index") is not None else ""))
 
     metric_name, metric_fn = metric
     items = []

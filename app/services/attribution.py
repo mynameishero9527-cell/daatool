@@ -76,6 +76,32 @@ def get_attribution(code: str) -> dict:
             "type": "消息面",
             "text": f"板块消息（{n['impact_direction']}）：{n['text'][:60]}…",
         })
+    if ind_pct is not None:
+        alpha = round(pct - ind_pct, 2)
+        reasons.append({
+            "type": "相对强弱",
+            "text": f"相对「{industry}」超额 {alpha:+.2f} 个百分点，"
+                    + ("明显强于板块" if alpha > 1.5 else "明显弱于板块" if alpha < -1.5 else "与板块基本同步"),
+        })
+    rsi = m.get("rsi14")
+    if rsi is not None and (rsi <= 30 or rsi >= 70):
+        reasons.append({
+            "type": "技术位置",
+            "text": f"RSI(14)={rsi:.0f}，" + ("处于超卖区，短线或有修复动能" if rsi <= 30
+                                           else "处于超买区，注意回调压力"),
+        })
+    if m.get("divergence") and m["divergence"] != "无":
+        reasons.append({
+            "type": "暗盘特征",
+            "text": f"出现「{m['divergence']}」信号（价量与主力方向背离）",
+        })
+    if m.get("buy_index") is not None:
+        from . import metrics as metrics_svc
+        lv, act = metrics_svc.buy_index_level(m["buy_index"])
+        reasons.append({
+            "type": "购买指数",
+            "text": f"购买指数 {m['buy_index']:.0f}（{lv}，{act}）",
+        })
     if not reasons:
         reasons.append({"type": "常规波动", "text": "未发现明显驱动因素，属常规市场波动"})
 
