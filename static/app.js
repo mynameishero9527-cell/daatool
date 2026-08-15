@@ -62,6 +62,7 @@ const cls = (v) => (v > 0 ? "up" : v < 0 ? "down" : "flat");
 const sign = (v) => (v > 0 ? "+" : "");
 const pct = (v) => (v === null || v === undefined) ? "-" : `${sign(v)}${fmt(v)}%`;
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const escAttr = (s) => esc(s).replace(/[\r\n]+/g, " ");
 
 const UI_KEY = "uiPrefs";
 const UI_THEMES = [
@@ -1694,8 +1695,8 @@ let hotAiToken = 0;
 const hotFocus = { term: "", sector: "" };
 let intelAiIndex = {};
 let ctxIntel = null;
+let ctxKb = null;
 const hotIntelFocus = { key: "", sector: "" };
-let hotIntelSource = "";
 let hotStockLimit = 20;
 
 function hotStockLimitBtns(active) {
@@ -2032,9 +2033,9 @@ async function loadMacro() {
     if (macroSub === "knowledge") {
       box.innerHTML = `
         <div class="inline-form" style="margin-bottom:10px;width:100%">
-          <input id="kbSearch" placeholder="搜索术语，如 量比 / 换手率 / 市盈率" style="flex:1">
+          <input id="kbSearch" placeholder="搜索术语，如 量比 / 换手率 / 打板" style="flex:1">
         </div>
-        <div id="eventDetailBox"></div>
+        <div class="muted" style="margin-bottom:8px">分「股票常识」与「选股票小技巧」。右键词条「AI 更新知识」改写解释；右键分类标题可整节更新。失败不覆盖已有解释。</div>
         <div id="kbContent"><div class="empty">加载中…</div></div>`;
       $("#kbSearch").addEventListener("input", debounce(loadKnowledge, 300));
       loadKnowledge();
@@ -2235,17 +2236,12 @@ async function renderHotWords(box) {
 }
 
 async function renderHotIntel(box) {
-  const d = await api(`/api/macro/hot-intel?source=${encodeURIComponent(hotIntelSource)}&limit=80`);
+  const d = await api(`/api/macro/hot-intel?limit=80`);
   const rows = d.items || [];
-  const srcs = [["", "全部来源"], ...((d.sources || []).map((s) => [s.id, s.name]))];
   box.innerHTML = `
     <div class="muted" style="margin-bottom:8px">
-      热门信息：汇总已保存的 AI 分析词库（快讯/政策/日历/公告/持股/热词/常识）。
+      热门信息：汇总已保存的 AI 分析词库（快讯/政策/日历/公告/持股/热词）。
       ${esc(d.note || "")} 共 ${d.total || 0} 条。点击卡片看板块，再点板块看个股（默认 TOP20，可选 TOP30/TOP50）。右键可再次分析。
-    </div>
-    <div class="btn-group" style="margin-bottom:10px" id="hotIntelSrc">
-      ${srcs.map(([v, t]) =>
-        `<button type="button" class="opt ${v === hotIntelSource ? "active" : ""}" data-v="${esc(v)}">${esc(t)}</button>`).join("")}
     </div>
     <div id="hotIntelDetail"></div>
     ${rows.length ? `<div class="intel-grid">${rows.map((it) => {
@@ -2275,12 +2271,6 @@ async function renderHotIntel(box) {
         <div class="ic-src">来源：${esc(it.source_label || "")}${it.updated_at ? " · " + esc(it.updated_at) : ""}${it.ai_source ? " · " + esc(it.ai_source) : ""}</div>
       </div>`;
     }).join("")}</div>` : `<div class="empty">${esc(d.empty_reason || "暂无热门信息")}</div>`}`;
-  $("#hotIntelSrc")?.addEventListener("click", (e) => {
-    const btn = e.target.closest(".opt");
-    if (!btn) return;
-    hotIntelSource = btn.dataset.v || "";
-    loadMacro();
-  });
   if (hotIntelFocus.key) await openHotIntelCard(hotIntelFocus.key, false);
 }
 
@@ -2697,11 +2687,14 @@ $("#page-macro")?.addEventListener("click", (e) => {
     return;
   }
   if (e.target.closest("button, input, select, a, table")) return;
+  if (e.target.closest(".js-kb-item, .js-kb-section")) return;
   const row = e.target.closest(".js-event-row, .js-news-item");
   if (row && !row.closest("#eventDetailBox") && (row.dataset.title || row.dataset.sectors || row.dataset.intelKey)) {
     const key = row.dataset.intelKey || "";
     const title = row.dataset.intelTitle || row.dataset.title || "相关个股";
-    showMergedBoards(title, mergeIntelSectors(key, row.dataset.sectors, row.dataset.direction), "");
+    const merged = mergeIntelSectors(key, row.dataset.sectors, row.dataset.direction);
+    if (!(merged.bull || []).length && !(merged.bear || []).length) return;
+    showMergedBoards(title, merged, "");
   }
 });
 
@@ -4065,32 +4058,37 @@ async function loadAnnouncements() {
   try {
     const d = await api(`/api/announcements?code=${encodeURIComponent(code)}`);
     const note = $("#annNote");
-    if (note) note.textContent = d.note + (d.target_name ? ` · 当前筛选：${d.target_name}` : "");
+    if (note) note.textContent = (d.note || "") + (d.target_name ? ` · 当前筛选：${d.target_name}` : "");
     const ratings = $("#annRatings");
+    const dist = (d.ratings && d.ratings.distribution) || {};
+    const ritems = Array.isArray(d.ratings && d.ratings.items) ? d.ratings.items : [];
     if (ratings) ratings.innerHTML = d.ratings ? `
       <div class="outlook-summary" style="margin-bottom:10px">
         <b>📊 ${esc(d.target_name)} 机构评级</b> <span class="muted">${d.ratings.simulated ? "规则模拟·仅供参考" : ""}</span><br>
-        评级分布：${Object.entries(d.ratings.distribution).filter(([, n]) => n > 0).map(([k, n]) => `${k} ${n} 家`).join(" · ")}
+        评级分布：${Object.entries(dist).filter(([, n]) => n > 0).map(([k, n]) => `${k} ${n} 家`).join(" · ") || "暂无"}
         ｜ 一致目标价 <b>${fmt(d.ratings.consensus_target)}</b><br>
-        <span class="muted" style="font-size:calc(12px * var(--font-scale))">${d.ratings.items.slice(0, 5).map((it) =>
+        <span class="muted" style="font-size:calc(12px * var(--font-scale))">${ritems.slice(0, 5).map((it) =>
           `${esc(it.broker)}:${it.rating}(${fmt(it.target_price)})`).join("　")}</span>
       </div>` : "";
-    list.innerHTML = d.items.length ? d.items.map((a) => {
+    const items = Array.isArray(d.items) ? d.items : [];
+    list.innerHTML = items.length ? items.map((a) => {
       const ident = a.id || `${a.time || ""}:${(a.text || "").slice(0, 40)}`;
       const key = intelKey("announce", ident);
-      const secs = (a.affected_sectors || []).join(",");
+      const secs = Array.isArray(a.affected_sectors)
+        ? a.affected_sectors.join(",")
+        : String(a.affected_sectors || "");
       return `
-      <div class="news-item js-intel-row js-news-item" data-news="${esc(a.text)}" data-impact="${esc(a.impact_desc || "")}"
-        data-title="${esc((a.text || "").slice(0, 40))}" data-sectors="${esc(secs)}" data-direction="${esc(a.direction || "")}"
-        data-intel-source="announce" data-intel-id="${esc(ident)}" data-intel-key="${esc(key)}"
-        data-intel-title="${esc((a.text || "").slice(0, 40))}" data-intel-text="${esc((a.text || "").slice(0, 500))}"
-        data-intel-time="${esc(a.time || "")}" data-attention="${esc((a.impact_level || 0) * 20)}">
+      <div class="news-item js-intel-row js-news-item" data-news="${escAttr(a.text)}" data-impact="${escAttr(a.impact_desc || "")}"
+        data-title="${escAttr((a.text || "").slice(0, 40))}" data-sectors="${escAttr(secs)}" data-direction="${escAttr(a.direction || "")}"
+        data-intel-source="announce" data-intel-id="${escAttr(ident)}" data-intel-key="${escAttr(key)}"
+        data-intel-title="${escAttr((a.text || "").slice(0, 40))}" data-intel-text="${escAttr((a.text || "").slice(0, 500))}"
+        data-intel-time="${escAttr(a.time || "")}" data-attention="${escAttr((a.impact_level || 0) * 20)}">
         <span class="time">${esc((a.time || "").slice(5, 16))}</span>
         <div class="body">${esc(a.text)}
           <div class="meta">
             <span class="badge sector-tag">${esc(a.tag)}</span>
-            <span class="badge dir-${a.direction}">${esc(a.direction)}</span>
-            <span class="badge level-${a.impact_level}">${esc(a.impact_desc)}</span>
+            <span class="badge dir-${esc(a.direction || "中性")}">${esc(a.direction || "中性")}</span>
+            <span class="badge level-${esc(a.impact_level || 1)}">${esc(a.impact_desc)}</span>
             ${intelFlagHtml(key)}
             ${intelSectorBadges(key, a.affected_sectors, a.tag, a.direction)}
           </div>
@@ -4098,7 +4096,7 @@ async function loadAnnouncements() {
           ${intelReasonLine(key)}
         </div>
       </div>`;
-    }).join("") : '<div class="empty">暂无匹配公告（公告源为7x24快讯识别）</div>';
+    }).join("") : `<div class="empty">${esc(d.empty_reason || "暂无匹配公告（公告源为7x24快讯识别）")}</div>`;
   } catch (err) { list.innerHTML = '<div class="empty">加载失败</div>'; }
 }
 window.loadAnnouncements = loadAnnouncements;
@@ -4113,20 +4111,29 @@ async function loadKnowledge() {
   await refreshIntelAiIndex();
   try {
     const groups = await api(`/api/knowledge?q=${encodeURIComponent(kw)}`);
-    box.innerHTML = groups.length ? groups.map((g) => `
-      <div class="region-title">${esc(g.group)}（${g.items.length}）</div>
-      ${g.items.map((it) => {
-        const ident = it.term;
-        const key = intelKey("knowledge", ident);
-        return `<div class="kb-item js-intel-row js-news-item" data-title="${esc(it.term)}" data-sectors=""
-          data-intel-source="knowledge" data-intel-id="${esc(ident)}" data-intel-key="${esc(key)}"
-          data-intel-title="${esc(it.term)}" data-intel-text="${esc(((it.term || "") + "：" + (it.desc || "")).slice(0, 500))}">
-        <div class="term">${esc(it.term)} ${intelFlagHtml(key)}</div>
-        <div class="desc">${esc(it.desc)}</div>
-        ${intelReasonLine(key)}
-        <div class="meta">${intelSectorBadges(key, "", it.term)}</div>
-        </div>`;
-      }).join("")}`).join("")
+    const list = Array.isArray(groups) ? groups : [];
+    const sections = {};
+    for (const g of list) {
+      const sec = g.section || "股票常识";
+      (sections[sec] ||= []).push(g);
+    }
+    const order = ["股票常识", "选股票小技巧"].filter((s) => sections[s] && sections[s].length);
+    box.innerHTML = order.length ? order.map((sec) => `
+      <div class="kb-section js-kb-section" data-section="${escAttr(sec)}">
+        <div class="region-title kb-section-title js-kb-section" data-section="${escAttr(sec)}" title="右键可整节 AI 更新知识">${esc(sec)}</div>
+        ${sections[sec].map((g) => `
+          <div class="muted" style="margin:8px 0 4px">${esc(g.group)}（${(g.items || []).length}）</div>
+          ${(g.items || []).map((it) => {
+            const term = it.term || "";
+            const itemSec = it.section || sec;
+            return `<div class="kb-item js-kb-item" data-term="${escAttr(term)}" data-section="${escAttr(itemSec)}"
+              data-ai="${it.ai_updated ? "1" : "0"}">
+            <div class="term">${esc(term)}${it.ai_updated ? ' <span class="badge level-3">AI已更新</span>' : ""}</div>
+            <div class="desc">${esc(it.desc)}</div>
+            </div>`;
+          }).join("")}
+        `).join("")}
+      </div>`).join("")
       : '<div class="empty">未找到相关词条</div>';
   } catch (err) { console.warn(err); }
 }
@@ -4350,9 +4357,14 @@ function showIntelCtxItems(show) {
     const el = $(`#${id}`); if (el) el.style.display = show ? "" : "none";
   });
 }
+function showKbCtxItems(show, canRevert) {
+  const ai = $("#ctxKbAi"); if (ai) ai.style.display = show ? "" : "none";
+  const rv = $("#ctxKbRevert"); if (rv) rv.style.display = show && canRevert ? "" : "none";
+}
 
 document.addEventListener("contextmenu", async (e) => {
   const hotEl = e.target.closest(".js-hot-term, .js-hot-sector, #hotDetailBox");
+  const kbEl = e.target.closest(".js-kb-item, .js-kb-section");
   const intelEl = e.target.closest(".js-intel-row");
   const newsEl = e.target.closest(".news-item[data-news]");
   const holdEl = e.target.closest("#holdersCard");
@@ -4360,8 +4372,8 @@ document.addEventListener("contextmenu", async (e) => {
   const m = el && ((el.dataset && el.dataset.code && { code: el.dataset.code, name: el.dataset.name })
     || (() => { const g = /openStock\('([^']+)','([^']*)'\)/.exec(el.getAttribute("onclick") || "");
       return g ? { code: g[1], name: g[2] } : null; })());
-  const holderKw = !!(holdEl && currentStock && !m && !hotEl);
-  if (!m && !newsEl && !hotEl && !intelEl && !holderKw) { hideCtxMenu(); return; }
+  const holderKw = !!(holdEl && currentStock && !m && !hotEl && !kbEl);
+  if (!m && !newsEl && !hotEl && !intelEl && !holderKw && !kbEl) { hideCtxMenu(); return; }
   e.preventDefault();
   const menu = $("#ctxMenu");
   menu.style.display = "";
@@ -4369,8 +4381,22 @@ document.addEventListener("contextmenu", async (e) => {
   menu.style.top = Math.min(e.clientY, window.innerHeight - 320) + "px";
   showHotCtxItems(false);
   showIntelCtxItems(false);
+  showKbCtxItems(false, false);
+  ctxKb = null;
   $("#ctxNewsAi").style.display = "none";
   const hk = $("#ctxHolderKw"); if (hk) hk.style.display = "none";
+  if (kbEl && !m) {
+    ctxStock = null;
+    ctxNews = null;
+    ctxHot = null;
+    ctxIntel = null;
+    const term = (kbEl.dataset && kbEl.dataset.term) || "";
+    const section = (kbEl.dataset && kbEl.dataset.section) || "";
+    ctxKb = { term, section, aiUpdated: kbEl.dataset && kbEl.dataset.ai === "1" };
+    showStockCtxItems(false);
+    showKbCtxItems(true, !!(term && ctxKb.aiUpdated));
+    return;
+  }
   if (hotEl && !m) {
     const term = (hotEl.dataset && hotEl.dataset.term) || (typeof hotFocus !== "undefined" && hotFocus.term) || "";
     if (!term) { hideCtxMenu(); return; }
@@ -4602,6 +4628,49 @@ $("#ctxHolderKw")?.addEventListener("click", () => {
     };
   }
   runIntelAi("keywords", `🔑 AI 提取关键信息词库「${(ctxIntel && ctxIntel.title) || ""}」`);
+});
+async function runKbAi() {
+  if (!ctxKb) return;
+  const { term, section } = ctxKb;
+  hideCtxMenu();
+  const modal = $("#aiModal");
+  modal.style.display = "";
+  const title = term ? `📚 AI 更新知识「${term}」` : `📚 AI 更新知识「${section || ""}」`;
+  $("#aiModalTitle").textContent = title;
+  $("#aiModalBody").innerHTML = '<div class="empty">正在更新知识，大模型最长约 1 分钟，失败不覆盖已有解释…</div>';
+  try {
+    const d = await api("/api/knowledge/ai", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ term: term || "", section: term ? "" : (section || "") }),
+    });
+    const n = d.applied_n || (d.applied ? 1 : 0);
+    const fail = d.failed_n || 0;
+    const applied = d.applied
+      ? ` · 已更新 ${n} 条`
+      : (d.kept ? " · 已保留上次解释" : " · 未覆盖");
+    const extra = fail ? `，${fail} 条未覆盖` : "";
+    $("#aiModalBody").innerHTML = aiErrBanner(d, "。未假装成功，未覆盖已有解释。")
+      + `<div class="muted" style="margin-bottom:6px">${esc(d.source || "")}${applied}${extra}</div>`
+      + esc(d.text || d.desc || "").replace(/\n/g, "<br>");
+    if (d.applied) loadKnowledge();
+  } catch (err) {
+    $("#aiModalBody").innerHTML = `<div class="empty">更新失败：${esc(err.message || err)}</div>`;
+  }
+}
+$("#ctxKbAi")?.addEventListener("click", () => { runKbAi(); });
+$("#ctxKbRevert")?.addEventListener("click", async () => {
+  if (!ctxKb || !ctxKb.term) return;
+  const term = ctxKb.term;
+  hideCtxMenu();
+  try {
+    await api("/api/knowledge/revert", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ term }),
+    });
+    loadKnowledge();
+  } catch (err) {
+    alert("还原失败：" + (err.message || err));
+  }
 });
 $("#ctxHotAi")?.addEventListener("click", async () => {
   if (!ctxHot) return;

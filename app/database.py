@@ -294,7 +294,16 @@ CREATE TABLE IF NOT EXISTS stock_ai_brief (
 -- 13.0.2：宏观情报全部二级菜单（含热词/常识）右键 AI 解读与词库；热门信息块展示
 -- 13.0.3：AI 利好/利空与情报拉取板块合并回显；点击板块看个股 TOP20/30/50
 -- 13.0.4：板块个股表显示现价；利好/利空同名互斥
+-- 13.0.5：股票常识 / 选股票小技巧 AI 更新解释（失败不覆盖）；热门信息去掉来源 tab；公告须公司语境
 -- intel_item_ai / hot_term_ai 表结构不变，失败仍不覆盖已保存结果
+
+CREATE TABLE IF NOT EXISTS knowledge_ai (
+    term        TEXT PRIMARY KEY,
+    grp         TEXT,
+    desc        TEXT NOT NULL,
+    payload     TEXT,
+    updated_at  TEXT NOT NULL
+);
 
 -- 12.0.9：宏观情报条目的 AI 利好/利空、解读、关键词（失败不覆盖）
 CREATE TABLE IF NOT EXISTS intel_item_ai (

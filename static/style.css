@@ -480,9 +480,10 @@ input:focus { border-color: var(--accent); }
   text-align: center; padding: 9px 2px; font-size: calc(12px * var(--font-scale)); }
 .jiugong div.center { background: rgba(232,196,107,.12); color: #e8c46b; }
 
-.kb-item { padding: 10px 4px; border-bottom: 1px solid rgba(42,53,72,.5); }
+.kb-item { padding: 10px 4px; border-bottom: 1px solid rgba(42,53,72,.5); cursor: context-menu; }
 .kb-item .term { color: var(--accent); font-weight: 700; font-size: calc(15px * var(--font-scale)); }
 .kb-item .desc { color: var(--text); margin-top: 3px; line-height: 1.7; }
+.kb-section-title { cursor: context-menu; }
 
 .ai-output { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
   padding: 14px 16px; min-height: 200px; white-space: pre-wrap; line-height: 1.8; font-size: calc(14px * var(--font-scale)); }

@@ -563,6 +563,20 @@ def get_knowledge(q: str = ""):
     return knowledge.get_knowledge(q)
 
 
+@router.post("/knowledge/ai")
+def knowledge_ai(payload: dict):
+    """右键 AI 更新股票常识 / 选股票小技巧。失败不覆盖已保存解释。"""
+    return knowledge.ai_update(
+        term=payload.get("term") or "",
+        section=payload.get("section") or "",
+    )
+
+
+@router.post("/knowledge/revert")
+def knowledge_revert(payload: dict):
+    return knowledge.revert_knowledge(payload.get("term") or "")
+
+
 @router.get("/announcements")
 def get_announcements(code: str = "", limit: int = Query(60, le=100)):
     return announcement.get_announcements(code, limit)
