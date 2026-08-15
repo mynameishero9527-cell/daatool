@@ -3486,9 +3486,12 @@ $("#settingsTabs")?.addEventListener("click", (e) => {
   $$("#settingsTabs .opt").forEach((b) => b.classList.toggle("active", b === btn));
   const ops = $("#settingsPaneOps");
   const st = $("#settingsPaneStrategy");
+  const en = $("#settingsPaneEngine");
   if (ops) ops.style.display = settingsSub === "ops" ? "" : "none";
   if (st) st.style.display = settingsSub === "strategy" ? "" : "none";
+  if (en) en.style.display = settingsSub === "engine" ? "" : "none";
   if (settingsSub === "strategy") loadStrategyPage();
+  else if (settingsSub === "engine") loadEngineBlueprint();
   else loadSettings();
 });
 
@@ -3617,6 +3620,78 @@ window.saveStrategyPlans = async (preset) => {
 $("#btnResetBuy")?.addEventListener("click", () => saveStrategyPlans({ buy_ids: ["A"], sell_ids: selectedStrategyIds("sell") }));
 $("#btnResetSell")?.addEventListener("click", () => saveStrategyPlans({ buy_ids: selectedStrategyIds("buy"), sell_ids: ["A"] }));
 
+let engineBlueprint = null;
+async function ensureEngineBlueprint() {
+  if (engineBlueprint) return engineBlueprint;
+  engineBlueprint = await api("/api/engine/blueprint");
+  return engineBlueprint;
+}
+
+async function loadEngineBlueprint() {
+  const d = await ensureEngineBlueprint();
+  const tag = $("#engineStatusTag");
+  if (tag) tag.textContent = d.enabled ? "已启用" : "设计评审 · 未启用";
+  const intro = $("#engineIntro");
+  if (intro) {
+    intro.innerHTML = `${esc(d.subtitle || "")} 详细逻辑见仓库 <b>${esc(d.doc || "需求优化文档12.0.md")}</b>。${esc(d.note || "")}`;
+  }
+  const flow = $("#engineFlow");
+  if (flow) {
+    flow.innerHTML = (d.flow || []).map((s) =>
+      `<div class="ef"><b>${esc(s.step)}</b>${esc(s.text)}</div>`).join("");
+  }
+  const dom = $("#engineDomains");
+  if (dom) {
+    dom.innerHTML = (d.domains || []).map((x) =>
+      `<label class="engine-dom ${x.on ? "" : "off"}">
+        <input type="checkbox" disabled ${x.on ? "checked" : ""}> ${esc(x.name)}
+        <div class="ed-from">${esc(x.from)}</div>
+      </label>`).join("");
+  }
+  const sch = $("#engineSchedule");
+  if (sch) {
+    sch.innerHTML = (d.schedule || []).map((s) =>
+      `<div class="kv"><span class="k">${esc(s.name)}</span><span>${esc(s.when)} · ${esc(s.out)}</span></div>`).join("");
+  }
+  const outs = $("#engineOutputs");
+  if (outs) {
+    outs.innerHTML = (d.outputs || []).map((s) =>
+      `<div class="kv"><span class="k">${esc(s.name)}</span><span>${esc(s.use)}</span></div>`).join("");
+  }
+  const wbox = $("#engineWeights");
+  if (wbox) {
+    wbox.innerHTML = (d.weights || []).map((w) =>
+      `<label class="sp-w">${esc(w.name)} <b>${w.w}</b>
+        <input type="range" min="0" max="40" value="${w.w}" disabled>
+        <span class="muted" style="font-size:11px">${esc(w.note || "")}</span></label>`).join("");
+  }
+  const cons = $("#engineConsume");
+  if (cons) {
+    cons.innerHTML = [
+      ["智能选股综合分接入向量", true],
+      ["策略命中页走信号包", true],
+      ["宏观催化页走 Brief", true],
+      ["LLM 写 Brief 句子", false],
+    ].map(([lab, on]) =>
+      `<label class="muted" style="font-size:13px"><input type="checkbox" disabled ${on ? "checked" : ""}> ${lab}</label>`).join("");
+  }
+  const rules = $("#engineRules");
+  if (rules) rules.textContent = "铁律：" + (d.rules || []).join(" · ");
+}
+
+window.jumpApp = (tab, extra = {}) => {
+  const btn = $(`#mainTabs .tab[data-tab="${tab}"]`);
+  if (btn) btn.click();
+  if (tab === "settings" && extra.view) {
+    const sbtn = $(`#settingsTabs .opt[data-view="${extra.view}"]`);
+    if (sbtn) sbtn.click();
+  }
+  if (tab === "macro" && extra.sub) {
+    const mbtn = $(`#macroTabs .opt[data-sub="${extra.sub}"]`);
+    if (mbtn) mbtn.click();
+  }
+};
+
 async function loadSettings() {
   try {
     const d = await api("/api/system/status");
@@ -3657,6 +3732,7 @@ async function loadSettings() {
     const anyFail = d.jobs.some((j) => j.ok === false);
     $("#healthDot").className = "dot " + (anyCircuit ? "bad" : anyFail ? "warn" : "ok");
     if (settingsSub === "strategy") loadStrategyPage();
+    else if (settingsSub === "engine") loadEngineBlueprint();
   } catch (err) { console.warn(err); }
 }
 async function loadMetricsState() {
@@ -3820,6 +3896,7 @@ const spState = {
   last: null,
 };
 let spMeta = null;
+let smartpickSub = "composite";
 
 function spSyncPolicyButtons(p) {
   if (!p) return;
@@ -3860,11 +3937,54 @@ async function loadSmartpick() {
   applyAlertDock();
   loadAlerts();
   try {
-    spMeta = await api("/api/smartpick/meta");
-    if (!Object.keys(spState.weights).length) spState.weights = { ...(spMeta.weights || {}) };
-    renderSpControls();
+    const bp = await ensureEngineBlueprint();
+    const banner = $("#spEngineBanner");
+    if (banner) {
+      banner.textContent = smartpickSub === "composite"
+        ? "综合分来自现场计算 · 策略引擎接入后将改为消费个股向量（StockVector）。设计见设置→策略引擎配置。"
+        : (bp.subtitle || "策略引擎本轮只落设计，不编造名单。");
+    }
+    if (smartpickSub === "composite") {
+      spMeta = await api("/api/smartpick/meta");
+      if (!Object.keys(spState.weights).length) spState.weights = { ...(spMeta.weights || {}) };
+      renderSpControls();
+    } else {
+      renderSmartpickEnginePane(bp);
+    }
   } catch (err) { console.warn(err); }
 }
+
+function renderSmartpickEnginePane(bp) {
+  const box = $("#spPaneEngine");
+  if (!box) return;
+  const tab = (bp.smartpick_tabs || []).find((t) => t.id === smartpickSub) || {};
+  const jumps = (tab.jumps || []).map((j) => {
+    const extra = j.view ? `{view:'${j.view}'}` : (j.sub ? `{sub:'${j.sub}'}` : "{}");
+    return `<button class="btn small" type="button" onclick="jumpApp('${esc(j.tab)}', ${extra})">${esc(j.label)}</button>`;
+  }).join("");
+  box.innerHTML = `
+    <div class="card">
+      <div class="card-title">${esc(tab.name || "引擎结果")} <span class="muted">等待策略引擎产出 · 不编造名单</span></div>
+      <div class="muted" style="margin-bottom:8px">${esc(tab.blurb || "")}</div>
+      <div class="sp-engine-empty">
+        <div class="empty" style="padding:12px 0">${esc(tab.empty || "尚无引擎数据")}</div>
+        <div class="jumps">${jumps}</div>
+      </div>
+    </div>`;
+}
+
+$("#smartpickTabs")?.addEventListener("click", (e) => {
+  const btn = e.target.closest(".opt");
+  if (!btn) return;
+  smartpickSub = btn.dataset.view || "composite";
+  $$("#smartpickTabs .opt").forEach((b) => b.classList.toggle("active", b === btn));
+  const live = smartpickSub === "composite";
+  const comp = $("#spPaneComposite");
+  const eng = $("#spPaneEngine");
+  if (comp) comp.style.display = live ? "" : "none";
+  if (eng) eng.style.display = live ? "none" : "";
+  loadSmartpick();
+});
 
 $("#spTemplates")?.addEventListener("click", (e) => {
   const btn = e.target.closest(".opt");
@@ -4239,7 +4359,11 @@ loaders.ranks = loadRanks;
 loaders.smartpick = loadSmartpick;
 loaders.aipick = loadAiPick;
 loaders.ai = loadAiConfig;
-loaders.settings = loadSettings;
+loaders.settings = () => {
+  if (settingsSub === "strategy") loadStrategyPage();
+  else if (settingsSub === "engine") loadEngineBlueprint();
+  else loadSettings();
+};
 
 /* 自动刷新（仅刷新当前页，避免无谓请求） */
 schedule("dashboard", loadDashboard, 10000);

@@ -691,7 +691,21 @@ tr.score-95 td { background: rgba(255, 60, 60, .30); }
 .policy-item { padding: 10px 4px; border-bottom: 1px solid rgba(42,53,72,.5); }
 .policy-item .p-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 4px; }
 .policy-item .p-title { font-weight: 600; line-height: 1.5; }
-.policy-item .p-sum { color: var(--muted); font-size: 13px; line-height: 1.55; margin-top: 4px; }
+.engine-flow { display: flex; flex-wrap: wrap; gap: 8px; }
+.engine-flow .ef {
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 12px; flex: 1; min-width: 148px;
+}
+.engine-flow .ef b { display: block; color: var(--accent); margin-bottom: 4px; font-size: 13px; }
+.engine-domains { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 8px; }
+.engine-dom {
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 10px; font-size: 13px;
+}
+.engine-dom.off { opacity: .55; }
+.engine-dom .ed-from { color: var(--muted); font-size: 11px; margin-top: 3px; }
+.sp-engine-empty { padding: 18px 8px; }
+.sp-engine-empty .jumps { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
 
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; }

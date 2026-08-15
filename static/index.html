@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>A股量化工具</title>
-<link rel="stylesheet" href="/static/style.css?v=11.0.21">
-<script src="/static/vendor/echarts.min.js?v=11.0.21"></script>
+<link rel="stylesheet" href="/static/style.css?v=12.0.0">
+<script src="/static/vendor/echarts.min.js?v=12.0.0"></script>
 </head>
 <body>
 <header class="topbar">
@@ -422,6 +422,15 @@
 
   <!-- 智能选股 -->
   <section class="page" id="page-smartpick">
+    <div class="btn-group sub-tabs" id="smartpickTabs">
+      <button class="opt active" data-view="composite">综合选股</button>
+      <button class="opt" data-view="signals">策略命中</button>
+      <button class="opt" data-view="catalyst">宏观催化</button>
+      <button class="opt" data-view="snapshot">引擎快照</button>
+    </div>
+    <div class="muted" id="spEngineBanner" style="margin-bottom:10px"></div>
+
+    <div id="spPaneComposite">
     <div class="card">
       <div class="card-title">智能选股 <span class="muted">综合本地行情/资金/量化/财报/板块 · 名单不依赖 AI</span></div>
       <div class="cond-inline" style="margin-bottom:10px;gap:16px">
@@ -467,6 +476,10 @@
       <div id="spAiBox"></div>
       <div id="spTable"><div class="empty">先选模板或条件，本地计算不消耗 AI</div></div>
     </div>
+    </div>
+
+    <div id="spPaneEngine" style="display:none"></div>
+
     <div id="alertDock" class="alert-dock collapsed">
       <div class="alert-dock-handle" id="alertDockHandle" title="拖拽调整信息栏高度"></div>
       <div class="alert-dock-head">
@@ -546,6 +559,7 @@
     <div class="btn-group sub-tabs" id="settingsTabs">
       <button class="opt active" data-view="ops">系统维护</button>
       <button class="opt" data-view="strategy">选股策略</button>
+      <button class="opt" data-view="engine">策略引擎配置</button>
     </div>
 
     <div id="settingsPaneOps">
@@ -619,6 +633,38 @@
       </div>
       <div class="muted" id="strategySaveMsg" style="margin-top:4px"></div>
     </div>
+
+    <div id="settingsPaneEngine" style="display:none">
+      <div class="card">
+        <div class="card-title">策略引擎配置
+          <span class="muted" id="engineStatusTag">设计评审 · 未启用</span>
+        </div>
+        <div class="muted" id="engineIntro" style="margin-bottom:10px"></div>
+        <div class="engine-flow" id="engineFlow"></div>
+      </div>
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-title">采集源 <span class="muted">下轮可关域；本轮只读</span></div>
+          <div id="engineDomains" class="engine-domains"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">更新频率与产出</div>
+          <div id="engineSchedule"></div>
+          <div class="card-title" style="margin-top:14px">产出对象</div>
+          <div id="engineOutputs"></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">默认向量权重 <span class="muted">综合分消费这些维 · 财报不写回购买指数</span></div>
+        <div id="engineWeights" class="sp-weights"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">消费开关 <span class="muted">下轮实现后可保存</span></div>
+        <div id="engineConsume" class="cond-inline" style="gap:16px"></div>
+        <button class="btn" disabled title="引擎尚未实现">保存配置（下轮开放）</button>
+        <div class="muted" style="margin-top:10px" id="engineRules"></div>
+      </div>
+    </div>
   </section>
 </main>
 
@@ -676,6 +722,6 @@
   <div class="ctx-item" id="ctxNewsAi" style="display:none">🤖 发送AI分析（消息）</div>
 </div>
 
-<script src="/static/app.js?v=11.0.21"></script>
+<script src="/static/app.js?v=12.0.0"></script>
 </body>
 </html>

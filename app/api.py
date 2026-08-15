@@ -14,6 +14,7 @@ from .services import (
 )
 from .services import metrics as metrics_svc
 from .services import policy_archive
+from .services import engine_blueprint
 from .database import query as db_query
 
 router = APIRouter(prefix="/api")
@@ -549,6 +550,12 @@ def ai_pick(payload: dict):
 @router.post("/ai/wuxing")
 def ai_wuxing(payload: dict):
     return ai.classify_wuxing(payload.get("code", ""))
+
+
+@router.get("/engine/blueprint")
+def engine_blueprint_get():
+    """12.0 策略引擎只读蓝图，不含运行结果。"""
+    return engine_blueprint.blueprint()
 
 
 @router.get("/smartpick/meta")
