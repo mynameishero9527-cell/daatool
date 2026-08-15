@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>A股量化工具</title>
-<link rel="stylesheet" href="/static/style.css?v=13.0.14">
+<link rel="stylesheet" href="/static/style.css?v=13.0.15">
 <script>
 (function () {
   try {
@@ -63,6 +63,7 @@
     <div class="btn-group sub-tabs" id="dashTabs">
       <button class="opt active" data-view="market">大盘行情</button>
       <button class="opt" data-view="watch" id="dashWatchTab">自选</button>
+      <button class="opt" data-view="cycle">股票周期</button>
     </div>
 
     <!-- 大盘行情视图 -->
@@ -118,6 +119,16 @@
         <div id="watchTable"></div>
       </div>
     </div>
+
+    <!-- 股票周期：12个月板块强弱 -->
+    <div id="dashCycle" style="display:none">
+      <div class="card">
+        <div class="card-title">股票周期 · 12个月板块强弱
+          <span class="muted">季节性常识，非官方政策、非收益保证</span>
+        </div>
+        <div id="boardMonthCycle"><div class="empty">加载中…</div></div>
+      </div>
+    </div>
   </section>
 
   <!-- 个股分析 -->
@@ -145,6 +156,7 @@
           <span class="muted" id="fundKlineMeta"></span>
         </div>
         <div id="fundKlineChart" class="chart-fund"></div>
+        <div id="fundFlowStrip" class="fund-flow-strip"></div>
       </div>
       <div class="card score-card" id="scoreCard">
         <div class="empty">在顶部搜索股票查看财报评级与综合评分</div>
@@ -797,6 +809,6 @@
   <div class="ctx-item" id="ctxKbRevert" style="display:none">↩ 还原内置解释</div>
 </div>
 
-<script src="/static/app.js?v=13.0.14"></script>
+<script src="/static/app.js?v=13.0.15"></script>
 </body>
 </html>

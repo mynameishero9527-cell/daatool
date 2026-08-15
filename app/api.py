@@ -623,6 +623,11 @@ def sector_cycles():
     return sector.get_sector_cycles()
 
 
+@router.get("/sector/month-cycles")
+def sector_month_cycles():
+    return sector.get_month_board_cycles()
+
+
 @router.get("/ai/config")
 def ai_config():
     return ai.get_config()

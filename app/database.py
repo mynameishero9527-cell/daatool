@@ -40,12 +40,14 @@ CREATE TABLE IF NOT EXISTS daily_kline (
 );
 
 -- 13.0.13：个股主力资金日K（亿元），仅落真实拉取结果，不用涨跌幅冒充
+-- 13.0.15：small_net_yi 为东财小单净流入（亿元），缺则 NULL，不用涨跌幅冒充
 CREATE TABLE IF NOT EXISTS stock_fund_daily (
     code         TEXT NOT NULL,
     trade_date   TEXT NOT NULL,
     main_net_yi  REAL,
     super_net_yi REAL,
     large_net_yi REAL,
+    small_net_yi REAL,
     PRIMARY KEY (code, trade_date)
 );
 CREATE INDEX IF NOT EXISTS idx_stock_fund_date ON stock_fund_daily(trade_date);
@@ -315,6 +317,7 @@ CREATE TABLE IF NOT EXISTS stock_ai_brief (
 -- 13.0.12：机构评级高亮/目标价上涨空间/多空直方图；财报评级卡；公司公告 tab；买点窗非表格+操作建议
 -- 13.0.13：顶栏搜索；财报评级紧凑+综合评分突出；K线下方主力资金图
 -- 13.0.14：财报评级卡一行展示现价/一致目标价/相对现价/涨跌停价（现价不重复）
+-- 13.0.15：资金栏移到资金K线下并补散户净流入；行情看板二级菜单股票周期（12个月板块强弱）
 -- intel_item_ai / hot_term_ai 表结构不变，失败仍不覆盖已保存结果
 
 CREATE TABLE IF NOT EXISTS knowledge_ai (
@@ -431,6 +434,7 @@ MIGRATIONS = [
     "ALTER TABLE sector_flow_daily ADD COLUMN source TEXT DEFAULT ''",
     "ALTER TABLE sector_flow_daily ADD COLUMN board_code TEXT DEFAULT ''",
     "ALTER TABLE alert_log ADD COLUMN plan_id TEXT DEFAULT ''",
+    "ALTER TABLE stock_fund_daily ADD COLUMN small_net_yi REAL",
 ]
 
 

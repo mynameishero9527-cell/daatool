@@ -60,6 +60,23 @@ def attach_flow_fields(item: dict) -> dict:
     return item
 
 
+def attach_retail_nets(item: dict) -> dict:
+    """散户净流入：成交额减主力的估算，非逐笔。5日用 −主力5日净流入，不用涨跌幅冒充。"""
+    attach_flow_fields(item)
+    rb, rs = item.get("retail_buy"), item.get("retail_sell")
+    if rb is not None and rs is not None:
+        item["retail_net_in"] = round(float(rb) - float(rs), 2)
+    else:
+        item["retail_net_in"] = None
+    d5 = _fnum(item.get("main_net_in_d5"))
+    if item["retail_net_in"] is not None and d5 is not None:
+        item["retail_net_in_d5"] = round(-d5, 2)
+    else:
+        item["retail_net_in_d5"] = None
+    item["retail_note"] = "散户净流入为成交额与主力差额估算，非逐笔；5日散户按 −5日主力净流入。"
+    return item
+
+
 def attach_flow_list(rows: list[dict]) -> list[dict]:
     for r in rows:
         attach_flow_fields(r)

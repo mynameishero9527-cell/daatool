@@ -466,15 +466,53 @@ async function loadDashboard() {
   loadForecast();
   loadDashAlmanac();
   loadTopAlmanac();
+  const cycleBox = $("#dashCycle");
+  if (cycleBox && cycleBox.style.display !== "none") loadBoardMonthCycle();
 }
 
 $("#dashTabs").addEventListener("click", (e) => {
   const btn = e.target.closest(".opt");
   if (!btn) return;
   $$("#dashTabs .opt").forEach((b) => b.classList.toggle("active", b === btn));
-  $("#dashMarket").style.display = btn.dataset.view === "market" ? "" : "none";
-  $("#dashWatch").style.display = btn.dataset.view === "watch" ? "" : "none";
+  const view = btn.dataset.view;
+  $("#dashMarket").style.display = view === "market" ? "" : "none";
+  $("#dashWatch").style.display = view === "watch" ? "" : "none";
+  const cycle = $("#dashCycle");
+  if (cycle) cycle.style.display = view === "cycle" ? "" : "none";
+  if (view === "cycle") loadBoardMonthCycle();
 });
+
+let boardMonthCycleLoaded = false;
+async function loadBoardMonthCycle() {
+  const box = $("#boardMonthCycle");
+  if (!box) return;
+  try {
+    const d = await api("/api/sector/month-cycles");
+    boardMonthCycleLoaded = true;
+    const months = Array.isArray(d.months) ? d.months : [];
+    const chips = (arr, kind) => (arr || []).map((x) => {
+      const name = typeof x === "string" ? x : (x.name || "");
+      const why = typeof x === "string" ? "" : (x.why || x.stage || "");
+      return `<span class="mc-tag ${kind}" title="${esc(why)}">${esc(name)}</span>`;
+    }).join("");
+    box.innerHTML = `<div class="muted" style="margin-bottom:8px;font-size:calc(12px * var(--font-scale))">${esc(d.note || "")}</div>
+      <div class="month-cycle-grid">${months.map((m) => `
+        <div class="month-card${m.is_current ? " current" : ""}">
+          <h4>${esc(m.label || (m.month + "月"))}${m.is_current ? '<span class="badge level-4">本月</span>' : ""}</h4>
+          <div class="mc-lab">季节性偏强</div>
+          <div class="mc-tags">${chips(m.strong, "strong") || '<span class="muted">—</span>'}</div>
+          <div class="mc-lab">季节性偏弱</div>
+          <div class="mc-tags">${chips(m.weak, "weak") || '<span class="muted">—</span>'}</div>
+          ${m.is_current ? `
+            <div class="mc-lab">当前动量（行业均涨幅）</div>
+            <div class="mc-tags">${(chips(m.live_strong, "strong") + chips(m.live_weak, "weak"))
+              || '<span class="muted">暂无行业动量（需全量同步）</span>'}</div>` : ""}
+        </div>`).join("")}</div>`;
+  } catch (err) {
+    box.innerHTML = '<div class="empty">股票周期加载失败</div>';
+    console.warn(err);
+  }
+}
 
 async function loadTopAlmanac() {
   try {
@@ -848,6 +886,7 @@ let currentStock = null;
 let currentPeriod = "minute";
 let klineChart = null;
 let fundKlineChart = null;
+let lastFundKline = null;
 let lastSearchRows = [];
 
 function paintSearchResults(rows) {
@@ -906,6 +945,9 @@ window.openStock = (code, name) => {
   stockAnalysisCache = null;
   stockFinanceCache = null;
   stockAnnounceCache = null;
+  lastFundKline = null;
+  const strip = $("#fundFlowStrip");
+  if (strip) strip.innerHTML = "";
   $("#searchResults").classList.remove("show");
   $$("#mainTabs .tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === "stock"));
   $$(".page").forEach((p) => p.classList.toggle("active", p.id === "page-stock"));
@@ -1171,13 +1213,66 @@ function renderFundKline(d) {
   }, true);
 }
 
+function yiFromWan(v) {
+  if (v === null || v === undefined || Number.isNaN(Number(v))) return null;
+  return Number(v) / 10000;
+}
+function lastSmallYi(d) {
+  const arr = (d && d.small_net_yi) || [];
+  for (let i = arr.length - 1; i >= 0; i -= 1) {
+    if (arr[i] != null && !Number.isNaN(Number(arr[i]))) return Number(arr[i]);
+  }
+  return null;
+}
+function sumLastSmallYi(d, n) {
+  const arr = ((d && d.small_net_yi) || []).filter((v) => v != null && !Number.isNaN(Number(v)));
+  if (!arr.length) return null;
+  return arr.slice(-n).reduce((a, b) => a + Number(b), 0);
+}
+
+function paintFundFlowStrip() {
+  const host = $("#fundFlowStrip");
+  if (!host) return;
+  if (!currentStock || isIndexCode(currentStock.code)) {
+    host.innerHTML = "";
+    return;
+  }
+  const s = (stockAnalysisCache && stockAnalysisCache.rating && stockAnalysisCache.rating.snapshot) || {};
+  const smallToday = lastSmallYi(lastFundKline);
+  const smallD5 = sumLastSmallYi(lastFundKline, 5);
+  const retailToday = smallToday != null ? smallToday : yiFromWan(s.retail_net_in);
+  const retailD5 = smallD5 != null ? smallD5 : yiFromWan(s.retail_net_in_d5);
+  const retailFromSmall = smallToday != null || smallD5 != null;
+  const cell = (label, yi) => {
+    if (yi === null || yi === undefined || Number.isNaN(Number(yi))) {
+      return `<div class="sqr-cell"><span>${label}</span><b class="muted">—</b></div>`;
+    }
+    const n = Number(yi);
+    return `<div class="sqr-cell"><span>${label}</span><b class="${cls(n)}">${fmt(n)} 亿</b></div>`;
+  };
+  const note = retailFromSmall
+    ? "散户净流入优先用东财小单；缺失时用成交额减主力的估算，非逐笔。未用涨跌幅代替资金。"
+    : (s.retail_note || "散户净流入为成交额与主力差额估算，非逐笔。未用涨跌幅代替资金。");
+  host.innerHTML = `
+    ${cell("主力净流入", yiFromWan(s.main_net_in))}
+    ${cell("5日主力净流入", yiFromWan(s.main_net_in_d5))}
+    ${cell("散户净流入", retailToday)}
+    ${cell("5日散户净流入", retailD5)}
+    <div class="sqr-cell"><span>5/20/60日涨幅</span><b>${pct(s.pct_d5)} / ${pct(s.pct_d20)} / ${pct(s.pct_d60)}</b></div>
+    <div class="sqr-cell"><span>PE / PB</span><b>${fmt(s.pe_ttm, 1)} / ${fmt(s.pb)}</b></div>
+    <div class="sqr-cell"><span>总市值 / 流通</span><b>${s.total_mv != null ? fmt(s.total_mv, 0) : "—"} / ${s.float_mv != null ? fmt(s.float_mv, 0) : "—"} 亿</b></div>
+    <div class="fund-flow-note">${esc(note)}</div>`;
+}
+
 async function loadFundKline(nPrice) {
   const host = $("#fundKlineChart");
   const meta = $("#fundKlineMeta");
   if (!host || !currentStock) return;
   fundKlineChart ||= makeChart(host);
   if (isIndexCode(currentStock.code)) {
+    lastFundKline = null;
     renderFundKline({ dates: [], empty_reason: "指数没有个股主力资金流向，不编造。" });
+    paintFundFlowStrip();
     return;
   }
   const code = currentStock.code;
@@ -1187,13 +1282,17 @@ async function loadFundKline(nPrice) {
     const d = await api(`/api/kline/fund?code=${encodeURIComponent(code)}&period=${encodeURIComponent(period)}`);
     if (!currentStock || currentStock.code !== code || currentPeriod !== period) return;
     fundKlineChart.hideLoading();
+    lastFundKline = d;
     renderFundKline(d);
+    paintFundFlowStrip();
     syncStockCharts(nPrice || 0, (d.dates || []).length);
     requestAnimationFrame(() => fundKlineChart?.resize());
   } catch (err) {
     fundKlineChart.hideLoading();
+    lastFundKline = null;
     if (meta) meta.textContent = "主力资金加载失败";
     renderFundKline({ dates: [], empty_reason: "主力资金加载失败。未用涨跌幅代替资金。" });
+    paintFundFlowStrip();
     console.warn(err);
   }
 }
@@ -1362,7 +1461,6 @@ function analysisMetricsHtml(d) {
     return `<div class="muted" style="margin-top:8px">${esc(r.message || "暂无综合评分数据")}</div>`
       + metrics2Html(d.metrics, d.dark);
   }
-  const s = r.snapshot || {};
   return `
       <div class="score-clamp">${esc(r.advice_reason || "")}</div>
       ${attributionHtml(d.attribution)}
@@ -1371,17 +1469,15 @@ function analysisMetricsHtml(d) {
           <div class="track"><div class="fill" style="width:${v}%"></div></div>
           <span class="num">${v}</span></div>`).join("")}
       ${pullSmashHtml(d.pull_smash)}
-      ${metrics2Html(d.metrics, d.dark)}
-      <div class="kv"><span class="k">主力净流入</span><span class="num ${cls(s.main_net_in)}">${fmt((s.main_net_in || 0) / 10000)} 亿</span></div>
-      <div class="kv"><span class="k">5日主力净流入</span><span class="num ${cls(s.main_net_in_d5)}">${fmt((s.main_net_in_d5 || 0) / 10000)} 亿</span></div>
-      <div class="kv"><span class="k">5日/20日/60日涨幅</span><span class="num">${pct(s.pct_d5)} / ${pct(s.pct_d20)} / ${pct(s.pct_d60)}</span></div>
-      <div class="kv"><span class="k">PE(TTM) / PB</span><span class="num">${fmt(s.pe_ttm, 1)} / ${fmt(s.pb)}</span></div>
-      <div class="kv"><span class="k">总市值 / 流通市值</span><span class="num">${fmt(s.total_mv, 0)} / ${fmt(s.float_mv, 0)} 亿</span></div>`;
+      ${metrics2Html(d.metrics, d.dark)}`;
 }
 
 function paintScoreCard() {
   const card = $("#scoreCard");
-  if (!card || !currentStock || isIndexCode(currentStock.code)) return;
+  if (!card || !currentStock || isIndexCode(currentStock.code)) {
+    paintFundFlowStrip();
+    return;
+  }
   const d = stockAnalysisCache;
   const f = stockFinanceCache;
   const r = d && d.rating;
@@ -1437,6 +1533,7 @@ function paintScoreCard() {
       ${gradeNote}
       ${scoreHero}
       ${d ? analysisMetricsHtml(d) : ""}`;
+  paintFundFlowStrip();
 }
 
 async function loadAnalysis() {

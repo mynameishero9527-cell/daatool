@@ -8,6 +8,7 @@ from datetime import date, timedelta
 
 from ..database import query
 from . import macro
+from . import metrics as metrics_svc
 
 
 def _clamp(x: float, lo: float = 0, hi: float = 100) -> float:
@@ -223,13 +224,15 @@ def score_stock(code: str) -> dict:
         },
         "algorithm": "v9 综合评分：技术40%（动量+RSI+MACD+均线+位置）+ 资金30%（主力+量比+暗盘+购买指数）+ 基本面20%（PE/PB）+ 消息10%（行业事件）",
         "news_reason": news_reason,
-        "snapshot": {
+        "snapshot": metrics_svc.attach_retail_nets({
             "price": s["price"], "pct": s["pct"], "pe_ttm": s["pe_ttm"], "pb": s["pb"],
             "turnover_rate": s["turnover_rate"], "volume_ratio": s["volume_ratio"],
             "float_mv": s["float_mv"], "total_mv": s["total_mv"],
             "main_net_in": s["main_net_in"], "main_net_in_d5": s["main_net_in_d5"],
+            "main_in": s.get("main_in"), "main_out": s.get("main_out"),
+            "amount": s.get("amount"),
             "pct_d5": s["pct_d5"], "pct_d20": s["pct_d20"], "pct_d60": s["pct_d60"],
-        },
+        }),
         "broker_ratings": broker_ratings(code, score),
     }
 

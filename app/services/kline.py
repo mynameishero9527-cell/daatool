@@ -152,16 +152,17 @@ def _persist_fund_daily(code: str, rows: list[dict]) -> None:
     if not daily:
         return
     executemany(
-        "INSERT OR REPLACE INTO stock_fund_daily(code,trade_date,main_net_yi,super_net_yi,large_net_yi) "
-        "VALUES(?,?,?,?,?)",
-        [(code, r["date"][:10], r.get("main_net_yi"), r.get("super_net_yi"), r.get("large_net_yi"))
+        "INSERT OR REPLACE INTO stock_fund_daily(code,trade_date,main_net_yi,super_net_yi,large_net_yi,small_net_yi) "
+        "VALUES(?,?,?,?,?,?)",
+        [(code, r["date"][:10], r.get("main_net_yi"), r.get("super_net_yi"),
+          r.get("large_net_yi"), r.get("small_net_yi"))
          for r in daily],
     )
 
 
 def _load_fund_daily(code: str, limit: int = 240) -> list[dict]:
     rows = query(
-        "SELECT trade_date, main_net_yi, super_net_yi, large_net_yi FROM stock_fund_daily "
+        "SELECT trade_date, main_net_yi, super_net_yi, large_net_yi, small_net_yi FROM stock_fund_daily "
         "WHERE code=? ORDER BY trade_date DESC LIMIT ?",
         (code, limit),
     )
@@ -170,6 +171,7 @@ def _load_fund_daily(code: str, limit: int = 240) -> list[dict]:
         "main_net_yi": r["main_net_yi"] if r["main_net_yi"] is not None else 0.0,
         "super_net_yi": r["super_net_yi"],
         "large_net_yi": r["large_net_yi"],
+        "small_net_yi": r.get("small_net_yi"),
     } for r in reversed(rows)]
 
 
@@ -181,7 +183,7 @@ def _snapshot_flow_bar(code: str) -> list[dict]:
     day = str(rows[0]["updated_at"] or "")[:10]
     if len(day) < 10:
         day = datetime.now().strftime("%Y-%m-%d")
-    return [{"date": day, "main_net_yi": yi, "super_net_yi": None, "large_net_yi": None}]
+    return [{"date": day, "main_net_yi": yi, "super_net_yi": None, "large_net_yi": None, "small_net_yi": None}]
 
 
 def _week_key(day: str) -> str:
@@ -201,7 +203,7 @@ def _aggregate_flow(rows: list[dict], period: str) -> list[dict]:
         key = _week_key(day) if period == "week" else day[:7]
         b = buckets.setdefault(key, {
             "date": key, "main_net_yi": 0.0, "super_net_yi": 0.0, "large_net_yi": 0.0,
-            "_sc": 0, "_lc": 0,
+            "small_net_yi": 0.0, "_sc": 0, "_lc": 0, "_sm": 0,
         })
         b["main_net_yi"] = round((b["main_net_yi"] or 0) + float(r.get("main_net_yi") or 0), 4)
         if r.get("super_net_yi") is not None:
@@ -210,6 +212,9 @@ def _aggregate_flow(rows: list[dict], period: str) -> list[dict]:
         if r.get("large_net_yi") is not None:
             b["large_net_yi"] = round((b["large_net_yi"] or 0) + float(r["large_net_yi"]), 4)
             b["_lc"] += 1
+        if r.get("small_net_yi") is not None:
+            b["small_net_yi"] = round((b["small_net_yi"] or 0) + float(r["small_net_yi"]), 4)
+            b["_sm"] += 1
     out = []
     for key in sorted(buckets):
         b = buckets[key]
@@ -217,8 +222,11 @@ def _aggregate_flow(rows: list[dict], period: str) -> list[dict]:
             b["super_net_yi"] = None
         if not b["_lc"]:
             b["large_net_yi"] = None
+        if not b["_sm"]:
+            b["small_net_yi"] = None
         b.pop("_sc", None)
         b.pop("_lc", None)
+        b.pop("_sm", None)
         out.append(b)
     return out
 
@@ -230,7 +238,7 @@ def get_fund_kline(code: str, period: str = "day") -> dict:
     period = period if period in ("minute", "5day", "day", "week", "month") else "day"
     empty = {
         "code": code, "period": period, "dates": [], "main_net_yi": [],
-        "cumulative_yi": [], "super_net_yi": [], "large_net_yi": [],
+        "cumulative_yi": [], "super_net_yi": [], "large_net_yi": [], "small_net_yi": [],
         "unit": "亿", "source": "", "offline": True, "cumulative_intraday": False,
         "empty_reason": "", "note": "柱为该周期主力净流入，线为累计。单位亿元。未用涨跌幅代替资金。",
     }
@@ -286,6 +294,7 @@ def get_fund_kline(code: str, period: str = "day") -> dict:
         "cumulative_yi": cum,
         "super_net_yi": [r.get("super_net_yi") for r in rows],
         "large_net_yi": [r.get("large_net_yi") for r in rows],
+        "small_net_yi": [r.get("small_net_yi") for r in rows],
         "unit": "亿", "source": data["source"], "offline": data["offline"],
         "cumulative_intraday": cum_flag, "empty_reason": "", "note": note,
     }
