@@ -435,6 +435,9 @@ input:focus { border-color: var(--accent); }
 .sector-tag.js-sector:hover, .badge.js-sector:hover {
   background: rgba(74,158,255,.35);
 }
+.badge.js-sector.active {
+  box-shadow: 0 0 0 2px var(--accent);
+}
 
 /* 日历 */
 .cal-item { display: flex; gap: 14px; padding: 10px 4px; border-bottom: 1px solid rgba(42,53,72,.5); align-items: center; }

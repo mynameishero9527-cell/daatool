@@ -91,6 +91,32 @@ class IntelAiMenuTests(unittest.TestCase):
             self.assertLessEqual(len(d.get("stocks") or []), lim)
             self.assertLessEqual(d.get("count") or 0, lim)
 
+    def test_merge_orig_boards_keeps_ai_and_adds_pull(self):
+        bull, bear = intel_ai.merge_orig_boards(
+            [{"name": "银行", "why": "AI回填"}],
+            [],
+            ["半导体", "银行"],
+            "利好",
+        )
+        names = [x["name"] for x in bull]
+        self.assertIn("银行", names)
+        self.assertIn("半导体", names)
+        self.assertEqual(next(x["why"] for x in bull if x["name"] == "银行"), "AI回填")
+        self.assertEqual(bear, [])
+
+    def test_merge_orig_boards_bear_direction_and_ai_wins(self):
+        bull, bear = intel_ai.merge_orig_boards(
+            [{"name": "银行", "why": "AI回填"}],
+            [{"name": "半导体", "why": "AI回填"}],
+            ["半导体", "新能源"],
+            "利空",
+        )
+        self.assertEqual([x["name"] for x in bull], ["银行"])
+        bear_names = [x["name"] for x in bear]
+        self.assertIn("半导体", bear_names)
+        self.assertIn("新能源", bear_names)
+        self.assertEqual(next(x["why"] for x in bear if x["name"] == "半导体"), "AI回填")
+
 
 if __name__ == "__main__":
     unittest.main()

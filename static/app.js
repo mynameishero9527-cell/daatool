@@ -1737,18 +1737,37 @@ function intelFlagHtml(key) {
   if (it.has_keywords) bits.push("词库");
   return `<button type="button" class="ai-flag js-intel-ai" data-key="${esc(key)}" title="点击回显已保存的AI分析">AI已分析${bits.length ? "·" + bits.join("/") : ""}</button>`;
 }
-function intelSectorBadges(key, fallback, title) {
-  const it = intelAiIndex[key];
-  const bull = (it && it.bull) || [];
-  const bear = (it && it.bear) || [];
-  if (bull.length || bear.length) {
-    return bull.map((s) =>
-      `<span class="badge dir-利好 js-sector" data-sector="${esc(s)}" data-title="${esc(title || s)}" title="利好 · 点击看个股 TOP20">${esc(s)}</span>`
-    ).join("") + bear.map((s) =>
-      `<span class="badge dir-利空 js-sector" data-sector="${esc(s)}" data-title="${esc(title || s)}" title="利空 · 点击看个股 TOP20">${esc(s)}</span>`
-    ).join("");
+function mergeIntelSectors(key, fallback, direction) {
+  const orig = parseSectors(fallback);
+  const it = intelAiIndex[key] || {};
+  const skip = new Set(["", "无明显利空", "未映射影响板块", "政策", "A股", "大盘"]);
+  const bull = [];
+  const bear = [];
+  const seenB = new Set();
+  const seenW = new Set();
+  const add = (arr, seen, name) => {
+    const n = String(name || "").trim();
+    if (!n || skip.has(n) || seen.has(n) || seenB.has(n) || seenW.has(n)) return;
+    seen.add(n);
+    arr.push(n);
+  };
+  for (const s of (it.bull || [])) add(bull, seenB, s);
+  for (const s of (it.bear || [])) add(bear, seenW, s);
+  const dir = direction || "";
+  for (const s of orig) {
+    if (dir === "利空") add(bear, seenW, s);
+    else add(bull, seenB, s);
   }
-  return sectorBadges(fallback, title);
+  return { bull, bear, hasAi: !!(it.has_boards || it.has_reading) };
+}
+function intelSectorBadges(key, fallback, title, direction) {
+  const { bull, bear } = mergeIntelSectors(key, fallback, direction);
+  if (!bull.length && !bear.length) return "";
+  return bull.map((s) =>
+    `<span class="badge dir-利好 js-sector" data-sector="${esc(s)}" data-title="${esc(title || s)}" title="利好 · 点击看个股 TOP20–50">${esc(s)}</span>`
+  ).join("") + bear.map((s) =>
+    `<span class="badge dir-利空 js-sector" data-sector="${esc(s)}" data-title="${esc(title || s)}" title="利空 · 点击看个股 TOP20–50">${esc(s)}</span>`
+  ).join("");
 }
 function intelReasonLine(key) {
   const it = intelAiIndex[key];
@@ -1845,7 +1864,7 @@ async function loadMacro() {
           data-intel-source="sector_event" data-intel-id="${esc(ident)}" data-intel-key="${esc(key)}"
           data-intel-title="${esc(ev.title)}" data-intel-text="${esc((ev.cycle_desc || ev.title || "").slice(0, 400))}"
           data-intel-time="${esc(ev.date || "")}" data-attention="${esc((ev.impact_level || 0) * 20)}"
-          style="cursor:pointer" title="点击查看影响板块与相关个股">
+          style="cursor:pointer" title="点击查看利好/利空板块与相关个股">
           <span class="cal-date" style="width:108px">${esc(ev.date)}</span>
           ${stars(ev.impact_level)}
           <span class="flag">${esc(ev.city)}</span>
@@ -1982,6 +2001,7 @@ async function loadMacro() {
         <div class="inline-form" style="margin-bottom:10px;width:100%">
           <input id="kbSearch" placeholder="搜索术语，如 量比 / 换手率 / 市盈率" style="flex:1">
         </div>
+        <div id="eventDetailBox"></div>
         <div id="kbContent"><div class="empty">加载中…</div></div>`;
       $("#kbSearch").addEventListener("input", debounce(loadKnowledge, 300));
       loadKnowledge();
@@ -2030,7 +2050,7 @@ async function loadMacro() {
         const att = n.score != null ? n.score : (n.impact_level || 0) * 20;
         return `
       <div class="news-item js-news-item js-intel-row" data-sectors="${esc(secs)}" data-title="${esc(title)}"
-        data-news="${esc(n.text)}" data-impact="${esc(n.impact_desc || "")}"
+        data-news="${esc(n.text)}" data-impact="${esc(n.impact_desc || "")}" data-direction="${esc(n.impact_direction || "")}"
         data-intel-source="${esc(src)}" data-intel-id="${esc(ident)}" data-intel-key="${esc(key)}"
         data-intel-title="${esc(title)}" data-intel-text="${esc((n.text || "").slice(0, 500))}"
         data-intel-time="${esc(n.time || "")}" data-attention="${esc(att)}">
@@ -2042,8 +2062,13 @@ async function loadMacro() {
             <span class="badge dir-${n.impact_direction}">${n.impact_direction}</span>
             ${n.is_policy ? '<span class="badge sector-tag">政策</span>' : ""}
             ${intelFlagHtml(key)}
-            ${intelSectorBadges(key, n.affected_sectors, title)}
-            ${(n.affected_sectors || []).length || (intelAiIndex[key] && (intelAiIndex[key].bull || []).length) ? `<button class="btn small ghost js-news-stocks" data-sectors="${esc((intelAiIndex[key] && [...(intelAiIndex[key].bull||[]), ...(intelAiIndex[key].bear||[])].join(",")) || secs)}" data-title="${esc(title)}">相关个股 ›</button>` : ""}
+            ${intelSectorBadges(key, n.affected_sectors, title, n.impact_direction)}
+            ${(function () {
+              const mrg = mergeIntelSectors(key, n.affected_sectors, n.impact_direction);
+              return (mrg.bull.length || mrg.bear.length)
+                ? `<button class="btn small ghost js-news-stocks" data-sectors="${esc([...mrg.bull, ...mrg.bear].join(","))}" data-title="${esc(title)}">相关个股 ›</button>`
+                : "";
+            })()}
           </div>
           ${n.brief ? `<div class="muted" style="font-size:calc(12px * var(--font-scale));margin-top:3px">💡 ${esc(n.brief)}</div>` : ""}
           ${intelReasonLine(key)}
@@ -2091,6 +2116,7 @@ async function renderOfficialPolicy(box) {
       const key = intelKey("official", ident);
       const href = n.url ? `<a href="${esc(n.url)}" target="_blank" rel="noopener" style="color:var(--accent);font-size:calc(12px * var(--font-scale));margin-left:6px">原文</a>` : "";
       return `<div class="policy-item js-news-item js-intel-row" data-title="${esc(n.title)}" data-sectors="${esc(secs)}"
+        data-direction="${esc(n.impact_direction || "")}"
         data-intel-source="official" data-intel-id="${esc(ident)}" data-intel-key="${esc(key)}"
         data-intel-title="${esc(n.title)}" data-intel-text="${esc((n.summary || n.title || "").slice(0, 500))}"
         data-intel-time="${esc(n.time || "")}" data-attention="${esc((n.impact_level || 0) * 20)}">
@@ -2105,7 +2131,7 @@ async function renderOfficialPolicy(box) {
         </div>
         <div class="p-title">${esc(n.title)}</div>
         ${n.summary && n.summary !== n.title ? `<div class="p-sum">${esc((n.summary || "").slice(0, 220))}</div>` : ""}
-        <div class="meta" style="margin-top:4px">${intelSectorBadges(key, n.affected_sectors, n.title)}</div>
+        <div class="meta" style="margin-top:4px">${intelSectorBadges(key, n.affected_sectors, n.title, n.impact_direction)}</div>
         ${intelReasonLine(key)}
       </div>`;
     }).join("") : `<div class="empty">${esc(d.empty_reason || "暂无官方政策")}</div>`}`;
@@ -2265,12 +2291,14 @@ window.openHotIntelCard = async (key, resetSector = true) => {
   }
 };
 
-window.openHotIntelSector = async (sector, key) => {
-  hotIntelFocus.sector = sector || "";
-  hotIntelFocus.key = key || hotIntelFocus.key;
-  const box = $("#hotIntelStockBox") || $("#hotStockBox");
+window.loadSectorStocks = async (sector, box) => {
+  if (!box) box = $("#eventStockBox") || $("#hotIntelStockBox") || $("#hotStockBox");
   if (!box || !sector) return;
-  box.innerHTML = '<div class="empty">加载相关个股…</div>';
+  if (sector === "无明显利空" || sector === "未映射影响板块" || sector === "政策") {
+    box.innerHTML = `<div class="empty">「${esc(sector)}」不是可交易板块，不展示个股。</div>`;
+    return;
+  }
+  box.innerHTML = `<div class="empty">正在加载「${esc(sector)}」个股 TOP${hotStockLimit || 20}…</div>`;
   try {
     const d = await api(`/api/macro/hot-sector-stocks?sector=${encodeURIComponent(sector)}&limit=${hotStockLimit || 20}`);
     const stocks = d.stocks || [];
@@ -2279,10 +2307,16 @@ window.openHotIntelSector = async (sector, key) => {
         ${hotStockLimitBtns(hotStockLimit)}${d.match ? " · " + esc(d.match) : ""}</div>
       ${stocks.length ? renderRelatedStockTable(stocks) : `<div class="empty">${esc(d.empty_reason || "无相关个股")}</div>`}
       <div class="muted" style="font-size:calc(11px * var(--font-scale))">${esc(d.disclaimer || "")}</div>`;
-    bindHotStockLimit(() => openHotIntelSector(sector, key));
+    bindHotStockLimit(() => loadSectorStocks(sector, box));
   } catch (err) {
     box.innerHTML = '<div class="empty">个股加载失败</div>';
   }
+};
+
+window.openHotIntelSector = async (sector, key) => {
+  hotIntelFocus.sector = sector || "";
+  hotIntelFocus.key = key || hotIntelFocus.key;
+  await loadSectorStocks(sector, $("#hotIntelStockBox") || $("#eventStockBox") || $("#hotStockBox"));
 };
 
 window.showSavedIntelAi = async (key) => {
@@ -2525,42 +2559,35 @@ function renderRelatedStockTable(stocks) {
 
 window.showNewsStocks = (sectors, title) => showEventDetail(title, sectors);
 
-window.showEventDetail = async (title, sectors = "") => {
+window.showMergedBoards = async (title, merged, focusSector) => {
   const box = $("#eventDetailBox");
   if (!box) return;
-  relatedQuery.title = title || "";
-  relatedQuery.sectors = sectors || "";
-  box.innerHTML = '<div class="empty">分析中…</div>';
-  try {
-    const d = await api(`/api/macro/event-detail?title=${encodeURIComponent(title || "")}&bull=${encodeURIComponent(sectors || "")}&limit=${relatedQuery.limit}`);
-    const focus = parseSectors(sectors);
-    box.innerHTML = `
-      <div class="outlook-summary" style="border-color:rgba(255,169,64,.4)">
-        <b>📌 ${esc(d.title)} — 影响分析</b>
-        <button class="btn small ghost" style="float:right" onclick="this.closest('.outlook-summary').parentElement.innerHTML=''">收起</button>
-        <div class="kv"><span class="k">利好板块</span><span>${(d.bull_sectors || []).map((s) =>
-          `<span class="badge dir-利好 js-sector" data-sector="${esc(s)}" data-title="${esc(s)}" title="点击查看该板块个股">${esc(s)}</span>`).join("")}</span></div>
-        <div class="kv"><span class="k">利空板块</span><span>${(d.bear_sectors || []).map((s) =>
-          `<span class="badge dir-利空 js-sector" data-sector="${esc(s)}" data-title="${esc(s)}" title="点击查看该板块个股">${esc(s)}</span>`).join("")}</span></div>
-        <div class="kv"><span class="k">利好概率</span><span><b class="${d.bull_prob >= 55 ? "up" : d.bull_prob <= 45 ? "down" : "flat"}">${d.bull_prob}%</b> <span class="muted">${esc(d.prob_note)}</span></span></div>
-        <div class="muted" style="margin:8px 0 4px">${d.unmapped ? "未映射影响板块，不展示指数权重兜底个股" : (focus.length === 1 ? `「${esc(focus[0])}」相关个股` : "相关题材个股")}
-          <span class="btn-group" id="relLimitBtns" style="margin-left:10px">
-            ${[20, 30, 50].map((n) =>
-              `<button class="opt ${relatedQuery.limit === n ? "active" : ""}" data-n="${n}">TOP${n}</button>`).join("")}
-          </span>
-        </div>
-        ${renderRelatedStockTable(d.stocks)}
-        <div class="muted" style="font-size:calc(11px * var(--font-scale));margin-top:6px">${esc(d.disclaimer)}</div>
-      </div>`;
-    $("#relLimitBtns")?.addEventListener("click", (e) => {
-      const btn = e.target.closest(".opt");
-      if (!btn) return;
-      e.stopPropagation();
-      relatedQuery.limit = Number(btn.dataset.n);
-      showEventDetail(relatedQuery.title, relatedQuery.sectors);
-    });
-    box.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  } catch (err) { box.innerHTML = '<div class="empty">分析加载失败</div>'; }
+  const bull = (merged && merged.bull) || [];
+  const bear = (merged && merged.bear) || [];
+  const chip = (s, kind) => {
+    const on = s === focusSector ? " active" : "";
+    return `<span class="badge dir-${kind} js-sector${on}" data-sector="${esc(s)}" data-title="${esc(title || s)}" title="点击查看该板块个股 TOP20–50">${esc(s)}</span>`;
+  };
+  box.innerHTML = `
+    <div class="outlook-summary" style="border-color:rgba(255,169,64,.4)">
+      <b>📌 ${esc(title || "影响板块")} — 利好 / 利空</b>
+      <button class="btn small ghost" style="float:right" onclick="this.closest('#eventDetailBox').innerHTML=''">收起</button>
+      <div class="kv"><span class="k">利好板块</span><span>${bull.length ? bull.map((s) => chip(s, "利好")).join("") : '<span class="muted">暂无明确利好板块</span>'}</span></div>
+      <div class="kv"><span class="k">利空板块</span><span>${bear.length ? bear.map((s) => chip(s, "利空")).join("") : '<span class="muted">暂无明确利空板块</span>'}</span></div>
+      <div class="muted" style="margin:8px 0 4px">已合并情报拉取映射与 AI 回填。点击板块查看相关个股，默认 TOP20，可选 TOP30 / TOP50。</div>
+      <div id="eventStockBox">${focusSector ? "" : '<div class="muted">请点击上方利好或利空板块</div>'}</div>
+    </div>`;
+  box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  if (focusSector) await loadSectorStocks(focusSector, $("#eventStockBox"));
+};
+
+window.showEventDetail = async (title, sectors = "", extra = {}) => {
+  const merged = mergeIntelSectors(
+    (extra && extra.key) || "",
+    (extra && extra.bull) || sectors,
+    (extra && extra.direction) || "",
+  );
+  await showMergedBoards(title, merged, (extra && extra.sector) || "");
 };
 
 $("#page-macro")?.addEventListener("click", (e) => {
@@ -2605,20 +2632,33 @@ $("#page-macro")?.addEventListener("click", (e) => {
     e.stopPropagation();
     const sec = tag.dataset.sector || "";
     if (!sec || sec === "无明显利空" || sec === "政策" || sec === "未映射影响板块") return;
-    showEventDetail(tag.dataset.title || sec, sec);
+    if (tag.closest("#eventDetailBox") && $("#eventStockBox")) {
+      $$("#eventDetailBox .js-sector").forEach((el) => el.classList.toggle("active", el === tag));
+      loadSectorStocks(sec, $("#eventStockBox"));
+      return;
+    }
+    const row = tag.closest(".js-intel-row, .js-news-item, .js-event-row");
+    const key = (row && row.dataset.intelKey) || "";
+    const title = (row && (row.dataset.intelTitle || row.dataset.title)) || tag.dataset.title || sec;
+    showMergedBoards(title, mergeIntelSectors(key, row && row.dataset.sectors, row && row.dataset.direction), sec);
     return;
   }
   const allBtn = e.target.closest(".js-news-stocks");
   if (allBtn) {
     e.preventDefault();
     e.stopPropagation();
-    showEventDetail(allBtn.dataset.title || "相关个股", allBtn.dataset.sectors || "");
+    const row = allBtn.closest(".js-intel-row, .js-news-item, .js-event-row");
+    const key = (row && row.dataset.intelKey) || "";
+    const title = allBtn.dataset.title || (row && (row.dataset.intelTitle || row.dataset.title)) || "相关个股";
+    showMergedBoards(title, mergeIntelSectors(key, (row && row.dataset.sectors) || allBtn.dataset.sectors, row && row.dataset.direction), "");
     return;
   }
   if (e.target.closest("button, input, select, a, table")) return;
   const row = e.target.closest(".js-event-row, .js-news-item");
-  if (row && (row.dataset.title || row.dataset.sectors)) {
-    showEventDetail(row.dataset.title || "相关个股", row.dataset.sectors || "");
+  if (row && !row.closest("#eventDetailBox") && (row.dataset.title || row.dataset.sectors || row.dataset.intelKey)) {
+    const key = row.dataset.intelKey || "";
+    const title = row.dataset.intelTitle || row.dataset.title || "相关个股";
+    showMergedBoards(title, mergeIntelSectors(key, row.dataset.sectors, row.dataset.direction), "");
   }
 });
 
@@ -3997,8 +4037,8 @@ async function loadAnnouncements() {
       const key = intelKey("announce", ident);
       const secs = (a.affected_sectors || []).join(",");
       return `
-      <div class="news-item js-intel-row" data-news="${esc(a.text)}" data-impact="${esc(a.impact_desc || "")}"
-        data-title="${esc((a.text || "").slice(0, 40))}" data-sectors="${esc(secs)}"
+      <div class="news-item js-intel-row js-news-item" data-news="${esc(a.text)}" data-impact="${esc(a.impact_desc || "")}"
+        data-title="${esc((a.text || "").slice(0, 40))}" data-sectors="${esc(secs)}" data-direction="${esc(a.direction || "")}"
         data-intel-source="announce" data-intel-id="${esc(ident)}" data-intel-key="${esc(key)}"
         data-intel-title="${esc((a.text || "").slice(0, 40))}" data-intel-text="${esc((a.text || "").slice(0, 500))}"
         data-intel-time="${esc(a.time || "")}" data-attention="${esc((a.impact_level || 0) * 20)}">
@@ -4009,7 +4049,7 @@ async function loadAnnouncements() {
             <span class="badge dir-${a.direction}">${esc(a.direction)}</span>
             <span class="badge level-${a.impact_level}">${esc(a.impact_desc)}</span>
             ${intelFlagHtml(key)}
-            ${intelSectorBadges(key, a.affected_sectors, a.tag)}
+            ${intelSectorBadges(key, a.affected_sectors, a.tag, a.direction)}
           </div>
           ${a.brief ? `<div class="desc-hl" style="font-size:calc(13px * var(--font-scale));margin-top:3px">💡 ${esc(a.brief)}</div>` : ""}
           ${intelReasonLine(key)}
@@ -4035,7 +4075,8 @@ async function loadKnowledge() {
       ${g.items.map((it) => {
         const ident = it.term;
         const key = intelKey("knowledge", ident);
-        return `<div class="kb-item js-intel-row" data-intel-source="knowledge" data-intel-id="${esc(ident)}" data-intel-key="${esc(key)}"
+        return `<div class="kb-item js-intel-row js-news-item" data-title="${esc(it.term)}" data-sectors=""
+          data-intel-source="knowledge" data-intel-id="${esc(ident)}" data-intel-key="${esc(key)}"
           data-intel-title="${esc(it.term)}" data-intel-text="${esc(((it.term || "") + "：" + (it.desc || "")).slice(0, 500))}">
         <div class="term">${esc(it.term)} ${intelFlagHtml(key)}</div>
         <div class="desc">${esc(it.desc)}</div>
@@ -4329,6 +4370,8 @@ document.addEventListener("contextmenu", async (e) => {
       attention: row.dataset.attention || "",
       heat: row.dataset.heat || "",
       key: row.dataset.intelKey,
+      sectors: row.dataset.sectors || "",
+      direction: row.dataset.direction || "",
     } : null;
     showStockCtxItems(false);
     showIntelCtxItems(!!ctxIntel);
@@ -4344,6 +4387,8 @@ document.addEventListener("contextmenu", async (e) => {
     time: intelEl.dataset.intelTime || "",
     attention: intelEl.dataset.attention || "",
     key: intelEl.dataset.intelKey,
+    sectors: intelEl.dataset.sectors || "",
+    direction: intelEl.dataset.direction || "",
   } : null;
   ctxStock = m;
   showStockCtxItems(true);
@@ -4460,6 +4505,8 @@ async function runIntelAi(mode, title) {
     time: ctxIntel.time,
     attention: ctxIntel.attention,
     heat: ctxIntel.heat,
+    orig_sectors: ctxIntel.sectors,
+    direction: ctxIntel.direction,
   };
   hideCtxMenu();
   const modal = $("#aiModal");

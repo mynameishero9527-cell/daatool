@@ -327,6 +327,56 @@ def get_detail(item_key: str) -> dict:
     }
 
 
+def _skip_board_name(name: str) -> bool:
+    return name in ("", "无明显利空", "未映射影响板块", "政策", "A股", "大盘")
+
+
+def _orig_sector_names(raw) -> list[str]:
+    if raw is None or raw == "":
+        return []
+    if isinstance(raw, str):
+        parts = re.split(r"[,，、/|\s]+", raw)
+    elif isinstance(raw, list):
+        parts = raw
+    else:
+        return []
+    out, seen = [], set()
+    for p in parts:
+        if isinstance(p, dict):
+            name = str(p.get("name") or p.get("sector") or "").strip()
+        else:
+            name = str(p or "").strip()
+        if _skip_board_name(name) or name in seen:
+            continue
+        seen.add(name)
+        out.append(name)
+    return out
+
+
+def merge_orig_boards(bull: list, bear: list, orig_sectors=None, direction: str = "") -> tuple[list, list]:
+    """AI 利好/利空与情报拉取板块合并：同名以 AI 为准，其余按消息方向并入。不编造板块。"""
+    bull = [x for x in (bull or []) if isinstance(x, dict) and x.get("name")]
+    bear = [x for x in (bear or []) if isinstance(x, dict) and x.get("name")]
+    bull_names = {x["name"] for x in bull}
+    bear_names = {x["name"] for x in bear}
+    direction = str(direction or "").strip()
+    for name in _orig_sector_names(orig_sectors):
+        resolved = hot_terms._resolve_ai_name(name)  # noqa: SLF001
+        if not resolved:
+            resolved = name if hot_terms._is_board(name) else None  # noqa: SLF001
+        if not resolved or resolved in bull_names or resolved in bear_names:
+            continue
+        item = {"name": resolved, "why": "情报拉取映射"}
+        if direction == "利空":
+            bear.append(item)
+            bear_names.add(resolved)
+        else:
+            bull.append(item)
+            bull_names.add(resolved)
+    bear = [x for x in bear if x["name"] not in bull_names]
+    return bull, bear
+
+
 def _safe_num(v):
     if v is None or v == "":
         return None
@@ -510,6 +560,13 @@ def analyze(body: dict) -> dict:
             source_txt=model_src,
             extra_text=(raw or "") + ai_svc.DISCLAIMER,
         )
+    if ok_boards:
+        bull, bear = merge_orig_boards(
+            bull, bear,
+            body.get("orig_sectors") or body.get("sectors"),
+            body.get("direction") or "",
+        )
+        ok_boards = bool(bull or bear)
     patch = {"source": model_src, "text": raw, "reason": reason}
     if ok_boards:
         patch["bull"] = bull
