@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>A股量化工具</title>
-<link rel="stylesheet" href="/static/style.css?v=11.0.1">
-<script src="/static/vendor/echarts.min.js?v=11.0.1"></script>
+<link rel="stylesheet" href="/static/style.css?v=11.0.2">
+<script src="/static/vendor/echarts.min.js?v=11.0.2"></script>
 </head>
 <body>
 <header class="topbar">
@@ -488,6 +488,9 @@
           未配置时自动使用「本地规则分析」。密钥仅存于本地数据库。<br>
           地址会自动补全 <code>/v1</code>（智谱走 <code>/api/paas/v4</code>，不要再加 /v1）。<br>
           「测试连通」会逐步检查密钥、域名、TCP 与 Chat 接口，失败时给出原因。<br>
+          DeepSeek 返回 <b>402</b> 表示账户余额不足，请到
+          <a href="https://platform.deepseek.com" target="_blank" rel="noopener">platform.deepseek.com</a>
+          充值；地址 <code>https://api.deepseek.com/v1</code> 不用改。<br>
           全站任意个股行 <b>右键</b> 可唤起「AI 分析该股」小窗。
         </div>
       </div>
@@ -575,6 +578,6 @@
   <div class="ctx-item" id="ctxNewsAi" style="display:none">🤖 发送AI分析（消息）</div>
 </div>
 
-<script src="/static/app.js?v=11.0.1"></script>
+<script src="/static/app.js?v=11.0.2"></script>
 </body>
 </html>

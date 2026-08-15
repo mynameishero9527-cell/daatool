@@ -322,8 +322,9 @@ def comment(items: list[dict], template_name: str, summary: str,
                 "ai": True, "error": "", "usage": usage}
     except Exception as exc:  # noqa: BLE001
         log.warning("智能选股AI点评失败: %s", exc)
+        err = ai_svc.format_llm_error(exc, cfg.get("api_base") or "")
         return {"skipped": False, "reason": "error", "text": "", "ai": False,
-                "error": str(exc)[:240], "usage": usage}
+                "error": err, "hint": ai_svc._hint_for_error(err), "usage": usage}
 
 
 def run(payload: dict) -> dict:

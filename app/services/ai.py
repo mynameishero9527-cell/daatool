@@ -1,6 +1,7 @@
 """AI 分析（FR7-07）：可配置 OpenAI 兼容大模型 + 本地规则分析兜底。"""
 import json
 import logging
+import re
 import socket
 from urllib.parse import urlparse
 
@@ -172,13 +173,13 @@ def analyze(mode: str = "market", code: str = "", question: str = "") -> dict:
         except Exception as exc:  # noqa: BLE001
             log.warning("LLM调用失败: %s", exc)
             fallback = _local_analysis(mode, code, question)
-            err = str(exc)[:240]
+            err = format_llm_error(exc, base)
             return {"text": fallback + DISCLAIMER,
-                    "source": f"本地规则分析（大模型调用失败：{err}）",
-                    "ai": False, "error": err}
+                    "source": "本地规则分析（大模型未调用）",
+                    "ai": False, "error": err, "hint": _hint_for_error(err)}
     return {"text": _local_analysis(mode, code, question) + DISCLAIMER,
             "source": "本地规则分析（未配置AI大模型，可在AI分析页配置）",
-            "ai": False, "error": ""}
+            "ai": False, "error": "", "hint": ""}
 
 
 def _parse_llm_error(resp: httpx.Response) -> str:
@@ -206,17 +207,88 @@ def _auth_headers(base: str, key: str) -> dict:
     return headers
 
 
+def _vendor_name(base: str) -> str:
+    host = ""
+    try:
+        raw = base or ""
+        host = urlparse(raw if "://" in raw else f"https://{raw}").hostname or ""
+    except Exception:  # noqa: BLE001
+        host = (base or "").lower()
+    low = host.lower()
+    if "deepseek" in low:
+        return "DeepSeek"
+    if "dashscope" in low or "aliyun" in low:
+        return "通义千问"
+    if "openai.com" in low:
+        return "OpenAI"
+    if "moonshot" in low:
+        return "月之暗面"
+    if "bigmodel" in low:
+        return "智谱"
+    if "openrouter" in low:
+        return "OpenRouter"
+    return "大模型服务商"
+
+
+def format_llm_error(exc: Exception | str, base: str = "") -> str:
+    """把 httpx/服务商原始错误收成短中文，避免 URL 被截成 chat/co）。"""
+    if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
+        return _friendly_http_error(exc.response.status_code, _parse_llm_error(exc.response), base)
+    msg = str(exc or "").strip()
+    m = re.search(r"\b([45]\d\d)\b", msg)
+    if m and ("client error" in msg.lower() or "payment required" in msg.lower()
+              or msg.startswith("HTTP ") or "for url" in msg.lower()):
+        return _friendly_http_error(int(m.group(1)), msg, base)
+    if msg.startswith("HTTP ") and "：" in msg:
+        try:
+            status = int(msg.split("：", 1)[0].split()[1])
+            body = msg.split("：", 1)[1]
+            return _friendly_http_error(status, body, base)
+        except Exception:  # noqa: BLE001
+            pass
+    return msg[:220]
+
+
+def _friendly_http_error(status: int, body: str, base: str = "") -> str:
+    vendor = _vendor_name(base)
+    blob = f"{body or ''} {base or ''}".lower()
+    if status == 402 or "payment required" in blob or "insufficient" in blob:
+        if "deepseek" in blob or vendor == "DeepSeek":
+            return ("DeepSeek 返回 402：账户余额不足。"
+                    "请到 https://platform.deepseek.com 充值后再调用；"
+                    "接口地址 https://api.deepseek.com/v1 是对的，不是 URL 写错。")
+        return f"{vendor}返回 402：账户未付费或余额不足，请到对应平台充值。这不是接口地址写错。"
+    labels = {
+        400: "请求参数不被该模型接受",
+        401: "密钥无效或未开通",
+        403: "没有该模型权限",
+        404: "地址或模型名不存在",
+        429: "限流或额度用尽",
+        500: "服务商内部错误",
+        503: "服务商暂时不可用",
+    }
+    label = labels.get(status, f"HTTP {status}")
+    extra = (body or "").strip()
+    if extra and extra.lower() not in ("payment required", f"http {status}") and "for url" not in extra.lower():
+        return f"{vendor}返回 {status}（{label}）：{extra[:140]}"
+    return f"{vendor}返回 {status}：{label}"
+
+
 def _hint_for_error(err: str) -> str:
     low = (err or "").lower()
     if "未配置" in (err or "") or "请先填写" in (err or ""):
         return "先在左侧填完整地址、密钥、模型名称并保存。"
+    if "402" in low or "payment required" in low or "余额不足" in (err or "") or "未付费" in (err or ""):
+        if "deepseek" in low:
+            return "到 DeepSeek 开放平台充值即可，不必改 API 地址或模型名。"
+        return "服务商要求付费或余额不足，充值后再试。这不是接口地址写错。"
     if "401" in low or "unauthorized" in low or "invalid api key" in low or "incorrect api key" in low:
         return "密钥被拒绝。核对是否粘贴完整、是否选对了服务商，部分平台要先充值开通。"
     if "403" in low or "permission" in low:
         return "当前密钥没有该模型权限，换一个已开通的模型名再试。"
     if "404" in low or "not found" in low:
         return "地址或模型名不对。地址应止于 /v1（智谱止于 /api/paas/v4），不要再拼 /chat/completions。"
-    if "429" in low or "rate" in low or "quota" in low or "额度" in err:
+    if "429" in low or "rate" in low or "quota" in low or "额度" in (err or ""):
         return "触发限流或额度用尽，稍后再试或检查账户余额。"
     if "timeout" in low or "timed out" in low:
         return "等待超时。检查代理/科学上网，或换延迟更低的接口。"
@@ -271,10 +343,10 @@ def _call_llm(cfg: dict, context: str, task: str) -> str:
                 net_try = 0
                 continue
             if resp.status_code >= 400:
-                raise RuntimeError(f"HTTP {resp.status_code}：{_parse_llm_error(resp)}")
+                raise RuntimeError(_friendly_http_error(resp.status_code, _parse_llm_error(resp), base))
             data = resp.json()
             if data.get("error"):
-                raise RuntimeError(_parse_llm_error(resp))
+                raise RuntimeError(_friendly_http_error(resp.status_code, _parse_llm_error(resp), base))
             choices = data.get("choices") or []
             if not choices:
                 raise RuntimeError("模型返回空 choices，请检查模型名称是否正确")
@@ -287,15 +359,18 @@ def _call_llm(cfg: dict, context: str, task: str) -> str:
                 raise RuntimeError("模型返回空内容，请检查模型名称或额度")
             _set_last_error("")
             return text
+        except httpx.HTTPStatusError as exc:
+            last_exc = RuntimeError(format_llm_error(exc, base))
+            break
         except (httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError) as exc:
-            last_exc = RuntimeError(f"网络失败：{str(exc)[:220]}")
+            last_exc = RuntimeError(f"网络失败：{str(exc)[:180]}")
             log.warning("LLM 网络失败 variant=%s try=%s: %s", idx, net_try + 1, exc)
             net_try += 1
             if net_try >= 2:
                 break
             continue
         except Exception as exc:  # noqa: BLE001
-            last_exc = exc if isinstance(exc, RuntimeError) else RuntimeError(str(exc)[:240])
+            last_exc = RuntimeError(format_llm_error(exc, base))
             break
     msg = str(last_exc or "大模型调用失败")[:300]
     _set_last_error(msg)
@@ -361,7 +436,7 @@ def diagnose() -> dict:
         return {"ok": True, "reply": (text or "")[:120], "error": "", "hint": "",
                 "api_base": base, "model": model, "steps": steps}
     except Exception as exc:  # noqa: BLE001
-        err = str(exc)[:300]
+        err = format_llm_error(exc, base)
         add("chat", "Chat Completions", False, err)
         _set_last_error(err)
         return {"ok": False, "error": err, "hint": _hint_for_error(err),
@@ -392,12 +467,13 @@ def pick_stocks(description: str) -> dict:
             source = f"语义规则解析 + AI点评（{cfg.get('model')}）"
         except Exception as exc:  # noqa: BLE001
             log.warning("AI选股点评失败: %s", exc)
-            llm_error = str(exc)[:240]
-            source = f"语义规则解析（AI点评失败：{llm_error[:80]}）"
+            llm_error = format_llm_error(exc, base)
+            source = "语义规则解析（AI点评未调用）"
     elif not (cfg.get("api_key") and base):
         llm_error = ""
     return {**result, "commentary": (commentary + DISCLAIMER) if commentary else "",
-            "source": source, "error": llm_error, "ai": bool(commentary)}
+            "source": source, "error": llm_error, "hint": _hint_for_error(llm_error) if llm_error else "",
+            "ai": bool(commentary)}
 
 
 def classify_wuxing(code: str) -> dict:
@@ -434,9 +510,12 @@ def classify_wuxing(code: str) -> dict:
             source = f"AI大模型（{cfg.get('model') or '默认'}）"
         except Exception as exc:  # noqa: BLE001
             log.warning("AI五行分类失败: %s", exc)
-            text += f"\n（大模型调用失败，已回退本地规则：{str(exc)[:80]}）"
+            err = format_llm_error(exc, cfg.get("api_base") or "")
+            text += f"\n（大模型未调用，已回退本地规则：{err}）"
+            return {"code": norm, "tags": tags, "text": text + DISCLAIMER,
+                    "source": source, "applied": applied, "error": err, "hint": _hint_for_error(err)}
     return {"code": norm, "tags": tags, "text": text + DISCLAIMER,
-            "source": source, "applied": applied}
+            "source": source, "applied": applied, "error": "", "hint": ""}
 
 
 def _local_analysis(mode: str, code: str, question: str) -> str:

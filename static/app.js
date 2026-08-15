@@ -27,6 +27,12 @@ function showApiBanner(msg) {
   el.textContent = msg || "";
 }
 
+function aiErrBanner(d, extra) {
+  if (!d || !d.error) return "";
+  const hint = d.hint ? `<br>建议：${esc(d.hint)}` : "";
+  return `<div class="offline-banner" style="margin-bottom:8px">大模型失败：${esc(d.error)}${hint}${extra || ""}</div>`;
+}
+
 async function api(path, opts = {}) {
   const resp = await fetch(apiUrl(path), opts);
   const ct = resp.headers.get("content-type") || "";
@@ -2379,7 +2385,7 @@ window.runAiPick = async () => {
     if (d.commentary) {
       $("#aiPickComment").innerHTML = `<div class="outlook-summary" style="white-space:pre-wrap">${esc(d.commentary)}</div>`;
     } else if (d.error) {
-      $("#aiPickComment").innerHTML = `<div class="offline-banner">AI点评失败：${esc(d.error)}。已展示本地语义筛选结果，可到「AI分析」页测试连通。</div>`;
+      $("#aiPickComment").innerHTML = aiErrBanner(d, "。已展示本地语义筛选结果。");
     }
     $("#aiPickTable").innerHTML = d.items && d.items.length ? `<table><thead><tr>
       <th>#</th><th>名称</th><th>财报</th><th>五行</th><th>行业</th><th>现价</th><th>涨跌幅</th>
@@ -2498,8 +2504,7 @@ window.runAiAnalyze = async () => {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mode: aiMode, code: aiMode === "stock" ? input : "", question: aiMode === "custom" ? input : "" }),
     });
-    const errHtml = d.error
-      ? `<div class="offline-banner" style="margin-bottom:8px">大模型失败：${esc(d.error)}。以下为本地规则分析结果。</div>` : "";
+    const errHtml = aiErrBanner(d, "。以下为本地规则分析结果。");
     $("#aiOutput").innerHTML = errHtml
       + `<div class="muted" style="margin-bottom:8px">来源：${esc(d.source)}</div>`
       + esc(d.text).replace(/\n/g, "<br>");
@@ -2626,8 +2631,7 @@ $("#ctxNewsAi").addEventListener("click", async () => {
         question: `请解读以下财经消息的市场影响（利好/利空、可能受益或受损板块、风险提示，分点，200字内）。\n影响评估：${ctxNews.impact}\n消息：${ctxNews.text}`,
       }),
     });
-    $("#aiModalBody").innerHTML = (d.error
-        ? `<div class="offline-banner" style="margin-bottom:6px">大模型失败：${esc(d.error)}</div>` : "")
+    $("#aiModalBody").innerHTML = aiErrBanner(d)
       + `<div class="muted" style="margin-bottom:6px">来源：${esc(d.source)}</div>`
       + esc(d.text).replace(/\n/g, "<br>");
   } catch (err) { $("#aiModalBody").innerHTML = `<div class="empty">分析失败：${esc(err.message || err)}</div>`; }
@@ -2643,8 +2647,7 @@ window.openAiModal = async (code, name) => {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mode: "stock", code }),
     });
-    $("#aiModalBody").innerHTML = (d.error
-        ? `<div class="offline-banner" style="margin-bottom:6px">大模型失败：${esc(d.error)}</div>` : "")
+    $("#aiModalBody").innerHTML = aiErrBanner(d)
       + `<div class="muted" style="margin-bottom:6px">来源：${esc(d.source)}</div>` + esc(d.text).replace(/\n/g, "<br>");
   } catch (err) { $("#aiModalBody").innerHTML = `<div class="empty">分析失败：${esc(err.message || err)}</div>`; }
 };
@@ -2929,7 +2932,7 @@ function renderSpResult(d) {
   if (ai.text) {
     box.innerHTML = `<div class="outlook-summary" style="white-space:pre-wrap">${esc(ai.text)}</div>`;
   } else if (ai.error) {
-    box.innerHTML = `<div class="offline-banner">AI点评失败：${esc(ai.error)}</div>`;
+    box.innerHTML = aiErrBanner(ai);
   } else if (ai.skipped && ai.reason && ai.reason !== "not_requested" && ai.reason !== "manual") {
     const why = { off: "已关闭 AI", cap: "今日次数已用完", interval: "未到自动间隔", duplicate: "相同名单间隔内不重复调用", unconfigured: "未配置大模型", empty: "名单为空" }[ai.reason] || ai.reason;
     box.innerHTML = `<div class="muted" style="margin-bottom:8px">未调用 AI：${esc(why)}。名单仍为本地结果。</div>`;
