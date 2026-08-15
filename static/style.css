@@ -185,6 +185,14 @@ input:focus { border-color: var(--accent); }
   background: var(--bg2); border: 1px solid var(--border); border-radius: 8px;
 }
 .hold-mini span { color: var(--text); }
+.hold-tabs { margin: 12px 0 8px; }
+.hold-org-tabs { margin: 0 0 10px; }
+.hold-pane { min-height: 72px; }
+.hold-ai-bar {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 10px; flex-wrap: wrap; margin-bottom: 10px;
+}
+.hold-ai-text { line-height: 1.7; font-size: 13px; white-space: pre-wrap; }
 
 /* 评分卡 */
 .score-head { text-align: center; padding: 6px 0 12px; }

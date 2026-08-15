@@ -154,6 +154,65 @@ def _holder_row(r: dict, *, float_holder: bool) -> dict | None:
     }
 
 
+FUND_TOP_N = 10
+
+
+def _parse_funds(rows: list[dict]) -> list[dict]:
+    """基金持股：按持股数量降序取前 10。ORG_TYPE 若有则只保留基金(01)。"""
+    funds = []
+    seen: set[str] = set()
+    for r in rows:
+        raw_ot = str(r.get("ORG_TYPE") or "").strip()
+        org_type = raw_ot.zfill(2)[-2:] if raw_ot else ""
+        if org_type and org_type != "01":
+            continue
+        name = (r.get("HOLDER_NAME") or "").strip()
+        if not name:
+            continue
+        key = (r.get("FUND_CODE") or r.get("HOLDER_CODE") or name).strip()
+        if key in seen:
+            continue
+        seen.add(key)
+        shares = _num(r.get("TOTAL_SHARES") or r.get("FREE_SHARES") or r.get("HOLD_NUM"))
+        funds.append({
+            "name": name,
+            "code": (r.get("FUND_CODE") or r.get("HOLDER_CODE") or "").strip() or None,
+            "shares": shares,
+            "shares_txt": _shares_txt(shares) if shares is not None else _shares_txt(
+                r.get("TOTAL_SHARES") or r.get("FREE_SHARES") or r.get("HOLD_NUM")),
+            "ratio": _round(r.get("TOTALSHARES_RATIO") or r.get("FREESHARES_RATIO")
+                            or r.get("HOLD_NUM_RATIO"), 4),
+            "value_yi": _round((_num(r.get("HOLD_VALUE")) or 0) / 1e8, 2)
+            if _num(r.get("HOLD_VALUE")) is not None else None,
+            "date": _date(r.get("REPORT_DATE") or r.get("END_DATE")),
+            "org_type": org_type or "01",
+        })
+    funds.sort(key=lambda x: (
+        x.get("shares") is None,
+        -(x.get("shares") or 0),
+        x.get("ratio") is None,
+        -(x.get("ratio") or 0),
+    ))
+    out = funds[:FUND_TOP_N]
+    for i, item in enumerate(out, 1):
+        item["rank"] = i
+    return out
+
+
+def _rerank_saved_funds(funds: list) -> list[dict]:
+    items = [dict(x) for x in funds if isinstance(x, dict) and (x.get("name") or "").strip()]
+    items.sort(key=lambda x: (
+        x.get("shares") is None,
+        -(x.get("shares") or 0),
+        x.get("ratio") is None,
+        -(x.get("ratio") or 0),
+    ))
+    out = items[:FUND_TOP_N]
+    for i, item in enumerate(out, 1):
+        item["rank"] = i
+    return out
+
+
 def parse_shareholders(raw: dict) -> dict:
     """把 F10 PageAjax 转成前端可用结构。空列表保持空，不填假数。"""
     raw = raw or {}
@@ -216,20 +275,7 @@ def parse_shareholders(raw: dict) -> dict:
     top10 = [x for x in (_holder_row(r, float_holder=False) for r in _rows(raw.get("sdgd"))) if x]
     top10_float = [x for x in (_holder_row(r, float_holder=True) for r in _rows(raw.get("sdltgd"))) if x]
 
-    funds = []
-    for r in _rows(raw.get("jjcg"))[:12]:
-        name = (r.get("HOLDER_NAME") or "").strip()
-        if not name:
-            continue
-        funds.append({
-            "name": name,
-            "code": (r.get("FUND_CODE") or r.get("HOLDER_CODE") or "").strip() or None,
-            "shares": _num(r.get("TOTAL_SHARES") or r.get("FREE_SHARES")),
-            "shares_txt": _shares_txt(r.get("TOTAL_SHARES") or r.get("FREE_SHARES")),
-            "ratio": _round(r.get("TOTALSHARES_RATIO") or r.get("FREESHARES_RATIO"), 4),
-            "value_yi": _round((_num(r.get("HOLD_VALUE")) or 0) / 1e8, 2) if _num(r.get("HOLD_VALUE")) is not None else None,
-            "date": _date(r.get("REPORT_DATE")),
-        })
+    funds = _parse_funds(_rows(raw.get("jjcg")))
 
     unlocks = []
     for r in _rows(raw.get("xsjj")):
@@ -267,9 +313,14 @@ def parse_shareholders(raw: dict) -> dict:
         "institution_count": inst_count,
         "person_ratio": person_ratio,
         "org_hold": org_rows,
+        "org_types": [
+            {"org_type": x["org_type"], "name": x["name"], "count": x.get("count")}
+            for x in org_rows
+        ],
         "top10": top10,
         "top10_float": top10_float,
         "funds": funds,
+        "funds_note": "按持股数量降序取前10（数量缺失时按占股本比）。缺披露不编造。",
         "unlocks": unlocks,
         "float_struct": float_struct,
         "empty": not has_data,
@@ -280,9 +331,11 @@ def _empty(code: str, note: str, offline: bool = False) -> dict:
     return {
         "code": code, "asof": None, "controller": [], "counts": [], "latest": {},
         "institution_ratio": None, "institution_count": None, "person_ratio": None,
-        "org_hold": [], "top10": [], "top10_float": [], "funds": [], "unlocks": [],
+        "org_hold": [], "org_types": [], "top10": [], "top10_float": [],
+        "funds": [], "funds_note": "", "unlocks": [],
         "float_struct": None, "empty": True, "offline": offline,
         "source": SOURCE, "note": note,
+        "ai": _empty_ai(),
     }
 
 
@@ -300,6 +353,13 @@ def _load_db(code: str) -> dict | None:
     payload["fetched_at"] = rows[0]["fetched_at"]
     payload["source"] = SOURCE
     payload["note"] = payload.get("note") or "网络暂不可用，展示上次缓存"
+    payload.setdefault("org_types", [
+        {"org_type": x.get("org_type"), "name": x.get("name"), "count": x.get("count")}
+        for x in (payload.get("org_hold") or [])
+    ])
+    payload.setdefault("funds_note", "按持股数量降序取前10（数量缺失时按占股本比）。缺披露不编造。")
+    if isinstance(payload.get("funds"), list) and payload["funds"]:
+        payload["funds"] = _rerank_saved_funds(payload["funds"])
     return payload
 
 
@@ -322,10 +382,10 @@ def get_holders(code: str) -> dict:
     if code.startswith(("sh000", "sz399", "bj899", "sh880")):
         return _empty(code, "指数没有股东持股披露")
 
-    key = f"holders:v3:{code}"
+    key = f"holders:v4:{code}"
     hit = cache.get(key)
     if hit is not None:
-        return hit
+        return _with_ai(code, hit)
 
     last_err: Exception | None = None
     parsed: dict | None = None
@@ -350,12 +410,12 @@ def get_holders(code: str) -> dict:
         except Exception as exc:  # noqa: BLE001
             log.warning("持股落库失败 %s: %s", code, exc)
         cache.set(key, parsed, 86400)
-        return parsed
+        return _with_ai(code, parsed)
 
     db = _load_db(code)
     if db and not db.get("empty"):
         cache.set(key, db, 300)
-        return db
+        return _with_ai(code, db)
 
     if last_err:
         note = f"持股数据暂时拉不到（{last_err}）。已尝试东方财富 F10 与数据中心。"
@@ -365,4 +425,219 @@ def get_holders(code: str) -> dict:
         note = "暂无持股数据（披露接口不可用且本地无缓存）"
     empty = _empty(code, note, offline=bool(last_err))
     cache.set(key, empty, 45)
-    return empty
+    return _with_ai(code, empty)
+
+
+def _empty_ai() -> dict:
+    return {
+        "applied": False, "text": "", "source": "", "updated_at": "",
+        "analyzed_at": "", "asof": "", "error": "", "hint": "", "kept": False,
+    }
+
+
+def load_holder_ai(code: str) -> dict | None:
+    code = (code or "").strip().lower()
+    if not code:
+        return None
+    try:
+        rows = query("SELECT payload, updated_at FROM stock_holder_ai WHERE code=?", (code,))
+    except Exception:  # noqa: BLE001
+        return None
+    if not rows:
+        return None
+    try:
+        data = json.loads(rows[0].get("payload") or "{}")
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(data, dict) or not (data.get("text") or "").strip():
+        return None
+    stamp = rows[0].get("updated_at") or data.get("analyzed_at") or data.get("updated_at") or ""
+    return {
+        "applied": True,
+        "text": data.get("text") or "",
+        "source": data.get("source") or "",
+        "updated_at": stamp,
+        "analyzed_at": data.get("analyzed_at") or stamp,
+        "asof": data.get("asof") or "",
+        "error": "",
+        "hint": "",
+        "kept": False,
+    }
+
+
+def save_holder_ai(code: str, payload: dict) -> dict:
+    now = _now()
+    body = dict(payload)
+    body["analyzed_at"] = now
+    body["updated_at"] = now
+    execute(
+        "CREATE TABLE IF NOT EXISTS stock_holder_ai ("
+        "code TEXT PRIMARY KEY, payload TEXT NOT NULL, updated_at TEXT NOT NULL)"
+    )
+    execute(
+        "INSERT OR REPLACE INTO stock_holder_ai(code, payload, updated_at) VALUES(?,?,?)",
+        (code, json.dumps(body, ensure_ascii=False), now),
+    )
+    return load_holder_ai(code) or _empty_ai()
+
+
+def _with_ai(code: str, data: dict) -> dict:
+    out = dict(data or {})
+    out["ai"] = load_holder_ai(code) or _empty_ai()
+    return out
+
+
+def _holder_ai_context(snap: dict) -> str:
+    """只用已披露字段拼上下文，缺项写「未披露」，不编股东户数或基金名单。"""
+    L = snap.get("latest") or {}
+    lines = [
+        f"代码 {snap.get('code') or ''}，报告期 {snap.get('asof') or '未披露'}",
+        f"股东户数 {L.get('holders') if L.get('holders') is not None else '未披露'}"
+        + (f"，环比 {L.get('holders_qoq')}%" if L.get("holders_qoq") is not None
+           else f"，环比 {L.get('holders_qoq_note') or '未披露'}"),
+        f"人均流通股 {L.get('avg_free_shares') if L.get('avg_free_shares') is not None else '未披露'}"
+        f"，集中度 {L.get('focus') or '未披露'}"
+        f"，十大股东合计 {L.get('top10_ratio') if L.get('top10_ratio') is not None else '未披露'}%",
+    ]
+    inst, person = snap.get("institution_ratio"), snap.get("person_ratio")
+    lines.append(
+        f"机构占流通 {inst if inst is not None else '未披露'}%"
+        f"（{snap.get('institution_count') if snap.get('institution_count') is not None else '未披露'} 家）"
+        f"，个人及其他 {person if person is not None else '未披露'}%"
+    )
+    org_bits = []
+    for r in snap.get("org_hold") or []:
+        org_bits.append(
+            f"{r.get('name')} {r.get('count') if r.get('count') is not None else '-'}家"
+            f"/{r.get('shares_txt') or '-'} / 流通{r.get('float_ratio') if r.get('float_ratio') is not None else '-'}%"
+        )
+    lines.append("机构构成：" + ("；".join(org_bits) if org_bits else "未披露"))
+    funds = snap.get("funds") or []
+    if funds:
+        bits = []
+        for r in funds[:10]:
+            bits.append(
+                f"{r.get('rank') or ''} {r.get('name')} 持股{r.get('shares_txt') or '未披露'}"
+                f" 占股本{r.get('ratio') if r.get('ratio') is not None else '未披露'}%"
+            )
+        lines.append("基金持股数量前10：" + "；".join(bits))
+    else:
+        lines.append("基金持股数量前10：未披露")
+    top = []
+    for r in (snap.get("top10") or [])[:6]:
+        top.append(f"{r.get('name')} {r.get('kind') or ''} {r.get('ratio') if r.get('ratio') is not None else '-'}%")
+    lines.append("十大股东摘要：" + ("、".join(top) if top else "未披露"))
+    ctrl = "、".join(
+        (c.get("name") or "") + (f" {c.get('ratio')}%" if c.get("ratio") is not None else "")
+        for c in (snap.get("controller") or [])[:3]
+    )
+    lines.append("实控人：" + (ctrl or "未披露"))
+    return "\n".join(lines)
+
+
+def _local_holder_text(snap: dict) -> str:
+    ctx = _holder_ai_context(snap)
+    return (
+        "【本地规则】以下仅复述已披露持股数据，不是大模型研判，未改写已保存的 AI 结果。\n"
+        + ctx
+        + "\n可在 AI 分析页配置大模型后，在本页点击「更新AI分析」回填。"
+    )
+
+
+def analyze_holder_ai(code: str) -> dict:
+    """手动调用：用持股快照让大模型分析筹码结构。成功才落库并更新时间戳；失败保留旧结果。"""
+    from . import ai as ai_svc
+    from . import market as market_svc
+    code = market_svc.normalize_code(code) or (code or "").strip().lower()
+    if not code:
+        return {**_empty_ai(), "ok": False, "error": "未指定股票"}
+    snap = get_holders(code)
+    prev = load_holder_ai(code)
+    local_text = _local_holder_text(snap)
+    cfg = ai_svc.get_config(masked=False)
+    base_url = ai_svc.normalize_api_base(cfg.get("api_base", "") or "")
+
+    def _keep(error: str = "", hint: str = "", source: str = "", text: str = "") -> dict:
+        if prev:
+            return {
+                **prev,
+                "ok": True,
+                "applied": False,
+                "ai": False,
+                "kept": True,
+                "error": error,
+                "hint": hint,
+            }
+        body = (text or local_text).strip()
+        if ai_svc.DISCLAIMER.strip() not in body:
+            body = body + ai_svc.DISCLAIMER
+        return {
+            **_empty_ai(),
+            "ok": True,
+            "applied": False,
+            "ai": False,
+            "kept": False,
+            "source": source or "本地规则（未配置AI大模型）",
+            "text": body,
+            "error": error,
+            "hint": hint,
+            "asof": snap.get("asof") or "",
+        }
+
+    if not (cfg.get("api_key") and base_url):
+        return _keep(
+            hint="到 AI 分析页填写地址、密钥、模型并测试连通后再点「更新AI分析」。",
+            source="本地规则（未配置AI大模型）",
+            text=local_text,
+        )
+    name = ""
+    try:
+        rows = query("SELECT name FROM stock_list WHERE code=?", (code,))
+        name = (rows[0]["name"] if rows else "") or ""
+    except Exception:  # noqa: BLE001
+        name = ""
+    context = (
+        f"股票 {name}（{code}）。\n"
+        f"{_holder_ai_context(snap)}\n"
+        "口径：机构占比为已披露机构持仓合计；个人及其他为流通盘剩余。"
+        "未披露的数字不要编造。"
+    )
+    task = (
+        "请基于以上已披露持股数据，分析筹码结构："
+        "股东户数变化含义、机构构成偏好、基金持股数量前10的集中度、主要风险。"
+        "分点，300字内。禁止收益承诺，不确定就写「披露不足」。"
+    )
+    try:
+        raw = ai_svc._call_llm(cfg, context, task)  # noqa: SLF001
+    except Exception as exc:  # noqa: BLE001
+        err = ai_svc.format_llm_error(exc, base_url)
+        kept = _keep(
+            error=err,
+            hint=ai_svc._hint_for_error(err),  # noqa: SLF001
+            source="本地规则分析（大模型未调用）",
+            text=local_text + f"\n（大模型未调用：{err}）",
+        )
+        return kept
+    text = (raw or "").strip()
+    if len(text) < 20:
+        return _keep(
+            error="模型返回过短，未覆盖已保存结果",
+            hint="可稍后重试「更新AI分析」。",
+            source=f"AI大模型（{cfg.get('model') or '默认'}）",
+            text=local_text,
+        )
+    saved = save_holder_ai(code, {
+        "text": text + ai_svc.DISCLAIMER,
+        "source": f"AI大模型（{cfg.get('model') or '默认'}）",
+        "model": cfg.get("model") or "",
+        "asof": snap.get("asof") or "",
+    })
+    return {
+        **saved,
+        "ok": True,
+        "applied": True,
+        "ai": True,
+        "kept": False,
+        "error": "",
+        "hint": "",
+    }

@@ -274,6 +274,13 @@ CREATE TABLE IF NOT EXISTS hot_term_ai (
     payload    TEXT NOT NULL,            -- JSON：bull/bear/reason/text/source
     updated_at TEXT NOT NULL
 );
+
+-- 12.0.3：个股持股 AI 分析结果（与 F10 快照分离，手动更新才覆盖）
+CREATE TABLE IF NOT EXISTS stock_holder_ai (
+    code       TEXT PRIMARY KEY,
+    payload    TEXT NOT NULL,            -- JSON：text/source/asof/analyzed_at
+    updated_at TEXT NOT NULL
+);
 """
 
 # 已有表的增量列迁移（幂等）

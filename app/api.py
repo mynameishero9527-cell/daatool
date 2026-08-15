@@ -439,6 +439,12 @@ def holders_report(code: str):
     return holders.get_holders(norm)
 
 
+@router.post("/holders/ai")
+def holders_ai_analyze(payload: dict = Body(default={})):
+    """手动更新持股 AI 分析。成功才落库并刷新时间戳；失败保留旧结果。"""
+    return holders.analyze_holder_ai((payload or {}).get("code") or "")
+
+
 @router.get("/market/cycle")
 def market_cycle():
     return cycle.get_cycle()

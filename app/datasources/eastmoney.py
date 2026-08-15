@@ -346,9 +346,15 @@ def _fetch_f10_datacenter(digits: str) -> dict:
     if org_day:
         funds = _dc_rows(
             "RPT_MAIN_ORGHOLDDETAIL",
-            f"{filt}(REPORT_DATE='{org_day}')",
-            "TOTALSHARES_RATIO", "-1", 12,
+            f'{filt}(REPORT_DATE=\'{org_day}\')(ORG_TYPE="01")',
+            "TOTAL_SHARES", "-1", 40,
         )
+        if not funds:
+            funds = _dc_rows(
+                "RPT_MAIN_ORGHOLDDETAIL",
+                f"{filt}(REPORT_DATE='{org_day}')",
+                "TOTAL_SHARES", "-1", 40,
+            )
     return {
         "gdrs": gdrs,
         "sdgd": holders,
