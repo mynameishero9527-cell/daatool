@@ -369,6 +369,14 @@ def _flow_from_daily(dim: str, target_days: int) -> tuple[list[dict], dict, str]
     return items, {"have": have, "target": target_days, "dates": date_list}, note
 
 
+def _sort_flow_items(items: list[dict], sort: str) -> list[dict]:
+    if sort == "outflow":
+        return sorted(items, key=lambda x: (x.get("net_in_yi") or 0))
+    if sort == "abs":
+        return sorted(items, key=lambda x: -abs(x.get("net_in_yi") or 0))
+    return sorted(items, key=lambda x: -(x.get("net_in_yi") or 0))
+
+
 def get_flow_bar(dim: str = "industry", range_key: str = "1d",
                  sort: str = "inflow") -> dict:
     dim = dim if dim in ("industry", "concept") else "industry"
@@ -376,35 +384,45 @@ def get_flow_bar(dim: str = "industry", range_key: str = "1d",
     sort = sort if sort in ("inflow", "outflow", "abs") else "inflow"
     target = RANGE_DAYS[range_key]
     try:
-        today = beijing_trade_date()
-        n = query("SELECT COUNT(*) AS n FROM sector_flow_daily WHERE trade_date=?", (today,))[0]["n"]
-        if n == 0 and query("SELECT COUNT(*) AS n FROM stock_snapshot")[0]["n"]:
+        if query("SELECT COUNT(*) AS n FROM stock_snapshot")[0]["n"]:
             record_daily_flow()
     except Exception:  # noqa: BLE001
         pass
 
+    snap_1d = _flow_from_snapshot(dim, "main_net_in")
+    snap_5d = _flow_from_snapshot(dim, "main_net_in_d5")
+    daily_items, coverage, daily_note = [], {"have": 0, "target": target, "dates": []}, ""
+    try:
+        daily_items, coverage, daily_note = _flow_from_daily(dim, target)
+    except Exception as exc:  # noqa: BLE001
+        daily_note = f"日频累计暂不可用：{exc}"
+
     if range_key == "1d":
-        items = _flow_from_snapshot(dim, "main_net_in")
-        coverage = {"have": 1, "target": 1, "dates": [beijing_trade_date()]}
-        note = "当天主力净流入，与资金全景当日口径一致"
+        items, note = snap_1d, "当天主力净流入，与资金全景当日口径一致"
+        coverage = {"have": 1 if items else 0, "target": 1, "dates": [beijing_trade_date()]}
     elif range_key == "5d":
-        items = _flow_from_snapshot(dim, "main_net_in_d5")
-        coverage = {"have": 5, "target": 5, "dates": []}
-        note = "近5日主力净流入取自行情快照累计字段（交易日）"
+        items = snap_5d or snap_1d
+        note = ("近5日主力净流入取自行情快照累计字段（交易日）"
+                if snap_5d else "近5日快照字段为空，已回退为当天主力净流入")
+        coverage = {"have": 5 if snap_5d else (1 if items else 0), "target": 5, "dates": []}
+    elif daily_items:
+        items, note = daily_items, daily_note
+    elif target >= 5 and snap_5d:
+        items = snap_5d
+        coverage = {"have": 5, "target": target, "dates": []}
+        note = (f"日频仅 {coverage.get('have', 0)}/{target} 日，已用快照近5日主力净流入展示，"
+                "未用涨跌幅填补。后续同步会补齐日频。")
     else:
-        items, coverage, note = _flow_from_daily(dim, target)
+        items = snap_1d
+        coverage = {"have": 1 if items else 0, "target": target, "dates": [beijing_trade_date()]}
+        note = (f"日频不足（目标 {target} 个交易日），已用当天主力净流入展示。"
+                "未用涨跌幅冒充资金。盘中/盘后同步后会逐日累加。")
 
-    if sort == "outflow":
-        items = sorted(items, key=lambda x: (x.get("net_in_yi") or 0))
-    elif sort == "abs":
-        items = sorted(items, key=lambda x: -abs(x.get("net_in_yi") or 0))
-    else:
-        items = sorted(items, key=lambda x: -(x.get("net_in_yi") or 0))
-
+    items = _sort_flow_items(items or [], sort)
     return {
         "dim": dim, "range": range_key, "range_label": RANGE_LABELS[range_key],
         "target_days": target, "items": items, "coverage": coverage, "note": note,
-        "sort": sort, "ranges": RANGE_LABELS,
+        "sort": sort, "ranges": RANGE_LABELS, "count": len(items),
     }
 
 

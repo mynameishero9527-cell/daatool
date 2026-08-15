@@ -1318,17 +1318,24 @@ let sectorView = "map";
 let sectorChart = null;
 let sectorPage = "flow";
 
+function showSectorPage(page) {
+  if (!page) return;
+  sectorPage = page;
+  $$("#sectorPageTabs .opt").forEach((b) => b.classList.toggle("active", b.dataset.page === page));
+  const flow = $("#sectorFlowView"), rec = $("#sectorRecView"), bar = $("#sectorBarView");
+  if (flow) flow.style.display = page === "flow" ? "" : "none";
+  if (rec) rec.style.display = page === "recommend" ? "" : "none";
+  if (bar) bar.style.display = page === "flowbar" ? "" : "none";
+  try {
+    if (page === "flow") { loadSector(); sectorChart?.resize(); }
+    else if (page === "recommend") loadSectorRecommend();
+    else if (page === "flowbar") loadFlowBar();
+  } catch (err) { console.warn(err); }
+}
 $("#sectorPageTabs")?.addEventListener("click", (e) => {
-  const btn = e.target.closest(".opt");
+  const btn = e.target.closest("[data-page]");
   if (!btn) return;
-  sectorPage = btn.dataset.page;
-  $$("#sectorPageTabs .opt").forEach((b) => b.classList.toggle("active", b === btn));
-  $("#sectorFlowView").style.display = sectorPage === "flow" ? "" : "none";
-  $("#sectorRecView").style.display = sectorPage === "recommend" ? "" : "none";
-  $("#sectorBarView").style.display = sectorPage === "flowbar" ? "" : "none";
-  if (sectorPage === "flow") { loadSector(); sectorChart?.resize(); }
-  else if (sectorPage === "recommend") loadSectorRecommend();
-  else loadFlowBar();
+  showSectorPage(btn.dataset.page);
 });
 
 $("#sectorDim").addEventListener("click", (e) => {
@@ -1479,6 +1486,7 @@ window.drillSector = async (name) => {
 
 /* ---------------- 板块资金分析（FR10-03） ---------------- */
 const flowBarState = { dim: "industry", range: "1d", sort: "inflow", selected: "", limit: 50 };
+let flowBarChart = null;
 
 for (const [id, key] of [["flowBarDim", "dim"], ["flowBarRange", "range"], ["flowBarSort", "sort"]]) {
   const el = $(`#${id}`);
@@ -1486,7 +1494,9 @@ for (const [id, key] of [["flowBarDim", "dim"], ["flowBarRange", "range"], ["flo
   el.addEventListener("click", (e) => {
     const btn = e.target.closest(".opt");
     if (!btn) return;
-    flowBarState[key] = btn.dataset[key] || btn.dataset.dim || btn.dataset.range || btn.dataset.sort;
+    const val = btn.dataset[key] || btn.getAttribute(`data-${key}`);
+    if (!val) return;
+    flowBarState[key] = val;
     flowBarState.selected = "";
     flowBarState.limit = 50;
     $$(`#${id} .opt`).forEach((b) => b.classList.toggle("active", b === btn));
@@ -1496,46 +1506,118 @@ for (const [id, key] of [["flowBarDim", "dim"], ["flowBarRange", "range"], ["flo
   });
 }
 
+function renderFlowBarHtml(items, note) {
+  const maxAbs = Math.max(...items.map((it) => Math.abs(Number(it.net_in_yi) || 0)), 0.01);
+  return (note ? `<div class="muted" style="margin-bottom:8px">${esc(note)}</div>` : "") +
+    `<div class="muted" style="margin-bottom:6px">共 ${items.length} 个板块 · 点击横条查看个股</div>` +
+    `<div class="hbar-axis"><span class="hbar-name">-</span><span class="hbar-track"></span><span class="hbar-val">亿</span></div>` +
+    items.map((it) => {
+      const v = Number(it.net_in_yi) || 0;
+      const pctw = Math.min(100, Math.abs(v) / maxAbs * 100);
+      const selected = flowBarState.selected === it.name ? " selected" : "";
+      const fill = v >= 0
+        ? `<div class="hbar-neg"></div><div class="hbar-pos"><div class="hbar-fill in" style="width:${pctw}%"></div></div>`
+        : `<div class="hbar-neg"><div class="hbar-fill out" style="width:${pctw}%"></div></div><div class="hbar-pos"></div>`;
+      return `<div class="hbar-row${selected}" data-name="${esc(it.name)}">
+        <span class="hbar-name" title="${esc(it.name)}">${esc(it.name)}</span>
+        <span class="hbar-track">${fill}</span>
+        <span class="hbar-val num ${cls(v)}">${v > 0 ? "+" : ""}${fmt(v, 1)}亿</span>
+      </div>`;
+    }).join("");
+}
+
+function bindFlowBarClicks(box) {
+  box.querySelectorAll(".hbar-row").forEach((el) => {
+    el.addEventListener("click", () => selectFlowBar(el.dataset.name || ""));
+  });
+}
+
+function renderFlowBarEcharts(items) {
+  const host = $("#flowBarEchart");
+  if (!host || typeof echarts === "undefined") return;
+  const h = Math.max(420, items.length * 26 + 40);
+  host.style.height = h + "px";
+  host.style.display = "";
+  try { flowBarChart?.dispose(); } catch { /* ignore */ }
+  flowBarChart = echarts.init(host, "dark");
+  const names = items.map((it) => it.name);
+  const values = items.map((it) => Number(it.net_in_yi) || 0);
+  flowBarChart.setOption({
+    backgroundColor: "transparent",
+    tooltip: {
+      trigger: "axis", axisPointer: { type: "shadow" },
+      backgroundColor: "#1a2230", borderColor: "#2a3548",
+      textStyle: { color: "#dbe4f0", fontSize: 12 },
+      formatter: (ps) => {
+        const p = ps[0] || {};
+        const v = p.value || 0;
+        return `${p.name}<br>主力净流入 <b>${v > 0 ? "+" : ""}${Number(v).toFixed(2)} 亿</b>`;
+      },
+    },
+    grid: { left: 88, right: 56, top: 8, bottom: 8 },
+    xAxis: {
+      type: "value", splitLine: { lineStyle: { color: "#202a3b" } },
+      axisLabel: { color: "#7d8aa0", formatter: (v) => `${v}亿` },
+    },
+    yAxis: {
+      type: "category", data: names, inverse: true,
+      axisLabel: { color: "#dbe4f0", fontSize: 12 },
+      axisLine: { lineStyle: { color: "#2a3548" } },
+    },
+    series: [{
+      type: "bar", data: values, barMaxWidth: 16,
+      itemStyle: { color: (p) => (p.value >= 0 ? "#ff5252" : "#26c281") },
+      label: {
+        show: true, position: "right", color: "#9aa8bc", fontSize: 11,
+        formatter: (p) => `${p.value > 0 ? "+" : ""}${Number(p.value).toFixed(1)}`,
+      },
+    }],
+  }, true);
+  flowBarChart.off("click");
+  flowBarChart.on("click", (p) => { if (p && p.name) selectFlowBar(p.name); });
+  requestAnimationFrame(() => flowBarChart?.resize());
+}
+
 async function loadFlowBar() {
-  const box = $("#flowBarChart");
-  if (!box) return;
-  box.innerHTML = '<div class="empty">加载中…</div>';
+  const box = $("#flowBarList");
+  const host = $("#flowBarChart");
+  if (!box && !host) return;
+  if (box) box.innerHTML = '<div class="empty">正在汇总全市场板块资金…</div>';
   try {
-    const d = await api(`/api/sector/flow-bar?dim=${flowBarState.dim}&range=${flowBarState.range}&sort=${flowBarState.sort}`);
+    const d = await api(`/api/sector/flow-bar?dim=${encodeURIComponent(flowBarState.dim)}&range=${encodeURIComponent(flowBarState.range)}&sort=${encodeURIComponent(flowBarState.sort)}`);
     const cov = d.coverage || {};
     const note = d.note || "";
-    $("#flowBarNote").textContent = `${d.range_label || ""} · 已累计 ${cov.have || 0}/${cov.target || 0} 个交易日`;
+    const noteEl = $("#flowBarNote");
+    if (noteEl) {
+      noteEl.textContent = `${d.range_label || ""} · ${d.count || (d.items || []).length} 个板块 · 已累计 ${cov.have || 0}/${cov.target || 0} 个交易日`;
+    }
     const items = d.items || [];
     if (!items.length) {
-      box.innerHTML = `<div class="empty">${esc(note) || "暂无板块资金"}</div>`;
+      if (box) box.innerHTML = `<div class="empty">${esc(note) || "暂无板块资金（请先在设置页执行全量同步）"}</div>`;
+      if ($("#flowBarEchart")) $("#flowBarEchart").style.display = "none";
       return;
     }
-    const maxAbs = Math.max(...items.map((it) => Math.abs(it.net_in_yi || 0)), 0.01);
-    box.innerHTML = (note ? `<div class="muted" style="margin-bottom:8px">${esc(note)}</div>` : "") +
-      `<div class="hbar-axis"><span class="hbar-name">-</span><span class="hbar-track"></span><span class="hbar-val">亿</span></div>` +
-      items.map((it) => {
-        const v = it.net_in_yi || 0;
-        const pctw = Math.min(100, Math.abs(v) / maxAbs * 100);
-        const selected = flowBarState.selected === it.name ? " selected" : "";
-        const fill = v >= 0
-          ? `<div class="hbar-neg"></div><div class="hbar-pos"><div class="hbar-fill in" style="width:${pctw}%"></div></div>`
-          : `<div class="hbar-neg"><div class="hbar-fill out" style="width:${pctw}%"></div></div><div class="hbar-pos"></div>`;
-        return `<div class="hbar-row${selected}" data-name="${esc(it.name)}" onclick="selectFlowBar('${esc(it.name)}')">
-          <span class="hbar-name" title="${esc(it.name)}">${esc(it.name)}</span>
-          <span class="hbar-track">${fill}</span>
-          <span class="hbar-val num ${cls(v)}">${v > 0 ? "+" : ""}${fmt(v, 1)}亿</span>
-        </div>`;
-      }).join("");
+    if (box) {
+      box.innerHTML = renderFlowBarHtml(items, note);
+      bindFlowBarClicks(box);
+    }
+    renderFlowBarEcharts(items);
     if (flowBarState.selected) loadFlowBarStocks(flowBarState.selected);
-  } catch (err) { box.innerHTML = '<div class="empty">加载失败</div>'; console.warn(err); }
+  } catch (err) {
+    const msg = err && err.message ? err.message : String(err);
+    if (box) box.innerHTML = `<div class="empty">板块资金加载失败：${esc(msg)}</div>`;
+    console.warn(err);
+  }
 }
 
 window.selectFlowBar = (name) => {
+  if (!name) return;
   flowBarState.selected = flowBarState.selected === name ? "" : name;
-  $$("#flowBarChart .hbar-row").forEach((el) =>
+  $$("#flowBarList .hbar-row").forEach((el) =>
     el.classList.toggle("selected", el.dataset.name === flowBarState.selected));
+  const stockBox = $("#flowBarStocks");
   if (!flowBarState.selected) {
-    $("#flowBarStocks").style.display = "none";
+    if (stockBox) stockBox.style.display = "none";
     return;
   }
   loadFlowBarStocks(flowBarState.selected);
@@ -1543,13 +1625,17 @@ window.selectFlowBar = (name) => {
 
 async function loadFlowBarStocks(name) {
   const wrap = $("#flowBarStocks");
+  if (!wrap) return;
   wrap.style.display = "";
-  $("#flowBarStocksTitle").textContent = `「${name}」个股（按资金贡献）`;
-  $("#flowBarStocksTable").innerHTML = '<div class="empty">加载中…</div>';
+  const title = $("#flowBarStocksTitle");
+  if (title) title.textContent = `「${name}」个股（按资金贡献）`;
+  const table = $("#flowBarStocksTable");
+  if (table) table.innerHTML = '<div class="empty">加载中…</div>';
   try {
     const d = await api(`/api/sector/flow-bar/stocks?dim=${flowBarState.dim}&name=${encodeURIComponent(name)}&range=${flowBarState.range}&limit=${flowBarState.limit}`);
     const rows = d.items || [];
-    $("#flowBarStocksTable").innerHTML = rows.length ? `<table><thead><tr>
+    if (!table) return;
+    table.innerHTML = rows.length ? `<table><thead><tr>
       <th>名称</th><th>代码</th><th>涨跌幅</th><th>购买指数</th><th>财报</th><th>标签</th><th>区间贡献(万)</th>
     </tr></thead><tbody>${rows.map((r) => `
       <tr data-code="${r.code}" data-name="${esc(r.name)}" onclick="openStock('${r.code}','${esc(r.name)}')">
@@ -1566,7 +1652,7 @@ async function loadFlowBarStocks(name) {
           ? ` <button class="btn small ghost" onclick="flowBarMore()">显示更多</button>` : ""}</div>`
       : '<div class="empty">该板块暂无个股</div>';
     wrap.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  } catch (err) { $("#flowBarStocksTable").innerHTML = '<div class="empty">加载失败</div>'; }
+  } catch (err) { if (table) table.innerHTML = `<div class="empty">个股加载失败：${esc(err.message || err)}</div>`; }
 }
 window.flowBarMore = () => { flowBarState.limit = 200; if (flowBarState.selected) loadFlowBarStocks(flowBarState.selected); };
 
@@ -2366,7 +2452,7 @@ function debounce(fn, ms) {
 loaders.dashboard = loadDashboard;
 loaders.stock = () => { if (currentStock) { loadKline(); } };
 loaders.screener = initScreener;
-loaders.sector = loadSector;
+loaders.sector = () => showSectorPage(sectorPage || "flow");
 loaders.macro = loadMacro;
 loaders.commodity = loadCommodities;
 loaders.global = loadGlobal;
@@ -2395,7 +2481,7 @@ async function loadSettingsHealthOnly() {
   } catch { $("#healthDot").className = "dot bad"; }
 }
 
-window.addEventListener("resize", () => { klineChart?.resize(); sectorChart?.resize(); ckChart?.resize(); miniChart?.resize(); });
+window.addEventListener("resize", () => { klineChart?.resize(); sectorChart?.resize(); ckChart?.resize(); miniChart?.resize(); flowBarChart?.resize(); });
 
 /* 首屏 */
 loadDashboard();

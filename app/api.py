@@ -285,14 +285,17 @@ def sector_stocks(dim: str, name: str, limit: int = Query(30, le=100)):
 
 
 @router.get("/sector/flow-bar")
-def sector_flow_bar(dim: str = "industry", range: str = "1d", sort: str = "inflow"):
-    return sector.get_flow_bar(dim, range, sort)
+def sector_flow_bar(dim: str = "industry",
+                    span: str = Query("1d", alias="range"),
+                    sort: str = "inflow"):
+    return sector.get_flow_bar(dim, span, sort)
 
 
 @router.get("/sector/flow-bar/stocks")
-def sector_flow_bar_stocks(dim: str, name: str, range: str = "1d",
+def sector_flow_bar_stocks(dim: str, name: str,
+                           span: str = Query("1d", alias="range"),
                            limit: int = Query(50, le=200)):
-    return sector.get_flow_bar_stocks(dim, name, range, limit)
+    return sector.get_flow_bar_stocks(dim, name, span, limit)
 
 
 @router.get("/profile")

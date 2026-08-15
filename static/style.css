@@ -415,6 +415,7 @@ tr.score-95 td { background: rgba(255, 60, 60, .30); }
 .hbar-axis .hbar-track::after {
   content: ""; position: absolute; left: 50%; top: -6px; width: 1px; height: 12px; background: var(--muted);
 }
+#flowBarList { max-height: 640px; overflow: auto; margin-top: 8px; }
 
 .offline-banner {
   background: rgba(255,169,64,.12); border: 1px solid rgba(255,169,64,.4); color: var(--warn);

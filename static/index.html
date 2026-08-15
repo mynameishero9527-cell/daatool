@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>A股量化工具</title>
-<link rel="stylesheet" href="/static/style.css?v=10.0.0">
-<script src="/static/vendor/echarts.min.js?v=10.0.0"></script>
+<link rel="stylesheet" href="/static/style.css?v=10.0.1">
+<script src="/static/vendor/echarts.min.js?v=10.0.1"></script>
 </head>
 <body>
 <header class="topbar">
@@ -227,7 +227,10 @@
             </span></span>
         </div>
         <div class="muted" style="margin-bottom:8px">只统计板块总体主力净流入/流出。零轴居中：流入向右红、流出向左绿。点选一条后底部才显示该板块个股。</div>
-        <div id="flowBarChart"><div class="empty">加载中…</div></div>
+        <div id="flowBarChart">
+          <div id="flowBarEchart" class="chart-lg" style="height:520px;display:none"></div>
+          <div id="flowBarList"><div class="empty">正在汇总全市场板块资金…</div></div>
+        </div>
       </div>
       <div class="card" id="flowBarStocks" style="display:none">
         <div class="card-title" id="flowBarStocksTitle">个股</div>
@@ -472,6 +475,6 @@
   <div class="ctx-item" id="ctxNewsAi" style="display:none">🤖 发送AI分析（消息）</div>
 </div>
 
-<script src="/static/app.js?v=10.0.0"></script>
+<script src="/static/app.js?v=10.0.1"></script>
 </body>
 </html>
