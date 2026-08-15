@@ -309,7 +309,7 @@ function watchBtnHtml(code, name, hint) {
   if (!code) return "";
   const on = isWatched(code, hint);
   const label = on ? "已加自选" : "+自选";
-  return `<button class="btn small js-watch-btn" type="button" data-watched="${on ? "1" : "0"}" title="${on ? "已在自选，点击可移出" : "加入自选"}" onclick="event.stopPropagation(); toggleWatchCode('${esc(code)}','${esc(name || "")}')">${label}</button>`;
+  return `<button class="btn small js-watch-btn ${on ? "ghost" : ""}" type="button" data-code="${escAttr(code)}" data-name="${escAttr(name || "")}" data-watched="${on ? "1" : "0"}" title="${on ? "已在自选，点击可移出" : "加入自选"}" onclick="event.stopPropagation(); toggleWatchCode('${esc(code)}','${esc(name || "")}')">${label}</button>`;
 }
 
 function paintWatchBtn(btn, code) {
@@ -360,6 +360,72 @@ window.toggleWatchCode = async (code, name) => {
   if (activeTab === "dashboard") loadDashboard();
 };
 window.addWatchCode = (code, name) => window.toggleWatchCode(code, name);
+
+function stockCodeDigits(code) {
+  const m = String(code || "").match(/(\d{6})$/);
+  return m ? m[1] : String(code || "");
+}
+async function copyText(text) {
+  const t = String(text || "");
+  if (!t) return false;
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(t);
+      return true;
+    }
+  } catch { /* fallback */ }
+  const ta = document.createElement("textarea");
+  ta.value = t;
+  ta.setAttribute("readonly", "");
+  ta.style.position = "fixed";
+  ta.style.left = "-9999px";
+  document.body.appendChild(ta);
+  ta.select();
+  try { return document.execCommand("copy"); } finally { document.body.removeChild(ta); }
+}
+async function ensureWatchCodes() {
+  if (watchCodesLoaded) return;
+  try {
+    const list = await api("/api/watchlist");
+    const items = Array.isArray(list) ? list : [];
+    watchCodes = new Set(items.map((r) => r && r.code).filter(Boolean));
+    watchCodesLoaded = true;
+  } catch { /* 保持未加载，按钮按 hint 显示 */ }
+}
+function paintStockHead() {
+  const title = $("#klineTitle");
+  const copyBtn = $("#copyStockBtn");
+  const slot = $("#stockWatchSlot");
+  if (!currentStock) {
+    if (title) title.textContent = "K线走势";
+    if (copyBtn) copyBtn.style.display = "none";
+    if (slot) slot.innerHTML = "";
+    return;
+  }
+  const digits = stockCodeDigits(currentStock.code);
+  if (title) {
+    title.innerHTML = `${esc(currentStock.name)} <span class="stock-code-text">${esc(digits)}</span>`;
+  }
+  if (copyBtn) {
+    copyBtn.style.display = "";
+    copyBtn.dataset.code = digits;
+  }
+  if (slot) {
+    if (isIndexCode(currentStock.code)) slot.innerHTML = "";
+    else slot.innerHTML = watchBtnHtml(currentStock.code, currentStock.name);
+  }
+  syncWatchButtons();
+}
+window.copyStockCode = async () => {
+  const btn = $("#copyStockBtn");
+  const digits = (btn && btn.dataset.code) || stockCodeDigits(currentStock && currentStock.code);
+  if (!digits) return;
+  const ok = await copyText(digits);
+  if (!btn) return;
+  const prev = btn.textContent;
+  btn.textContent = ok ? "已复制" : "复制失败";
+  setTimeout(() => { if (btn.textContent === "已复制" || btn.textContent === "复制失败") btn.textContent = prev || "复制"; }, 1200);
+};
 
 /* ---------------- 主选项卡 ---------------- */
 let activeTab = "dashboard";
@@ -805,13 +871,22 @@ $("#periodBtns").addEventListener("click", (e) => {
   if (currentStock) loadKline();
 });
 
+$("#copyStockBtn")?.addEventListener("click", (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  copyStockCode();
+});
+
 window.openStock = (code, name) => {
   currentStock = { code, name };
+  stockAnalysisCache = null;
+  stockFinanceCache = null;
   $("#searchResults").classList.remove("show");
   $$("#mainTabs .tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === "stock"));
   $$(".page").forEach((p) => p.classList.toggle("active", p.id === "page-stock"));
   activeTab = "stock";
-  $("#klineTitle").textContent = `${name} (${code})`;
+  ensureWatchCodes().then(() => paintStockHead());
+  paintStockHead();
   loadKline();
   const holdersCard = $("#holdersCard");
   if (isIndexCode(code)) {
@@ -1094,16 +1169,18 @@ function metrics2Html(m, dark) {
 
 async function loadAnalysis() {
   const card = $("#scoreCard");
-  card.innerHTML = '<div class="empty">评分计算中…</div>';
+  card.innerHTML = '<div class="empty">股价评级计算中…</div>';
   try {
     const d = await api(`/api/analysis?code=${currentStock.code}`);
+    stockAnalysisCache = d;
+    refreshHoldExtraPanes();
     const r = d.rating;
     if (r.score === null || r.score === undefined) {
-      card.innerHTML = `<div class="empty">${esc(r.message || "暂无评分数据")}</div>` + metrics2Html(d.metrics, d.dark);
+      card.innerHTML = `<div class="card-title">股价评级</div><div class="empty">${esc(r.message || "暂无评分数据")}</div>` + metrics2Html(d.metrics, d.dark);
+      loadFinance();
       return;
     }
     const s = r.snapshot;
-    const br = r.broker_ratings;
     const q = d.quote || {};
     const priceHead = q.price !== undefined && q.price !== null ? `
       <div style="text-align:center;padding-bottom:6px;border-bottom:1px solid var(--border);margin-bottom:8px">
@@ -1111,7 +1188,8 @@ async function loadAnalysis() {
         <span class="${cls(q.pct)}" style="font-size:calc(15px * var(--font-scale));font-weight:600;margin-left:8px">${sign(q.change)}${fmt(q.change)} (${pct(q.pct)})</span>
         <div class="muted" style="font-size:calc(11px * var(--font-scale))">现价 · ${esc(String(q.time || "").replace(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})$/, "$2-$3 $4:$5:$6"))} · ${esc(q.source || "")}</div>
       </div>` : "";
-    card.innerHTML = `${priceHead}
+    card.innerHTML = `<div class="card-title">股价评级</div>
+      ${priceHead}
       <div class="score-head">
         <div class="score-num ${r.score >= 55 ? "up" : r.score < 45 ? "down" : "flat"}">${r.score}</div>
         <span class="badge ${r.grade_css}">${r.grade} · ${r.volume_desc}</span><br>
@@ -1134,44 +1212,24 @@ async function loadAnalysis() {
       <div class="kv"><span class="k">5日/20日/60日涨幅</span><span class="num">${pct(s.pct_d5)} / ${pct(s.pct_d20)} / ${pct(s.pct_d60)}</span></div>
       <div class="kv"><span class="k">PE(TTM) / PB</span><span class="num">${fmt(s.pe_ttm, 1)} / ${fmt(s.pb)}</span></div>
       <div class="kv"><span class="k">总市值 / 流通市值</span><span class="num">${fmt(s.total_mv, 0)} / ${fmt(s.float_mv, 0)} 亿</span></div>
-      <hr style="border-color:var(--border);margin:10px 0">
-      <div class="card-title" style="font-size:calc(13px * var(--font-scale))">机构评级 <span class="muted">${br.simulated ? "规则模拟·仅供参考" : ""}</span></div>
-      <div class="kv"><span class="k">评级分布</span><span>${Object.entries(br.distribution).filter(([, n]) => n > 0).map(([k, n]) => `${k}${n}家`).join(" · ")}</span></div>
-      <div class="kv"><span class="k">一致目标价</span><span class="num">${fmt(br.consensus_target)}</span></div>
-      <div style="max-height:180px;overflow-y:auto;margin-top:6px">
-        ${br.items.map((it) => `<div class="kv"><span class="k">${esc(it.broker)} <span class="muted">${esc(it.type)}</span></span>
-          <span>${it.rating} <span class="num muted">${fmt(it.target_price)}</span> <span class="muted">${it.date.slice(5)}</span></span></div>`).join("")}
-      </div>
-      <div id="financeSec"><div class="muted" style="margin-top:10px">财务数据加载中…</div></div>`;
+      <div class="muted" style="font-size:calc(11px * var(--font-scale));margin-top:8px">机构评级、财务分析已移至下方持股情况对应页签。</div>`;
     loadFinance();
-  } catch (err) { card.innerHTML = '<div class="empty">评分加载失败</div>'; console.warn(err); }
+  } catch (err) {
+    stockAnalysisCache = null;
+    card.innerHTML = '<div class="empty">股价评级加载失败</div>';
+    console.warn(err);
+  }
 }
 
 async function loadFinance() {
-  const box = $("#financeSec");
-  if (!box) return;
+  if (!currentStock) return;
   try {
-    const f = await api(`/api/finance?code=${currentStock.code}`);
-    if (!f.reports.length) { box.innerHTML = ""; return; }
-    box.innerHTML = `
-      <hr style="border-color:var(--border);margin:10px 0">
-      <div class="card-title" style="font-size:calc(13px * var(--font-scale))">财务分析
-        <span>${f.grade ? `<span class="badge ${f.grade === "A" ? "level-4" : f.grade === "B" ? "level-3" : f.grade === "C" ? "level-2" : "level-1"}">评级 ${f.grade}</span>` : ""}</span>
-      </div>
-      <div class="muted" style="font-size:calc(12px * var(--font-scale));margin-bottom:6px">${esc(f.summary)}</div>
-      <table style="font-size:calc(12px * var(--font-scale))"><thead><tr>
-        <th>报告期</th><th>营收(亿)</th><th>同比</th><th>归母净利(亿)</th><th>同比</th><th>净利率</th>
-      </tr></thead><tbody>${f.reports.map((r) => `
-        <tr style="cursor:default">
-          <td>${esc(r.name)}</td>
-          <td class="num">${fmt(r.revenue_yi, 1)}</td>
-          <td class="num ${cls(r.revenue_yoy)}">${r.revenue_yoy !== null ? sign(r.revenue_yoy) + fmt(r.revenue_yoy, 1) + "%" : "-"}</td>
-          <td class="num">${fmt(r.profit_yi, 2)}</td>
-          <td class="num ${cls(r.profit_yoy)}">${r.profit_yoy !== null ? sign(r.profit_yoy) + fmt(r.profit_yoy, 1) + "%" : "-"}</td>
-          <td class="num">${r.margin !== null ? fmt(r.margin, 1) + "%" : "-"}</td>
-        </tr>`).join("")}</tbody></table>
-      <div class="muted" style="font-size:calc(11px * var(--font-scale));margin-top:4px">数据来源：${esc(f.source || "")}</div>`;
-  } catch (err) { box.innerHTML = ""; console.warn(err); }
+    stockFinanceCache = await api(`/api/finance?code=${currentStock.code}`);
+  } catch (err) {
+    stockFinanceCache = { reports: [], summary: "财务数据加载失败", error: String(err && err.message || err) };
+    console.warn(err);
+  }
+  refreshHoldExtraPanes();
 }
 
 const fmtInt = (v) => (v === null || v === undefined || Number.isNaN(Number(v)))
@@ -1215,6 +1273,8 @@ let holdOrgType = "";
 let holdStructSub = "top10";
 let holdAiBusy = false;
 let holdBriefBusy = false;
+let stockAnalysisCache = null;
+let stockFinanceCache = null;
 
 function normalizeHoldTab() {
   if (holdTab === "funds") {
@@ -1223,6 +1283,9 @@ function normalizeHoldTab() {
   } else if (holdTab === "org") {
     holdTab = "structure";
     holdStructSub = "org";
+  } else if (holdTab === "counts") {
+    holdTab = "structure";
+    holdStructSub = "counts";
   }
 }
 
@@ -1230,8 +1293,9 @@ function holdTabBtns(h) {
   normalizeHoldTab();
   const unlockN = (h.unlocks || []).length;
   const tabs = [
-    ["structure", "持仓构成"],
-    ["counts", "股东户数变化"],
+    ["structure", "持股构成"],
+    ["ratings", "机构评级"],
+    ["finance", "财务分析"],
     ["unlocks", "限售解禁"],
     ["ai", "AI分析结果"],
     ["brief", "AI简明诊断"],
@@ -1249,6 +1313,7 @@ function structurePane(h) {
   const subs = [
     ["top10", "十大股东"],
     ["org", "机构持仓"],
+    ["counts", "股东变化"],
     ["funds", "基金持股"],
   ];
   const bar = `<div class="btn-group hold-org-tabs hold-struct-tabs" id="holdStructTabs">${subs.map(([id, title]) =>
@@ -1256,10 +1321,59 @@ function structurePane(h) {
   ).join("")}</div>`;
   if (holdStructSub === "funds") return bar + fundsPane(h);
   if (holdStructSub === "org") return bar + orgHoldPane(h);
+  if (holdStructSub === "counts") return bar + countsPane(h);
   return bar + `<div class="hold-tables">
     ${holderTable("十大股东", h.top10, false)}
     ${holderTable("十大流通股东", h.top10_float, true)}
   </div>`;
+}
+
+function ratingsPane() {
+  const d = stockAnalysisCache;
+  if (!d) return '<div class="empty">机构评级加载中…</div>';
+  const br = d.rating && d.rating.broker_ratings;
+  if (!br) return '<div class="empty">暂无机构评级</div>';
+  const dist = br.distribution || {};
+  const items = Array.isArray(br.items) ? br.items : [];
+  return `
+    <div class="muted" style="font-size:calc(12px * var(--font-scale));margin-bottom:8px">${br.simulated ? "规则模拟·仅供参考" : "机构评级"}</div>
+    <div class="kv"><span class="k">评级分布</span><span>${Object.entries(dist).filter(([, n]) => n > 0).map(([k, n]) => `${k}${n}家`).join(" · ") || "暂无"}</span></div>
+    <div class="kv"><span class="k">一致目标价</span><span class="num">${fmt(br.consensus_target)}</span></div>
+    <div style="max-height:360px;overflow-y:auto;margin-top:8px">
+      ${items.length ? items.map((it) => `<div class="kv"><span class="k">${esc(it.broker)} <span class="muted">${esc(it.type)}</span></span>
+        <span>${esc(it.rating)} <span class="num muted">${fmt(it.target_price)}</span> <span class="muted">${esc((it.date || "").slice(5))}</span></span></div>`).join("") : '<div class="empty">暂无明细</div>'}
+    </div>`;
+}
+
+function financePane() {
+  const f = stockFinanceCache;
+  if (!f) return '<div class="empty">财务数据加载中…</div>';
+  if (!f.reports || !f.reports.length) {
+    return `<div class="empty">${esc(f.summary || "暂无财务分析披露")}</div>`;
+  }
+  return `
+    <div class="card-title" style="font-size:calc(13px * var(--font-scale));margin-bottom:8px">财务分析
+      <span>${f.grade ? `<span class="badge ${f.grade === "A" ? "level-4" : f.grade === "B" ? "level-3" : f.grade === "C" ? "level-2" : "level-1"}">评级 ${f.grade}</span>` : ""}</span>
+    </div>
+    <div class="muted" style="font-size:calc(12px * var(--font-scale));margin-bottom:6px">${esc(f.summary)}</div>
+    <table style="font-size:calc(12px * var(--font-scale))"><thead><tr>
+      <th>报告期</th><th>营收(亿)</th><th>同比</th><th>归母净利(亿)</th><th>同比</th><th>净利率</th>
+    </tr></thead><tbody>${f.reports.map((r) => `
+      <tr style="cursor:default">
+        <td>${esc(r.name)}</td>
+        <td class="num">${fmt(r.revenue_yi, 1)}</td>
+        <td class="num ${cls(r.revenue_yoy)}">${r.revenue_yoy !== null ? sign(r.revenue_yoy) + fmt(r.revenue_yoy, 1) + "%" : "-"}</td>
+        <td class="num">${fmt(r.profit_yi, 2)}</td>
+        <td class="num ${cls(r.profit_yoy)}">${r.profit_yoy !== null ? sign(r.profit_yoy) + fmt(r.profit_yoy, 1) + "%" : "-"}</td>
+        <td class="num">${r.margin !== null ? fmt(r.margin, 1) + "%" : "-"}</td>
+      </tr>`).join("")}</tbody></table>
+    <div class="muted" style="font-size:calc(11px * var(--font-scale));margin-top:4px">数据来源：${esc(f.source || "")}</div>`;
+}
+
+function refreshHoldExtraPanes() {
+  if (holdersData && (holdTab === "ratings" || holdTab === "finance")) {
+    paintHoldersCard(holdersData);
+  }
 }
 
 function orgHoldPane(h) {
@@ -1402,7 +1516,8 @@ function briefPane(h) {
 
 function holdPaneHtml(h) {
   normalizeHoldTab();
-  if (holdTab === "counts") return countsPane(h);
+  if (holdTab === "ratings") return ratingsPane();
+  if (holdTab === "finance") return financePane();
   if (holdTab === "unlocks") return unlocksPane(h);
   if (holdTab === "ai") return holderAiPane(h);
   if (holdTab === "brief") return briefPane(h);
@@ -5899,7 +6014,7 @@ async function loadBuyPoints() {
   if (fabLabel) fabLabel.textContent = kind === "sell" ? "卖" : "买";
   const paintEmpty = (text, countText) => {
     if (countEl) countEl.textContent = countText;
-    if (noteEl) { noteEl.textContent = text || ""; noteEl.classList.toggle("warn", true); }
+    if (noteEl) { noteEl.textContent = ""; noteEl.style.display = "none"; }
     if (badge) {
       badge.textContent = "!";
       badge.style.display = "";
@@ -5912,12 +6027,10 @@ async function loadBuyPoints() {
     const items = d.items || [];
     const source = d.source || "";
     const note = d.note || "";
-    const relaxed = source === "relaxed_65" || source === "top_buy_index" || source === "empty";
     if (countEl) countEl.textContent = `${items.length} 只`;
     if (noteEl) {
-      const exe = d.executing ? `当前策略：${d.executing}。` : "";
-      noteEl.textContent = exe + note;
-      noteEl.classList.toggle("warn", !!relaxed || !items.length);
+      noteEl.textContent = "";
+      noteEl.style.display = "none";
     }
     if (badge) {
       badge.textContent = String(items.length);
@@ -5937,31 +6050,21 @@ async function loadBuyPoints() {
       const a = r.op_advice || r.advice || "";
       const short = a.includes("减持") ? "减持" : a.includes("增持") ? "增持" : (a.includes("持有") || a.includes("观望") ? "观望" : (kind === "sell" ? "减持" : "关注"));
       const clsName = short === "增持" ? "advice-buy" : short === "减持" ? "advice-sell" : "advice-hold";
-      return `<span class="badge ${clsName}" style="font-size:calc(12px * var(--font-scale));padding:2px 8px">${esc(short)}</span>`;
+      return `<span class="badge ${clsName} flash-tip">${esc(short)}</span>`;
     };
-    body.innerHTML = `<table><thead><tr>
-      <th>名称</th><th>五行</th><th>财报</th><th>所属板块</th><th>现价</th><th>涨跌幅</th>
-      <th>量比</th>${flowMetricHeaders()}<th>购买指数</th><th>提示</th>
+    body.innerHTML = `<table class="flash-table"><thead><tr>
+      <th>名称</th><th>现价</th><th>涨跌幅</th><th>量比</th><th>购买指数</th><th>提示</th>
     </tr></thead><tbody>${items.map((r) => `
       <tr class="${scoreRowClass(r.score)}" data-code="${escAttr(r.code)}" data-name="${escAttr(r.name)}" onclick="openStock('${esc(r.code)}','${esc(r.name)}')">
-        <td>${esc(r.name)} <span class="muted">${esc(r.code)}</span>
+        <td>${esc(r.name)} <span class="muted">${esc(stockCodeDigits(r.code))}</span>
           ${planPickedHtml(r, kind)}
         </td>
-        <td>${wxBadges(r.wuxing) || "—"}</td>
-        <td>${finBadge(r)}</td>
-        <td>${esc(r.industry || r.board_text || "-")}</td>
         <td class="num">${pxHtml(r.price, r.pct)}</td>
         <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
-        <td class="num">${fmt(r.volume_ratio)}</td>${flowMetricCells(r)}
-        <td class="num"><b>${fmt(r.buy_index, 0)}</b> <span class="muted">${esc(r.buy_level || "")}</span></td>
-        <td>
-          ${adviceBadge(r)}
-          ${signalLevelsHtml(r)}
-          <div class="buy-flash-advice">${esc(r.advice_summary || r.hit_action || "")}</div>
-          ${watchBtnHtml(r.code, r.name, r.in_watchlist)}
-        </td>
-      </tr>`).join("")}</tbody></table>
-      <div class="muted" style="margin-top:8px;font-size:calc(12px * var(--font-scale))">与主界面相同的表格与卡片样式。量化参考，不构成投资建议。</div>`;
+        <td class="num">${fmt(r.volume_ratio)}</td>
+        <td class="num"><b>${fmt(r.buy_index, 0)}</b></td>
+        <td class="flash-tip-cell">${adviceBadge(r)} ${watchBtnHtml(r.code, r.name, r.in_watchlist)}</td>
+      </tr>`).join("")}</tbody></table>`;
     syncWatchButtons();
   } catch (err) {
     paintEmpty(kindLabel + "加载失败，请检查服务是否在运行", "失败");

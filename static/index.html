@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>A股量化工具</title>
-<link rel="stylesheet" href="/static/style.css?v=13.0.10">
+<link rel="stylesheet" href="/static/style.css?v=13.0.11">
 <script>
 (function () {
   try {
@@ -127,7 +127,11 @@
       <div class="card">
         <div id="stockProfile"></div>
         <div id="holdersMini"></div>
-        <div class="card-title"><span id="klineTitle">K线走势</span>
+        <div class="card-title stock-kline-head"><span class="stock-kline-id">
+          <span id="klineTitle">K线走势</span>
+          <button type="button" class="btn small ghost" id="copyStockBtn" style="display:none" title="复制股票代码">复制</button>
+          <span id="stockWatchSlot"></span>
+        </span>
           <span class="btn-group" id="periodBtns">
             <button class="opt active" data-period="minute">分时</button>
             <button class="opt" data-period="5day">5日</button>
@@ -139,7 +143,7 @@
         <div id="klineChart" class="chart-lg"></div>
       </div>
       <div class="card score-card" id="scoreCard">
-        <div class="empty">搜索并选择一只股票查看评分</div>
+        <div class="empty">搜索并选择一只股票查看股价评级</div>
       </div>
     </div>
     <div class="card" id="holdersCard" style="display:none">
@@ -758,7 +762,7 @@
       <button class="btn small ghost" type="button" id="buyFlashMin" title="缩小">—</button>
     </span>
   </div>
-  <div id="buyFlashNote" class="buy-flash-note"></div>
+  <div id="buyFlashNote" class="buy-flash-note" style="display:none"></div>
   <div id="buyFlashBody" class="buy-flash-body"><div class="empty">加载中…</div></div>
 </div>
 <button type="button" id="buyFlashFab" class="buy-flash-logo kind-buy" style="display:none" title="打开最佳买点">
@@ -789,6 +793,6 @@
   <div class="ctx-item" id="ctxKbRevert" style="display:none">↩ 还原内置解释</div>
 </div>
 
-<script src="/static/app.js?v=13.0.10"></script>
+<script src="/static/app.js?v=13.0.11"></script>
 </body>
 </html>
