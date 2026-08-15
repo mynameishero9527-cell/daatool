@@ -263,11 +263,13 @@ def etfs(filter: str = "all", page: int = 1, page_size: int = Query(20, le=50)):
 def recommend_board(board: str = "composite", page: int = 1,
                     page_size: int = Query(20, le=100), advice: str = "",
                     min_score: float = 0, vol_filter: str = "", order_by: str = "",
-                    mv_filter: str = "", turn_filter: str = ""):
+                    mv_filter: str = "", turn_filter: str = "",
+                    finance_grade: str = ""):
     return {"boards": recommend.BOARDS,
             **recommend.get_board(board, page=page, page_size=page_size, advice=advice,
                                   min_score=min_score, vol_filter=vol_filter, order_by=order_by,
-                                  mv_filter=mv_filter, turn_filter=turn_filter)}
+                                  mv_filter=mv_filter, turn_filter=turn_filter,
+                                  finance_grade=finance_grade)}
 
 
 # ---------------- 板块资金 / 画像 / 财务 / 周期（3.0） ----------------
@@ -280,6 +282,17 @@ def sector_flow(dim: str = "industry"):
 @router.get("/sector/stocks")
 def sector_stocks(dim: str, name: str, limit: int = Query(30, le=100)):
     return sector.get_sector_stocks(dim, name, limit)
+
+
+@router.get("/sector/flow-bar")
+def sector_flow_bar(dim: str = "industry", range: str = "1d", sort: str = "inflow"):
+    return sector.get_flow_bar(dim, range, sort)
+
+
+@router.get("/sector/flow-bar/stocks")
+def sector_flow_bar_stocks(dim: str, name: str, range: str = "1d",
+                           limit: int = Query(50, le=200)):
+    return sector.get_flow_bar_stocks(dim, name, range, limit)
 
 
 @router.get("/profile")
@@ -359,7 +372,8 @@ def macro_outlook(horizon: str = "week"):
 def macro_add_event(payload: dict):
     return macro.add_custom_event(
         payload.get("date", ""), payload.get("title", ""),
-        int(payload.get("impact_level", 3)), payload.get("note", ""))
+        int(payload.get("impact_level", 3)), payload.get("note", ""),
+        payload.get("sectors", ""))
 
 
 @router.post("/macro/custom-event/delete")
@@ -460,6 +474,8 @@ def system_status():
         "jobs": scheduler.status(),
         "sync": stocklist.sync_state(),
         "last_realtime_refresh": get_meta("last_realtime_refresh", "-"),
+        "finance": finance.stats(),
+        "sector_flow": sector.flow_history_stats(),
     }
 
 
@@ -489,6 +505,18 @@ def system_rebuild_metrics(include_kline: bool = True):
 @router.get("/system/metrics-state")
 def system_metrics_state():
     return metrics_svc.state()
+
+
+@router.post("/system/rebuild-finance-grades")
+def system_rebuild_finance(max_fetch: int = Query(80, le=300)):
+    import threading
+    threading.Thread(target=finance.rebuild_all, args=(max_fetch,), daemon=True).start()
+    return {"ok": True, "message": "财报评级重建已在后台启动"}
+
+
+@router.get("/system/finance-state")
+def system_finance_state():
+    return finance.state()
 
 
 @router.get("/system/verify-kline")

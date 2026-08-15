@@ -8,7 +8,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from .cache import cache
 from .config import INTERVAL_MEDIUM, INTERVAL_NEWS, INTERVAL_REALTIME, INTERVAL_SNAPSHOT
 from .database import set_meta
-from .services import alerts, commodity, global_index, macro, market, stocklist
+from .services import alerts, commodity, finance, global_index, macro, market, stocklist
 from .services import metrics as metrics_svc
 
 log = logging.getLogger("scheduler")
@@ -81,6 +81,10 @@ def _job_daily_maintain():
     cache.clear()
     stocklist.full_sync()
     set_meta("last_daily_maintain", _now().replace(tzinfo=None).isoformat(timespec="seconds"))
+
+
+def _job_finance_rebuild():
+    finance.rebuild_all(max_fetch=80)
 
 
 def _job_metrics_rebuild():
@@ -177,6 +181,7 @@ def start() -> None:
     sched.add_job(_run("智能提醒扫描(10分钟)", alerts.scan_all, only_trading=True),
                   "interval", minutes=10, id="alerts")
     sched.add_job(_run("每日维护", _job_daily_maintain), "cron", hour=2, minute=0, id="maintain")
+    sched.add_job(_run("财报评级重建", _job_finance_rebuild), "cron", hour=3, minute=0, id="finance_rebuild")
     sched.start()
     _scheduler = sched
     _apply_overrides(sched)
@@ -192,7 +197,8 @@ def status() -> list[dict]:
                     "postmarket": "盘后同步", "maintain": "每日维护",
                     "metrics_rebuild": "盘后指标重建(K线+四大指标)",
                     "metrics_recompute": "盘中指标轻量重算",
-                    "alerts": "智能提醒扫描(10分钟)"}.get(job.id, job.id)
+                    "alerts": "智能提醒扫描(10分钟)",
+                    "finance_rebuild": "财报评级重建"}.get(job.id, job.id)
             st = JOB_STATUS.get(name, {})
             overrides = get_meta_json("job_overrides", {}) or {}
             minutes = (overrides.get(job.id, {}) or {}).get("minutes") or INTERVAL_JOBS.get(job.id)

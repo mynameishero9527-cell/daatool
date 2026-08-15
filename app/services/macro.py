@@ -240,6 +240,7 @@ def _generate_events(days: int) -> list[dict]:
             "category": r["category"], "region": r["region"],
             "impact_level": r["impact_level"], "impact_desc": _LEVEL_DESC.get(r["impact_level"], "中等"),
             "note": r["note"] or "用户自定义事件", "custom": True,
+            "sectors": r.get("sectors") or "",
         })
 
     # 去重（同日同标题）并排序
@@ -459,15 +460,18 @@ def _annotate_rows(rows: list[dict], sector: str) -> list[dict]:
             r["buy_level"] = r["buy_action"] = None
         r["score"], r["advice"] = rating_svc.quick_score(r)
     wuxing.tags_for_list(rows)
+    from . import finance as finance_svc
+    finance_svc.attach_grades(rows)
     return rows
 
 
 def _stocks_for_sectors(sectors: list[str], limit: int = 30) -> list[dict]:
     """由板块词反查本地个股（概念优先、行业兜底），按主力净流入排序，返回 20–50 只。"""
     limit = max(20, min(int(limit or 30), 50))
-    names = [s.strip() for s in sectors if s and s.strip() and s.strip() != "无明显利空"]
+    names = [s.strip() for s in sectors
+             if s and s.strip() and s.strip() not in ("无明显利空", "未映射影响板块")]
     if not names:
-        return _annotate_rows(_fetch_top_mv(limit, []), "指数权重")[:limit]
+        return []
     seen, out = set(), []
     nsec = len(names)
     per = limit if nsec == 1 else max(8, (limit + nsec - 1) // nsec)
@@ -507,17 +511,29 @@ def get_event_detail(title: str, bull_override: str = "", bear_override: str = "
     bull_override/bear_override：逗号分隔板块名，用于节气/节日/板块事件/快讯标签直接传参。
     """
     limit = max(20, min(int(limit or 30), 50))
-    bull, bear, base_prob = ["指数权重"], ["无明显利空"], 50
+    bull, bear, base_prob = [], ["无明显利空"], 50
+    mapped = False
     if bull_override:
         bull = [s.strip() for s in bull_override.replace("、", ",").split(",") if s.strip()]
         bear = ([s.strip() for s in bear_override.replace("、", ",").split(",") if s.strip()]
                 or ["无明显利空"])
         base_prob = 55
+        mapped = bool(bull)
     else:
         for keywords, b1, b2, prob in _EVENT_IMPACT_MAP:
             if any(k in title for k in keywords):
                 bull, bear, base_prob = b1, b2, prob
+                mapped = True
                 break
+    if not mapped:
+        return {
+            "title": title,
+            "bull_sectors": ["未映射影响板块"], "bear_sectors": ["无明显利空"],
+            "bull_prob": 50,
+            "prob_note": "该事件未配置影响板块，不回退指数权重个股",
+            "stocks": [], "unmapped": True,
+            "disclaimer": "板块映射与概率为规则化预估，仅供参考，不构成投资建议",
+        }
 
     # 周期阶段修正
     prob = base_prob
@@ -544,15 +560,17 @@ def get_event_detail(title: str, bull_override: str = "", bear_override: str = "
     }
 
 
-def add_custom_event(day: str, title: str, level: int = 3, note: str = "") -> dict:
+def add_custom_event(day: str, title: str, level: int = 3, note: str = "",
+                     sectors: str = "") -> dict:
     try:
         date.fromisoformat(day)
     except ValueError:
         return {"ok": False, "error": "日期格式应为 YYYY-MM-DD"}
     if not title.strip():
         return {"ok": False, "error": "标题不能为空"}
-    execute("INSERT INTO custom_event(date,title,impact_level,note) VALUES(?,?,?,?)",
-            (day, title.strip(), max(1, min(5, level)), note))
+    sec = (sectors or "").replace("，", ",").replace("、", ",").strip()
+    execute("INSERT INTO custom_event(date,title,impact_level,note,sectors) VALUES(?,?,?,?,?)",
+            (day, title.strip(), max(1, min(5, level)), note, sec))
     return {"ok": True}
 
 

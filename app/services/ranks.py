@@ -49,6 +49,8 @@ def get_rank(rank_type: str = "limit_up", limit: int = 50) -> dict:
             r["score"], r["advice"] = rating_svc.quick_score(r)
             r["volume_desc"] = rating_svc.volume_desc(r["volume_ratio"])
         wuxing.tags_for_list(rows)
+        from . import finance as finance_svc
+        finance_svc.attach_grades(rows)
         return {
             "type": rank_type, "title": RANK_TYPES[rank_type],
             "types": RANK_TYPES, "items": rows,

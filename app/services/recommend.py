@@ -32,7 +32,8 @@ def _rows(sql: str, params: tuple = (), limit: int = 50) -> list[dict]:
 
 def get_board(board: str, limit: int = 50, page: int = 1, page_size: int = 20,
               advice: str = "", min_score: float = 0, vol_filter: str = "",
-              order_by: str = "", mv_filter: str = "", turn_filter: str = "") -> dict:
+              order_by: str = "", mv_filter: str = "", turn_filter: str = "",
+              finance_grade: str = "") -> dict:
     """榜单：先取足量候选（缓存），再做二级筛选 + 排序 + 分页。"""
     if board not in BOARDS:
         board = "composite"
@@ -70,6 +71,10 @@ def get_board(board: str, limit: int = 50, page: int = 1, page_size: int = 20,
         items = [i for i in items if 3 <= (i.get("turnover_rate") or 0) < 10]
     elif turn_filter == "high":
         items = [i for i in items if (i.get("turnover_rate") or 0) >= 10]
+    if finance_grade in ("A", "B", "C", "D"):
+        from . import finance as finance_svc
+        finance_svc.attach_grades(items)
+        items = [i for i in items if i.get("finance_grade") == finance_grade]
 
     # 排序优化（FR4-04-3）
     keys = {"score": lambda i: i["score"] or 0,
@@ -86,8 +91,10 @@ def get_board(board: str, limit: int = 50, page: int = 1, page_size: int = 20,
     page = max(1, min(page, pages))
     start = (page - 1) * page_size
     page_items = items[start:start + page_size]
+    from . import finance as finance_svc
     from . import wuxing
     wuxing.tags_for_list(page_items)
+    finance_svc.attach_grades(page_items)
     return {
         "board": board, "title": BOARDS[board],
         "items": page_items,

@@ -40,7 +40,7 @@ h1{font-size:22px;margin:0 0 8px} p{margin:8px 0} .muted{color:#8b9bb4;font-size
 </body></html>
 """
 
-app = FastAPI(title="A股量化工具", version="8.0.1", docs_url="/docs", redoc_url="/redoc")
+app = FastAPI(title="A股量化工具", version="10.0.0", docs_url="/docs", redoc_url="/redoc")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -112,6 +112,14 @@ def startup() -> None:
                 alerts.scan_all()
             except Exception as exc:  # noqa: BLE001
                 log.warning("首次提醒扫描失败: %s", exc)
+        try:
+            from .services import finance as finance_svc
+            from .services import sector as sector_svc
+            finance_svc.rebuild_all(max_fetch=0)
+            if stocklist.snapshot_count():
+                sector_svc.record_daily_flow()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("财报评级/板块资金落库跳过: %s", exc)
     threading.Thread(target=bootstrap, daemon=True).start()
     # 4) 启动定时任务
     scheduler.start()

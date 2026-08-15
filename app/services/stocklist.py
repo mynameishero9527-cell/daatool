@@ -84,6 +84,11 @@ def full_sync() -> dict:
                 break
             time.sleep(0.15)  # 限速防封禁
         set_meta("stocklist_last_sync", datetime.now().isoformat(timespec="seconds"))
+        try:
+            from . import sector
+            sector.record_daily_flow()
+        except Exception:  # noqa: BLE001
+            pass
         _sync_state.update(running=False, message=f"同步完成，共 {total} 只")
         return sync_state()
     except Exception as exc:  # noqa: BLE001

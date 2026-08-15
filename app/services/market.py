@@ -116,8 +116,10 @@ def get_watchlist() -> list[dict]:
         out.append({**item, **{k: q.get(k) for k in (
             "price", "pct", "change", "volume", "amount", "volume_ratio",
             "turnover_rate", "amplitude", "time", "source")}})
+    from . import finance as finance_svc
     from . import wuxing
     wuxing.tags_for_list(out)
+    finance_svc.attach_grades(out)
     return out
 
 

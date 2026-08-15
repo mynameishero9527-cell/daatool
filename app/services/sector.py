@@ -5,6 +5,7 @@
 """
 import time
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from ..cache import cached
 from ..database import executemany, query
@@ -118,6 +119,8 @@ def get_sector_stocks(dim: str, name: str, limit: int = 30) -> list[dict]:
     for r in rows:
         if r["sentiment"] is not None:
             r["sent_level"] = metrics_svc.sentiment_level(r["sentiment"])[0]
+    from . import finance as finance_svc
+    finance_svc.attach_grades(rows)
     return rows
 
 
@@ -155,8 +158,10 @@ def get_sector_recommend(top_n: int = 10, stocks_per: int = 5) -> list[dict]:
             for st in stocks:
                 st["score"], st["advice"] = rating_svc.quick_score(st)
                 st["industry"] = sec["name"]
+            from . import finance as finance_svc
             from . import wuxing
             wuxing.tags_for_list(stocks)
+            finance_svc.attach_grades(stocks)
             out.append({**sec, "stocks": stocks})
         return out
     return cached("sector:recommend", 120, loader)
@@ -256,3 +261,185 @@ def get_profile(code: str) -> dict:
     return {"code": code, "name": r["name"], "industry": r["industry"], "board": r["board"],
             "concepts": concepts, "size": size, "float_mv": float_mv,
             "volume_desc": vol_desc, "desc": desc}
+
+
+# ---------------- 板块资金日频 + 横向直方图（FR10-03） ----------------
+
+_FLOW_TZ = ZoneInfo("Asia/Shanghai")
+RANGE_DAYS = {"1d": 1, "3d": 3, "5d": 5, "10d": 10, "20d": 20, "1m": 20, "3m": 60}
+RANGE_LABELS = {
+    "1d": "当天", "3d": "过去3天", "5d": "过去5天", "10d": "过去10天",
+    "20d": "过去20天", "1m": "过去一月", "3m": "过去3个月",
+}
+
+
+def beijing_trade_date() -> str:
+    return datetime.now(_FLOW_TZ).strftime("%Y-%m-%d")
+
+
+def record_daily_flow() -> dict:
+    """快照成功后 upsert 当日行业/概念资金。单位：万元。"""
+    trade_date = beijing_trade_date()
+    industry_rows = query(
+        """SELECT l.industry AS name, COUNT(*) AS stocks,
+                  SUM(s.main_net_in) AS net_in, SUM(s.amount) AS amount
+           FROM stock_snapshot s JOIN stock_list l ON l.code = s.code
+           WHERE s.amount IS NOT NULL AND l.industry != ''
+           GROUP BY l.industry""")
+    concept_rows = query(
+        """SELECT c.concept AS name, COUNT(*) AS stocks,
+                  SUM(s.main_net_in) AS net_in, SUM(s.amount) AS amount
+           FROM stock_snapshot s JOIN concept_map c ON c.code = s.code
+           WHERE s.amount IS NOT NULL AND c.concept != ''
+           GROUP BY c.concept HAVING COUNT(*) >= 5""")
+    pairs = [("industry", r) for r in industry_rows] + [("concept", r) for r in concept_rows]
+    if pairs:
+        executemany(
+            """INSERT INTO sector_flow_daily(dim,name,trade_date,net_in,amount,stocks)
+               VALUES(?,?,?,?,?,?)
+               ON CONFLICT(dim,name,trade_date) DO UPDATE SET
+                 net_in=excluded.net_in, amount=excluded.amount, stocks=excluded.stocks""",
+            [(dim, r["name"], trade_date, r["net_in"] or 0, r["amount"] or 0, r["stocks"] or 0)
+             for dim, r in pairs])
+    return {"date": trade_date, "rows": len(pairs)}
+
+
+def flow_history_stats() -> dict:
+    rows = query(
+        "SELECT dim, COUNT(DISTINCT trade_date) AS days, MIN(trade_date) AS first_d, "
+        "MAX(trade_date) AS last_d FROM sector_flow_daily GROUP BY dim")
+    by_dim = {r["dim"]: r for r in rows}
+    return {
+        "industry_days": (by_dim.get("industry") or {}).get("days", 0),
+        "concept_days": (by_dim.get("concept") or {}).get("days", 0),
+        "last_date": max((r["last_d"] for r in rows if r.get("last_d")), default=""),
+        "first_date": min((r["first_d"] for r in rows if r.get("first_d")), default=""),
+    }
+
+
+def _flow_from_snapshot(dim: str, field: str) -> list[dict]:
+    if field not in ("main_net_in", "main_net_in_d5"):
+        field = "main_net_in"
+    if dim == "industry":
+        return query(
+            f"""SELECT l.industry AS name, COUNT(*) AS stocks,
+                       ROUND(SUM(s.{field}) / 10000.0, 2) AS net_in_yi,
+                       ROUND(SUM(s.amount) / 10000.0, 1) AS amount_yi
+                FROM stock_snapshot s JOIN stock_list l ON l.code = s.code
+                WHERE s.amount IS NOT NULL AND l.industry != ''
+                GROUP BY l.industry""")
+    return query(
+        f"""SELECT c.concept AS name, COUNT(*) AS stocks,
+                   ROUND(SUM(s.{field}) / 10000.0, 2) AS net_in_yi,
+                   ROUND(SUM(s.amount) / 10000.0, 1) AS amount_yi
+            FROM stock_snapshot s JOIN concept_map c ON c.code = s.code
+            WHERE s.amount IS NOT NULL AND c.concept != ''
+            GROUP BY c.concept HAVING COUNT(*) >= 5""")
+
+
+def _flow_from_daily(dim: str, target_days: int) -> tuple[list[dict], dict, str]:
+    dates = query(
+        "SELECT DISTINCT trade_date FROM sector_flow_daily WHERE dim=? "
+        "ORDER BY trade_date DESC LIMIT ?", (dim, target_days))
+    have = len(dates)
+    if not have:
+        return [], {"have": 0, "target": target_days, "dates": []}, \
+            "尚无板块资金日频记录。当天/近5日可用快照；更长区间需快照同步后逐日落库，不会用涨跌幅填补。"
+    date_list = [d["trade_date"] for d in dates]
+    ph = ",".join("?" * len(date_list))
+    rows = query(
+        f"""SELECT name, SUM(net_in) AS net_in, SUM(amount) AS amount,
+                   MAX(stocks) AS stocks, COUNT(DISTINCT trade_date) AS days
+            FROM sector_flow_daily
+            WHERE dim=? AND trade_date IN ({ph})
+            GROUP BY name""",
+        (dim, *date_list))
+    items = [{
+        "name": r["name"],
+        "net_in_yi": round((r["net_in"] or 0) / 10000.0, 2),
+        "amount_yi": round((r["amount"] or 0) / 10000.0, 1),
+        "stocks": r["stocks"] or 0,
+        "days": r["days"],
+    } for r in rows]
+    if have < target_days:
+        note = (f"已累计 {have} 个交易日（目标 {target_days}），早期日期待落库。"
+                "未用涨跌幅冒充资金流入。")
+    else:
+        note = f"已按近 {have} 个交易日板块资金合计（交易日）"
+    return items, {"have": have, "target": target_days, "dates": date_list}, note
+
+
+def get_flow_bar(dim: str = "industry", range_key: str = "1d",
+                 sort: str = "inflow") -> dict:
+    dim = dim if dim in ("industry", "concept") else "industry"
+    range_key = range_key if range_key in RANGE_DAYS else "1d"
+    sort = sort if sort in ("inflow", "outflow", "abs") else "inflow"
+    target = RANGE_DAYS[range_key]
+    try:
+        today = beijing_trade_date()
+        n = query("SELECT COUNT(*) AS n FROM sector_flow_daily WHERE trade_date=?", (today,))[0]["n"]
+        if n == 0 and query("SELECT COUNT(*) AS n FROM stock_snapshot")[0]["n"]:
+            record_daily_flow()
+    except Exception:  # noqa: BLE001
+        pass
+
+    if range_key == "1d":
+        items = _flow_from_snapshot(dim, "main_net_in")
+        coverage = {"have": 1, "target": 1, "dates": [beijing_trade_date()]}
+        note = "当天主力净流入，与资金全景当日口径一致"
+    elif range_key == "5d":
+        items = _flow_from_snapshot(dim, "main_net_in_d5")
+        coverage = {"have": 5, "target": 5, "dates": []}
+        note = "近5日主力净流入取自行情快照累计字段（交易日）"
+    else:
+        items, coverage, note = _flow_from_daily(dim, target)
+
+    if sort == "outflow":
+        items = sorted(items, key=lambda x: (x.get("net_in_yi") or 0))
+    elif sort == "abs":
+        items = sorted(items, key=lambda x: -abs(x.get("net_in_yi") or 0))
+    else:
+        items = sorted(items, key=lambda x: -(x.get("net_in_yi") or 0))
+
+    return {
+        "dim": dim, "range": range_key, "range_label": RANGE_LABELS[range_key],
+        "target_days": target, "items": items, "coverage": coverage, "note": note,
+        "sort": sort, "ranges": RANGE_LABELS,
+    }
+
+
+def get_flow_bar_stocks(dim: str, name: str, range_key: str = "1d",
+                        limit: int = 50) -> dict:
+    dim = dim if dim in ("industry", "concept") else "industry"
+    range_key = range_key if range_key in RANGE_DAYS else "1d"
+    limit = max(10, min(int(limit or 50), 200))
+    join = ("JOIN stock_list l ON l.code = s.code AND l.industry = ?"
+            if dim == "industry" else
+            "JOIN concept_map c ON c.code = s.code AND c.concept = ?")
+    if range_key == "5d":
+        flow_col, stock_note = "s.main_net_in_d5", "个股贡献为近5日主力净流入"
+    elif range_key == "1d":
+        flow_col, stock_note = "s.main_net_in", "个股贡献为当日主力净流入"
+    else:
+        flow_col, stock_note = (
+            "s.main_net_in",
+            "个股区间资金仅当天/5日可精确，更长区间暂显示当日主力净流入",
+        )
+    rows = query(
+        f"""SELECT s.code, s.name, s.price, s.pct, s.main_net_in, s.main_net_in_d5,
+                   {flow_col} AS contrib, m.buy_index, m.sentiment, m.dark_power
+            FROM stock_snapshot s {join}
+            LEFT JOIN stock_metrics m ON m.code = s.code
+            WHERE s.price IS NOT NULL
+            ORDER BY contrib DESC NULLS LAST LIMIT ?""", (name, limit))
+    for r in rows:
+        if r.get("sentiment") is not None:
+            r["sent_level"] = metrics_svc.sentiment_level(r["sentiment"])[0]
+        if r.get("buy_index") is not None:
+            r["buy_level"] = metrics_svc.buy_index_level(r["buy_index"])[0]
+    from . import finance as finance_svc
+    from . import wuxing
+    wuxing.tags_for_list(rows)
+    finance_svc.attach_grades(rows)
+    return {"dim": dim, "name": name, "range": range_key, "items": rows,
+            "note": stock_note, "total": len(rows)}

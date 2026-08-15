@@ -160,12 +160,34 @@ CREATE TABLE IF NOT EXISTS finance_report (
     fetched_at  TEXT NOT NULL,
     PRIMARY KEY (code, report_date)
 );
+
+-- 10.0：全市场财报健康评级（独立于购买指数）
+CREATE TABLE IF NOT EXISTS stock_finance_grade (
+    code        TEXT PRIMARY KEY,
+    grade       TEXT NOT NULL,          -- A/B/C/D
+    score       INTEGER,
+    summary     TEXT,
+    updated_at  TEXT NOT NULL
+);
+
+-- 10.0：板块资金日频（行业/概念），供多日区间累加
+CREATE TABLE IF NOT EXISTS sector_flow_daily (
+    dim         TEXT NOT NULL,          -- industry / concept
+    name        TEXT NOT NULL,
+    trade_date  TEXT NOT NULL,          -- 北京交易日 YYYY-MM-DD
+    net_in      REAL,                   -- 主力净流入（万元）
+    amount      REAL,                   -- 成交额（万元）
+    stocks      INTEGER,
+    PRIMARY KEY (dim, name, trade_date)
+);
+CREATE INDEX IF NOT EXISTS idx_sector_flow_date ON sector_flow_daily(dim, trade_date);
 """
 
 # 已有表的增量列迁移（幂等）
 MIGRATIONS = [
     "ALTER TABLE stock_list ADD COLUMN industry TEXT DEFAULT ''",
     "ALTER TABLE stock_snapshot ADD COLUMN amplitude REAL",
+    "ALTER TABLE custom_event ADD COLUMN sectors TEXT DEFAULT ''",
 ]
 
 

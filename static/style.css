@@ -187,6 +187,16 @@ input:focus { border-color: var(--accent); }
 .sector-tag.js-sector, .badge.js-sector {
   cursor: pointer; border: 1px solid rgba(74,158,255,.35);
 }
+.fin-badge {
+  display: inline-block; min-width: 18px; text-align: center;
+  border-radius: 4px; padding: 1px 6px; font-size: 11px; font-weight: 700;
+  letter-spacing: .3px;
+}
+.fin-A { background: #8b1a1a; color: #ffc4c4; }
+.fin-B { background: #8a5a1a; color: #ffe0b3; }
+.fin-C { background: #3a4556; color: #c6d2e2; }
+.fin-D { background: #0f5c3d; color: #a9eccd; }
+.fin-none { background: transparent; color: var(--muted); font-weight: 500; }
 .sector-tag.js-sector:hover, .badge.js-sector:hover {
   background: rgba(74,158,255,.35);
 }
@@ -381,6 +391,30 @@ tr.score-95 td { background: rgba(255, 60, 60, .30); }
 .gate { display: inline-block; width: 20px; height: 20px; line-height: 20px; text-align: center;
   border-radius: 5px; font-size: 11px; margin: 0 1px; background: var(--bg2); color: var(--muted); }
 .gate.on { background: #8b1a1a; color: #ffb3b3; }
+
+.hbar-row {
+  display: flex; align-items: center; gap: 8px; padding: 3px 4px;
+  border-radius: 6px; cursor: pointer; font-size: 12px;
+}
+.hbar-row:hover { background: var(--card-hover); }
+.hbar-row.selected { background: rgba(74,158,255,.14); outline: 1px solid rgba(74,158,255,.4); }
+.hbar-name { width: 92px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hbar-track { flex: 1; display: flex; height: 16px; }
+.hbar-neg, .hbar-pos { flex: 1; display: flex; }
+.hbar-neg { justify-content: flex-end; }
+.hbar-fill { height: 100%; border-radius: 3px; min-width: 0; }
+.hbar-fill.in { background: #ff5252; }
+.hbar-fill.out { background: #26c281; }
+.hbar-val { width: 72px; text-align: right; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.hbar-axis {
+  display: flex; align-items: center; gap: 8px; padding: 0 4px 4px;
+  font-size: 11px; color: var(--muted);
+}
+.hbar-axis .hbar-name { visibility: hidden; }
+.hbar-axis .hbar-track { position: relative; height: 0; border-top: 1px dashed var(--border); }
+.hbar-axis .hbar-track::after {
+  content: ""; position: absolute; left: 50%; top: -6px; width: 1px; height: 12px; background: var(--muted);
+}
 
 .offline-banner {
   background: rgba(255,169,64,.12); border: 1px solid rgba(255,169,64,.4); color: var(--warn);

@@ -67,6 +67,8 @@ BUCKET_LABELS = {
     "tech": {"ma_bull": "均线多头", "above_ma20": "站上20日线", "break20_high": "突破20日新高",
              "pullback_shrink": "缩量回调", "macd_gold": "MACD金叉", "rsi_oversold": "RSI超卖",
              "stabilized": "底部企稳", "dark_buy": "暗中吸筹"},
+    "finance_grade": {"A": "A 成长较好", "B": "B 基本稳健", "C": "C 增长承压",
+                      "D": "D 双双承压", "none": "无评级"},
 }
 
 BOARD_MAP = {"主板": "主板", "创业板": "创业板", "科创板": "科创板", "北交所": "北交所"}
@@ -78,6 +80,7 @@ PRESETS = [
     {"name": "强势突破", "conditions": {"tech": ["break20_high", "ma_bull"],
                                         "volume_ratio": ["mild", "surge"], "exclude_st": True}},
     {"name": "超跌企稳", "conditions": {"tech": ["stabilized"], "exclude_st": True}},
+    {"name": "财报优质", "conditions": {"finance_grade": ["A"], "exclude_st": True}},
 ]
 
 
@@ -112,6 +115,18 @@ def run(conditions: dict, limit: int = 100) -> dict:
         if clauses:
             where.append("(" + " OR ".join(clauses) + ")")
 
+    grade_keys = conditions.get("finance_grade") or []
+    if grade_keys:
+        grade_parts = []
+        named = [k for k in grade_keys if k in ("A", "B", "C", "D")]
+        if named:
+            grade_parts.append(f"g.grade IN ({','.join('?' * len(named))})")
+            params.extend(named)
+        if "none" in grade_keys:
+            grade_parts.append("(g.grade IS NULL OR g.grade = '')")
+        if grade_parts:
+            where.append("(" + " OR ".join(grade_parts) + ")")
+
     order = {
         "buy_index": "m.buy_index DESC", "score": "m.buy_index DESC",
         "pct": "s.pct DESC", "main_flow": "s.main_net_in DESC",
@@ -121,10 +136,12 @@ def run(conditions: dict, limit: int = 100) -> dict:
     sql = f"""
         SELECT s.code, s.name, l.board, l.industry, s.price, s.pct, s.pct_d5, s.pct_d20,
                s.turnover_rate, s.volume_ratio, s.pe_ttm, s.pb, s.float_mv, s.main_net_in,
-               m.buy_index, m.sentiment, m.dark_power, m.stabilize_score, m.divergence, m.rsi14
+               m.buy_index, m.sentiment, m.dark_power, m.stabilize_score, m.divergence, m.rsi14,
+               g.grade AS finance_grade, g.summary AS finance_summary
         FROM stock_snapshot s
         JOIN stock_list l ON l.code = s.code
         LEFT JOIN stock_metrics m ON m.code = s.code
+        LEFT JOIN stock_finance_grade g ON g.code = s.code
         WHERE {' AND '.join(where)}
         ORDER BY {order} NULLS LAST
         LIMIT ?"""
@@ -143,11 +160,15 @@ def industries_list() -> list[str]:
 
 
 def meta() -> dict:
+    from . import finance as finance_svc
+    st = finance_svc.stats()
     return {
         "buckets": BUCKET_LABELS,
         "boards": list(BOARD_MAP),
         "industries": industries_list(),
         "presets": PRESETS,
+        "finance_graded": st.get("graded", 0),
+        "finance_universe": st.get("universe", 0),
     }
 
 
@@ -176,12 +197,16 @@ _SEMANTIC_RULES: list[tuple[tuple, str, list[str]]] = [
     (("超卖",), "tech", ["rsi_oversold"]),
     (("回调",), "tech", ["pullback_shrink"]),
     (("持续流入",), "main_flow_d5", ["in5"]),
+    (("绩优", "财报优秀", "成长股", "财务优秀"), "finance_grade", ["A", "B"]),
+    (("财务稳健", "基本面稳健"), "finance_grade", ["B"]),
+    (("业绩差", "暴雷", "财报差"), "finance_grade", ["D"]),
 ]
 
 _SEMANTIC_LABELS = {
     "pe": "PE", "pb": "PB", "volume_ratio": "量能", "pct_today": "今日涨跌",
     "pct_d20": "20日涨跌", "tech": "形态", "main_flow": "主力资金",
     "main_flow_d5": "5日资金", "mv": "市值", "turnover": "换手",
+    "finance_grade": "财报评级",
 }
 
 

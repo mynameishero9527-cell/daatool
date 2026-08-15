@@ -195,7 +195,10 @@ def get_related_stocks(symbol: str, page: int = 1, page_size: int = 20) -> dict:
     page_size = page_size if page_size in (10, 20, 50) else 20
     pages = max(1, (total + page_size - 1) // page_size)
     page = max(1, min(page, pages))
-    return {"items": rows[(page - 1) * page_size: page * page_size],
+    page_items = rows[(page - 1) * page_size: page * page_size]
+    from . import finance as finance_svc
+    finance_svc.attach_grades(page_items)
+    return {"items": page_items,
             "total": total, "page": page, "pages": pages, "page_size": page_size,
             "sector": sector}
 

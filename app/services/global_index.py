@@ -240,6 +240,8 @@ def get_etf_holdings(code: str, limit: int = 20) -> dict:
             r["buy_level"] = metrics_svc.buy_index_level(r["buy_index"])[0]
         r["score"], r["advice"] = rating_svc.quick_score(r)
         r["volume_desc"] = rating_svc.volume_desc(r["volume_ratio"])
+    from . import finance as finance_svc
+    finance_svc.attach_grades(rows)
     return {"code": code, "track": track, "holdings": rows,
             "note": "近似持仓：按跟踪标的从本地市值/板块数据推算，非基金实际披露持仓"}
 
