@@ -49,14 +49,20 @@ def get_kline(code: str, period: str = "day", count: int = 320) -> dict:
 
     data = cached(f"kline:{code}:{period}:{count}", TTL_KLINE_INTRADAY, loader)
     rows = data["rows"]
+    kline = []
+    for r in rows:
+        o, c, h, l = r[1], r[2], r[3], r[4]
+        lo, hi = (min(h, l), max(h, l)) if None not in (h, l) else (l, h)
+        kline.append([o, c, lo, hi])  # ECharts 蜡烛：open, close, low, high
     return {
         "code": code, "period": period,
         "dates": [r[0] for r in rows],
-        "kline": [[r[1], r[2], r[3], r[4]] for r in rows],   # open close high low（ECharts 蜡烛序）
+        "kline": kline,
         "volumes": [r[5] for r in rows],
         "ma": {n: _ma([r[2] for r in rows], n) for n in (5, 10, 20, 60)},
         "macd": _macd([r[2] for r in rows]),
         "source": data["source"], "offline": data["offline"],
+        "bars": len(rows),
     }
 
 

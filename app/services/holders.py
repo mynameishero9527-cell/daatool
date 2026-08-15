@@ -160,10 +160,13 @@ def parse_shareholders(raw: dict) -> dict:
     gdrs = _rows(raw.get("gdrs"))
     counts = []
     for r in gdrs[:8]:
+        qoq = _round(r.get("TOTAL_NUM_RATIO"), 2)
+        ipo_qoq = qoq is not None and abs(qoq) > 200
         counts.append({
             "date": _date(r.get("END_DATE")),
             "holders": int(_num(r.get("HOLDER_TOTAL_NUM")) or 0) or None,
-            "holders_qoq": _round(r.get("TOTAL_NUM_RATIO"), 2),
+            "holders_qoq": None if ipo_qoq else qoq,
+            "holders_qoq_note": "上市/首期，环比不可比" if ipo_qoq else None,
             "avg_free_shares": int(_num(r.get("AVG_FREE_SHARES")) or 0) or None,
             "avg_free_qoq": _round(r.get("AVG_FREESHARES_RATIO"), 2),
             "focus": (r.get("HOLD_FOCUS") or "").strip() or None,
@@ -319,7 +322,7 @@ def get_holders(code: str) -> dict:
     if code.startswith(("sh000", "sz399", "bj899", "sh880")):
         return _empty(code, "指数没有股东持股披露")
 
-    key = f"holders:v2:{code}"
+    key = f"holders:v3:{code}"
     hit = cache.get(key)
     if hit is not None:
         return hit

@@ -610,7 +610,7 @@ window.openStock = (code, name) => {
       $("#holdersMeta").textContent = "";
       $("#holdersSec").innerHTML = '<div class="empty">持股数据加载中…</div>';
       const mini = $("#holdersMini");
-      if (mini) mini.innerHTML = "";
+      if (mini) mini.innerHTML = '<div class="hold-mini"><span class="muted">持股摘要加载中…</span></div>';
     }
     loadProfile();
     loadAnalysis();
@@ -677,7 +677,27 @@ async function loadKline() {
   try {
     const d = await api(`/api/kline?code=${currentStock.code}&period=${currentPeriod}`);
     klineChart.hideLoading();
-    if (currentPeriod === "minute") renderMinute(d); else renderCandle(d);
+    if (currentPeriod === "minute") {
+      if (!d.points || !d.points.length) {
+        klineChart.clear();
+        klineChart.setOption({
+          ...baseGrid(),
+          title: { text: "暂无分时数据", left: "center", top: "middle", textStyle: { color: "#7d8aa0", fontSize: 14 } },
+        }, true);
+        return;
+      }
+      renderMinute(d);
+    } else {
+      if (!d.dates || !d.dates.length) {
+        klineChart.clear();
+        klineChart.setOption({
+          ...baseGrid(),
+          title: { text: "暂无K线数据", left: "center", top: "middle", textStyle: { color: "#7d8aa0", fontSize: 14 } },
+        }, true);
+        return;
+      }
+      renderCandle(d);
+    }
   } catch (err) { klineChart.hideLoading(); console.warn(err); }
 }
 
@@ -688,15 +708,18 @@ function baseGrid() {
 
 function renderMinute(d) {
   const prices = d.points.map((p) => p[1]);
-  const times = d.points.map((p) => `${p[0].slice(0, 2)}:${p[0].slice(2)}`);
+  const times = d.points.map((p) => {
+    const t = String(p[0] || "");
+    return t.length >= 4 ? `${t.slice(0, 2)}:${t.slice(2, 4)}` : t;
+  });
   const base = d.prev_close || prices[0];
   klineChart.setOption({
     ...baseGrid(),
     grid: [{ left: 55, right: 20, top: 20, bottom: 40 }],
     xAxis: { type: "category", data: times, axisLine: { lineStyle: { color: "#2a3548" } } },
     yAxis: { scale: true, splitLine: { lineStyle: { color: "#202a3b" } },
-      axisLabel: { formatter: (v) => v.toFixed(2) } },
-    dataZoom: [{ type: "inside" }],
+      axisLabel: { formatter: (v) => (v == null || Number.isNaN(v) ? "" : Number(v).toFixed(2)) } },
+    dataZoom: [{ type: "inside", start: 0, end: 100 }],
     series: [
       { type: "line", data: prices, showSymbol: false, lineStyle: { color: "#4a9eff", width: 1.4 },
         areaStyle: { color: "rgba(74,158,255,.12)" },
@@ -705,14 +728,34 @@ function renderMinute(d) {
   }, true);
 }
 
+function candleOHLC(k) {
+  if (!k || k.length < 4) return k;
+  const o = k[0], c = k[1], a = Number(k[2]), b = Number(k[3]);
+  return [o, c, Math.min(a, b), Math.max(a, b)];
+}
+function zoomStart(n) {
+  if (!n || n <= 20) return 0;
+  if (n <= 60) return 15;
+  if (n <= 120) return 40;
+  return 60;
+}
+
 function renderCandle(d) {
-  const maSeries = Object.entries(d.ma).map(([n, values], i) => ({
+  const candles = (d.kline || []).map(candleOHLC);
+  const maSeries = Object.entries(d.ma || {}).map(([n, values], i) => ({
     name: `MA${n}`, type: "line", data: values, showSymbol: false, smooth: true,
     lineStyle: { width: 1, color: ["#e8c46b", "#4a9eff", "#c678dd", "#56b6c2"][i] },
   }));
-  const volColors = d.kline.map((k) => (k[1] >= k[0] ? "#ff5252" : "#26c281"));
+  const volColors = candles.map((k) => (k[1] >= k[0] ? "#ff5252" : "#26c281"));
+  const n = (d.dates || []).length;
+  const start = zoomStart(n);
+  const early = n > 0 && n <= 12 && currentPeriod === "day";
   klineChart.setOption({
     ...baseGrid(),
+    title: early ? {
+      text: `上市初期仅 ${n} 根日K，已展示全部`,
+      left: 58, top: 4, textStyle: { color: "#7d8aa0", fontSize: 11, fontWeight: 400 },
+    } : undefined,
     legend: { data: maSeries.map((s) => s.name), textStyle: { color: "#7d8aa0" }, top: 0 },
     grid: [
       { left: 55, right: 20, top: 28, height: "52%" },
@@ -730,19 +773,19 @@ function renderCandle(d) {
       { gridIndex: 2, splitNumber: 2, axisLabel: { show: false }, splitLine: { show: false } },
     ],
     dataZoom: [
-      { type: "inside", xAxisIndex: [0, 1, 2], start: 60, end: 100 },
-      { type: "slider", xAxisIndex: [0, 1, 2], top: "96%", height: 14, borderColor: "#2a3548" },
+      { type: "inside", xAxisIndex: [0, 1, 2], start, end: 100 },
+      { type: "slider", xAxisIndex: [0, 1, 2], top: "96%", height: 14, borderColor: "#2a3548", start, end: 100 },
     ],
     series: [
-      { name: "K线", type: "candlestick", data: d.kline,
+      { name: "K线", type: "candlestick", data: candles,
         itemStyle: { color: "#ff5252", color0: "#26c281", borderColor: "#ff5252", borderColor0: "#26c281" } },
       ...maSeries,
       { name: "成交量", type: "bar", xAxisIndex: 1, yAxisIndex: 1, data: d.volumes,
         itemStyle: { color: (p) => volColors[p.dataIndex] } },
-      { name: "MACD", type: "bar", xAxisIndex: 2, yAxisIndex: 2, data: d.macd.bar,
+      { name: "MACD", type: "bar", xAxisIndex: 2, yAxisIndex: 2, data: (d.macd && d.macd.bar) || [],
         itemStyle: { color: (p) => (p.value >= 0 ? "#ff5252" : "#26c281") } },
-      { name: "DIF", type: "line", xAxisIndex: 2, yAxisIndex: 2, data: d.macd.dif, showSymbol: false, lineStyle: { width: 1, color: "#e8c46b" } },
-      { name: "DEA", type: "line", xAxisIndex: 2, yAxisIndex: 2, data: d.macd.dea, showSymbol: false, lineStyle: { width: 1, color: "#4a9eff" } },
+      { name: "DIF", type: "line", xAxisIndex: 2, yAxisIndex: 2, data: (d.macd && d.macd.dif) || [], showSymbol: false, lineStyle: { width: 1, color: "#e8c46b" } },
+      { name: "DEA", type: "line", xAxisIndex: 2, yAxisIndex: 2, data: (d.macd && d.macd.dea) || [], showSymbol: false, lineStyle: { width: 1, color: "#4a9eff" } },
     ],
   }, true);
 }
@@ -942,22 +985,31 @@ function holderTable(title, rows, floatHolder) {
   </div>`;
 }
 
+function qoqLabel(row) {
+  if (!row) return "-";
+  if (row.holders_qoq_note) return row.holders_qoq_note;
+  if (row.holders_qoq == null) return "-";
+  return `${sign(row.holders_qoq)}${fmt(row.holders_qoq, 1)}%`;
+}
+
 async function loadHolders() {
   const card = $("#holdersCard");
   const box = $("#holdersSec");
   const meta = $("#holdersMeta");
-  if (!card || !box || !currentStock) return;
-  card.style.display = "";
-  box.innerHTML = '<div class="empty">持股数据加载中…</div>';
+  const mini = $("#holdersMini");
+  if (!currentStock || (!card && !box && !mini)) return;
+  if (card) card.style.display = "";
+  if (box) box.innerHTML = '<div class="empty">持股数据加载中…</div>';
   if (meta) meta.textContent = "";
+  if (mini) mini.innerHTML = '<div class="hold-mini"><span class="muted">持股摘要加载中…</span></div>';
   try {
-    const h = await api(`/api/holders?code=${currentStock.code}`);
+    const h = await api(`/api/holders?code=${encodeURIComponent(currentStock.code)}`);
     if (h.empty) {
-      box.innerHTML = `<div class="empty">${esc(h.note || "暂无持股数据")}
+      if (box) box.innerHTML = `<div class="empty">${esc(h.note || "暂无持股数据")}
         <div style="margin-top:10px"><button class="btn ghost" type="button" onclick="loadHolders()">重新加载</button></div></div>`;
       if (meta) meta.textContent = h.offline ? "拉取失败" : "";
-      const mini = $("#holdersMini");
-      if (mini) mini.innerHTML = "";
+      if (mini) mini.innerHTML = `<div class="hold-mini"><span class="muted">${esc(h.note || "暂无持股摘要")}</span>
+        <button class="btn ghost small" type="button" onclick="loadHolders()">重试</button></div>`;
       return;
     }
     const L = h.latest || {};
@@ -965,11 +1017,12 @@ async function loadHolders() {
     const person = h.person_ratio;
     const ctrl = (h.controller || []).map((c) => c.name + (c.ratio != null ? ` ${fmt(c.ratio, 2)}%` : "")).join("、");
     if (meta) {
-      meta.textContent = `${h.asof || ""}${h.offline ? " · 本地缓存" : ""} · ${esc(h.source || "")}`.trim();
+      meta.textContent = `${h.asof || ""}${h.offline ? " · 本地缓存" : ""} · ${h.source || ""}`.trim();
     }
+    const qoqText = qoqLabel(L);
     const kpis = [
       ["股东户数", L.holders != null ? fmtInt(L.holders) + " 户" : "-"],
-      ["户数环比", L.holders_qoq != null ? `${sign(L.holders_qoq)}${fmt(L.holders_qoq, 1)}%` : "-"],
+      ["户数环比", qoqText],
       ["人均流通股", L.avg_free_shares != null ? fmtInt(L.avg_free_shares) : "-"],
       ["筹码集中度", L.focus || "-"],
       ["十大股东合计", L.top10_ratio != null ? fmt(L.top10_ratio, 1) + "%" : "-"],
@@ -1001,7 +1054,7 @@ async function loadHolders() {
         <tr>
           <td>${esc(r.date || "-")}</td>
           <td class="num">${fmtInt(r.holders)}</td>
-          <td class="num ${cls(r.holders_qoq)}">${r.holders_qoq != null ? sign(r.holders_qoq) + fmt(r.holders_qoq, 1) + "%" : "-"}</td>
+          <td class="num ${r.holders_qoq_note ? "flat" : cls(r.holders_qoq)}">${esc(qoqLabel(r))}</td>
           <td class="num">${fmtInt(r.avg_free_shares)}</td>
           <td>${esc(r.focus || "-")}</td>
           <td class="num">${r.top10_ratio != null ? fmt(r.top10_ratio, 1) + "%" : "-"}</td>
@@ -1029,17 +1082,16 @@ async function loadHolders() {
           <td>${esc(r.lift_type || "-")}</td>
         </tr>`).join("")}</tbody></table>` : "";
     const qoqClass = L.holders_qoq > 0 ? "up" : L.holders_qoq < 0 ? "down" : "";
-    const mini = $("#holdersMini");
     if (mini) {
       mini.innerHTML = `<div class="hold-mini">
         <span>股东 ${L.holders != null ? fmtInt(L.holders) + " 户" : "-"}</span>
-        <span class="${qoqClass}">${L.holders_qoq != null ? "环比 " + sign(L.holders_qoq) + fmt(L.holders_qoq, 1) + "%" : ""}</span>
+        <span class="${L.holders_qoq_note ? "muted" : qoqClass}">${L.holders_qoq_note ? esc(L.holders_qoq_note) : (L.holders_qoq != null ? "环比 " + qoqText : "")}</span>
         <span>${inst != null ? "机构 " + fmt(inst, 1) + "%" : ""}</span>
         <span>${person != null ? "个人及其他 " + fmt(person, 1) + "%" : ""}</span>
         <span>${ctrl ? "实控人 " + esc(ctrl) : ""}</span>
       </div>`;
     }
-    box.innerHTML = `
+    if (box) box.innerHTML = `
       <div class="hold-kpis">${kpis.map(([k, v]) => `
         <div class="hold-kpi"><div class="v ${k === "户数环比" ? qoqClass : ""}">${esc(String(v))}</div>
         <div class="k">${esc(k)}</div></div>`).join("")}</div>
@@ -1054,13 +1106,14 @@ async function loadHolders() {
       ${unlockHtml}
       <div class="muted" style="font-size:11px;margin-top:8px">${esc(h.note || "")} 数据来源：${esc(h.source || "")}${h.fetched_at ? " · " + esc(h.fetched_at) : ""}</div>`;
   } catch (err) {
-    box.innerHTML = `<div class="empty">持股数据加载失败
+    if (box) box.innerHTML = `<div class="empty">持股数据加载失败
       <div style="margin-top:10px"><button class="btn ghost" type="button" onclick="loadHolders()">重新加载</button></div></div>`;
-    const mini = $("#holdersMini");
-    if (mini) mini.innerHTML = "";
+    if (mini) mini.innerHTML = `<div class="hold-mini"><span class="muted">持股摘要加载失败</span>
+      <button class="btn ghost small" type="button" onclick="loadHolders()">重试</button></div>`;
     console.warn(err);
   }
 }
+window.loadHolders = loadHolders;
 
 /* ---------------- 宏观情报 ---------------- */
 let macroSub = "news";
@@ -2580,10 +2633,11 @@ async function loadCommodityKline() {
         { scale: true, gridIndex: 0, splitLine: { lineStyle: { color: "#202a3b" } } },
         { gridIndex: 1, splitNumber: 2, axisLabel: { show: false }, splitLine: { show: false } },
       ],
-      dataZoom: [{ type: "inside", xAxisIndex: [0, 1], start: 40, end: 100 },
-                 { type: "slider", xAxisIndex: [0, 1], top: "96%", height: 12, borderColor: "#2a3548" }],
+      dataZoom: [{ type: "inside", xAxisIndex: [0, 1], start: zoomStart((d.dates || []).length), end: 100 },
+                 { type: "slider", xAxisIndex: [0, 1], top: "96%", height: 12, borderColor: "#2a3548",
+                   start: zoomStart((d.dates || []).length), end: 100 }],
       series: [
-        { name: "K线", type: "candlestick", data: d.kline,
+        { name: "K线", type: "candlestick", data: (d.kline || []).map(candleOHLC),
           itemStyle: { color: "#ff5252", color0: "#26c281", borderColor: "#ff5252", borderColor0: "#26c281" } },
         ...maSeries,
         { name: "成交量", type: "bar", xAxisIndex: 1, yAxisIndex: 1, data: d.volumes,

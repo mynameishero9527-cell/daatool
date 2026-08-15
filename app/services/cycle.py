@@ -30,7 +30,7 @@ def _vol_desc(ratio: float | None) -> str:
 def get_cycle() -> dict:
     def loader():
         data = kline_svc.get_kline("sh000001", "day", 320)
-        closes = [k[1] for k in data["kline"]]  # 蜡烛序 [open,close,high,low]，close 为第2列
+        closes = [k[1] for k in data["kline"]]  # 蜡烛序 [open,close,low,high]，close 为第2列
         vols = data["volumes"]
         if len(closes) < 130:
             return {"stage": "未知", "desc": "指数K线数据不足", "signals": [], "vol_desc": "未知"}

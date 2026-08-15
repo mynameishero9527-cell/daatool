@@ -2,6 +2,7 @@
 import json
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutTimeout
 
 import httpx
 
@@ -215,10 +216,10 @@ def _shareholder_raw_ok(raw: dict | None) -> bool:
 
 
 def _json_get(source: str, url: str, headers: dict, timeout: float = 8.0,
-              params: dict | None = None) -> dict:
+              params: dict | None = None, attempts: int = 2) -> dict:
     """独立短连接，避免拖垮板块资金用的东方财富熔断。"""
     last: Exception | None = None
-    for attempt in range(2):
+    for attempt in range(max(1, attempts)):
         try:
             with httpx.Client(timeout=timeout, headers=headers, follow_redirects=True) as client:
                 resp = client.get(url, params=params)
@@ -282,33 +283,42 @@ def _same_day(rows: list[dict], day: str | None, field: str = "END_DATE") -> lis
 
 def _fetch_f10_pageajax(em: str) -> dict:
     url = _F10_SHAREHOLDER.format(code=em)
-    return _json_get(_F10_SOURCE, url, _F10_HEADERS, timeout=5.0)
+    return _json_get(_F10_SOURCE, url, _F10_HEADERS, timeout=2.5, attempts=1)
 
 
 def _fetch_f10_datacenter(digits: str) -> dict:
     """data.eastmoney.com 股东户数/十大股东/机构持仓，F10 页面被拦时的备源。"""
     filt = f'(SECURITY_CODE="{digits}")'
-    gdrs = _dc_rows("RPT_F10_EH_HOLDERNUM", filt, "END_DATE", "-1", 8)
-    holders = _dc_rows("RPT_F10_EH_HOLDERS", filt, "END_DATE,HOLDER_RANK", "-1,1", 30)
+    with ThreadPoolExecutor(max_workers=5) as ex:
+        fut_gdrs = ex.submit(_dc_rows, "RPT_F10_EH_HOLDERNUM", filt, "END_DATE", "-1", 8)
+        fut_hold = ex.submit(_dc_rows, "RPT_F10_EH_HOLDERS", filt, "END_DATE,HOLDER_RANK", "-1,1", 30)
+        fut_free = ex.submit(
+            _dc_rows, "RPT_F10_EH_FREEHOLDERS",
+            f'{filt}(IS_MAX_REPORTDATE="1")', "HOLDER_RANK", "1", 15,
+        )
+        fut_org = ex.submit(_dc_rows, "RPT_MAIN_ORGHOLD", filt, "REPORT_DATE,ORG_TYPE", "-1,1", 30)
+        fut_ctrl = ex.submit(
+            _dc_rows, "RPT_F10_EH_FREEHOLDERS",
+            f'{filt}(IS_SJKZR="1")', "END_DATE", "-1", 8,
+        )
+        gdrs = fut_gdrs.result()
+        holders = fut_hold.result()
+        free = fut_free.result()
+        org = fut_org.result()
+        ctrl = fut_ctrl.result()
     hold_day = _latest_date(holders)
     if hold_day:
         holders = _same_day(holders, hold_day) or holders[:10]
         more = _dc_rows(
             "RPT_F10_EH_HOLDERS",
-            f'{filt}(END_DATE=\'{hold_day}\')',
+            f"{filt}(END_DATE='{hold_day}')",
             "HOLDER_RANK", "1", 15,
         )
         if more:
             holders = more
-    free = _dc_rows(
-        "RPT_F10_EH_FREEHOLDERS",
-        f'{filt}(IS_MAX_REPORTDATE="1")',
-        "HOLDER_RANK", "1", 15,
-    )
     if not free:
         free = _dc_rows("RPT_F10_EH_FREEHOLDERS", filt, "END_DATE,HOLDER_RANK", "-1,1", 20)
         free = _same_day(free, _latest_date(free))
-    org = _dc_rows("RPT_MAIN_ORGHOLD", filt, "REPORT_DATE,ORG_TYPE", "-1,1", 30)
     org_day = _latest_date(org, "REPORT_DATE")
     org = _same_day(org, org_day, "REPORT_DATE")
     jgcc = []
@@ -322,11 +332,6 @@ def _fetch_f10_datacenter(digits: str) -> dict:
             "ALL_SHARES_RATIO": r.get("TOTALSHARES_RATIO") or r.get("FREESHARES_RATIO"),
             "REPORT_DATE": r.get("REPORT_DATE"),
         })
-    ctrl = _dc_rows(
-        "RPT_F10_EH_FREEHOLDERS",
-        f'{filt}(IS_SJKZR="1")',
-        "END_DATE", "-1", 8,
-    )
     ctrl_day = _latest_date(ctrl)
     sjkzr = []
     seen: set[str] = set()
@@ -340,7 +345,7 @@ def _fetch_f10_datacenter(digits: str) -> dict:
     if org_day:
         funds = _dc_rows(
             "RPT_MAIN_ORGHOLDDETAIL",
-            f'{filt}(REPORT_DATE=\'{org_day}\')',
+            f"{filt}(REPORT_DATE='{org_day}')",
             "TOTALSHARES_RATIO", "-1", 12,
         )
     return {
@@ -356,28 +361,31 @@ def _fetch_f10_datacenter(digits: str) -> dict:
 
 
 def fetch_shareholders(code: str) -> dict:
-    """股东研究。优先 F10 一页 JSON，失败改走数据中心接口。缺数返回空 dict。"""
+    """股东研究。F10 与数据中心并行，F10 超时则用数据中心，避免摘要一直转圈。"""
     em = f10_code(code)
     digits = _security_code(code)
     if not em or not digits:
         return {}
     errors: list[str] = []
-    try:
-        raw = _fetch_f10_pageajax(em)
-        if _shareholder_raw_ok(raw):
-            return raw
-        if raw:
-            errors.append("F10页面无股东字段")
-    except Exception as exc:  # noqa: BLE001
-        errors.append(f"F10页面: {exc}")
-    try:
-        raw = _fetch_f10_datacenter(digits)
-        if _shareholder_raw_ok(raw):
-            return raw
-        if raw:
-            errors.append("数据中心无股东字段")
-    except Exception as exc:  # noqa: BLE001
-        errors.append(f"数据中心: {exc}")
+    f10_raw: dict = {}
+    dc_raw: dict = {}
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        fut_dc = ex.submit(_fetch_f10_datacenter, digits)
+        fut_f10 = ex.submit(_fetch_f10_pageajax, em)
+        try:
+            f10_raw = fut_f10.result(timeout=3.2)
+        except (Exception, FutTimeout) as exc:  # noqa: BLE001
+            errors.append(f"F10页面: {exc}")
+            f10_raw = {}
+        if _shareholder_raw_ok(f10_raw):
+            return f10_raw
+        try:
+            dc_raw = fut_dc.result(timeout=18)
+        except (Exception, FutTimeout) as exc:  # noqa: BLE001
+            errors.append(f"数据中心: {exc}")
+            dc_raw = {}
+    if _shareholder_raw_ok(dc_raw):
+        return dc_raw
     if errors:
         log.warning("股东数据均失败 %s: %s", em, " | ".join(errors))
         raise RuntimeError("；".join(errors))

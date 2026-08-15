@@ -148,7 +148,7 @@ def get_kline(symbol: str, period: str = "day") -> dict:
     return {
         "symbol": symbol, "name": name, "unit": unit, "period": period,
         "dates": [r[0] for r in rows],
-        "kline": [[r[1], r[2], r[3], r[4]] for r in rows],
+        "kline": [[r[1], r[2], min(r[3], r[4]), max(r[3], r[4])] for r in rows],
         "volumes": [r[5] for r in rows],
         "ma": {5: ma(5), 10: ma(10), 20: ma(20)},
         "offline": data["offline"],

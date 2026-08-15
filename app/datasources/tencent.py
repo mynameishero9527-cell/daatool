@@ -79,8 +79,12 @@ def fetch_kline(code: str, period: str = "day", count: int = 320) -> list[list]:
     rows = node.get(f"qfq{period}") or node.get(period) or []
     out = []
     for r in rows:
-        if len(r) >= 6:
+        if not isinstance(r, (list, tuple)) or len(r) < 6:
+            continue
+        try:
             out.append([r[0], float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5])])
+        except (TypeError, ValueError):
+            continue
     return out
 
 
@@ -91,10 +95,14 @@ def fetch_m5_kline(code: str, count: int = 240) -> list[list]:
     rows = data.get("data", {}).get(code, {}).get("m5") or []
     out = []
     for r in rows:
-        if len(r) >= 6:
+        if not isinstance(r, (list, tuple)) or len(r) < 6:
+            continue
+        try:
             ts = str(r[0])  # 202608130935
             label = f"{ts[4:6]}-{ts[6:8]} {ts[8:10]}:{ts[10:12]}" if len(ts) >= 12 else ts
             out.append([label, float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5])])
+        except (TypeError, ValueError):
+            continue
     return out
 
 
