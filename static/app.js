@@ -464,7 +464,6 @@ async function loadDashboard() {
   loadMarketCycle();
   loadMiniMinute();
   loadForecast();
-  loadDashAlmanac();
   loadTopAlmanac();
   const cycleBox = $("#dashCycle");
   if (cycleBox && cycleBox.style.display !== "none") loadBoardMonthCycle();
@@ -528,18 +527,20 @@ async function loadTopAlmanac() {
 
 let dashAlmanacLoaded = false;
 async function loadDashAlmanac() {
-  if (dashAlmanacLoaded) return;
+  const host = $("#ipAlmanac");
+  if (!host) return;
+  if (dashAlmanacLoaded && host.querySelector(".jiugong")) return;
   try {
     const a = await api("/api/macro/almanac");
     const t = a.tomorrow || {};
-    $("#dashAlmanac").innerHTML = `
+    host.innerHTML = `
       <div style="font-size:calc(15px * var(--font-scale))">${esc(a.date)}（${esc(a.weekday)}）</div>
       <div class="desc-hl">${esc(a.year_ganzhi)}【${esc(a.zodiac)}年】${esc(a.month_ganzhi)} ${esc(a.day_ganzhi)}
         ${a.solar_term ? `<span class="badge level-3">${esc(a.solar_term)}</span>` : ""}
         ${a.huangdao ? `<span class="badge ${a.huangdao.is_huangdao ? "level-3" : "level-2"}">${esc(a.huangdao.text)}</span>` : ""}</div>
       <div class="muted" style="font-size:calc(12px * var(--font-scale));margin:4px 0">${esc(a.wuxing)} ｜ 财神：${esc(a.caishen)}</div>
       <div class="kv"><span class="k">旺相休囚</span><span style="color:#e8c46b">${esc(a.wangxiang_text)}</span></div>
-      <div class="jiugong">${a.jiugong.flat().map((c) =>
+      <div class="jiugong">${(a.jiugong || []).flat().map((c) =>
         `<div class="${c === "中宫" ? "center" : ""}">${esc(c)}</div>`).join("")}</div>
       <div class="kv"><span class="k">明日预览</span>
         <span>${esc(t.date || "")}（${esc(t.weekday || "")}）${esc(t.day_ganzhi || "")}
@@ -6543,6 +6544,7 @@ async function loadIntelpick() {
   const marketBox = $("#ipMarket");
   const note = $("#ipNote");
   if (!box) return;
+  loadDashAlmanac();
   box.innerHTML = '<div class="empty">加载中…</div>';
   try {
     const d = await api(`/api/intelpick?side=${encodeURIComponent(intelpickSub)}`);
