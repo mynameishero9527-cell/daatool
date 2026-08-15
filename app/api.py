@@ -446,6 +446,12 @@ def holders_report(code: str):
     return holders.get_holders(norm)
 
 
+@router.get("/holders/ai")
+def holders_ai_get(code: str):
+    """读取已保存的持股 AI 分析，不调用大模型。"""
+    return holders.get_holder_ai(code)
+
+
 @router.post("/holders/ai")
 def holders_ai_analyze(payload: dict = Body(default={})):
     """手动更新持股 AI 分析。成功才落库并刷新时间戳；失败保留旧结果。"""

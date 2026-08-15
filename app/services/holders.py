@@ -550,12 +550,13 @@ def analyze_holder_ai(code: str) -> dict:
     from . import market as market_svc
     code = market_svc.normalize_code(code) or (code or "").strip().lower()
     if not code:
-        return {**_empty_ai(), "ok": False, "error": "未指定股票"}
+        return {**_empty_ai(), "ok": False, "configured": False, "error": "未指定股票"}
     snap = get_holders(code)
     prev = load_holder_ai(code)
     local_text = _local_holder_text(snap)
     cfg = ai_svc.get_config(masked=False)
     base_url = ai_svc.normalize_api_base(cfg.get("api_base", "") or "")
+    configured = bool(cfg.get("api_key") and base_url)
 
     def _keep(error: str = "", hint: str = "", source: str = "", text: str = "") -> dict:
         if prev:
@@ -565,6 +566,7 @@ def analyze_holder_ai(code: str) -> dict:
                 "applied": False,
                 "ai": False,
                 "kept": True,
+                "configured": configured,
                 "error": error,
                 "hint": hint,
             }
@@ -577,6 +579,7 @@ def analyze_holder_ai(code: str) -> dict:
             "applied": False,
             "ai": False,
             "kept": False,
+            "configured": configured,
             "source": source or "本地规则（未配置AI大模型）",
             "text": body,
             "error": error,
@@ -584,9 +587,10 @@ def analyze_holder_ai(code: str) -> dict:
             "asof": snap.get("asof") or "",
         }
 
-    if not (cfg.get("api_key") and base_url):
+    if not configured:
         return _keep(
-            hint="到 AI 分析页填写地址、密钥、模型并测试连通后再点「更新AI分析」。",
+            error="未配置AI大模型",
+            hint="到 AI 分析页填写地址、密钥、模型并测试连通后再点「更新AI分析」。未改写已保存结果。",
             source="本地规则（未配置AI大模型）",
             text=local_text,
         )
@@ -638,6 +642,16 @@ def analyze_holder_ai(code: str) -> dict:
         "applied": True,
         "ai": True,
         "kept": False,
+        "configured": True,
         "error": "",
         "hint": "",
     }
+
+
+def get_holder_ai(code: str) -> dict:
+    from . import market as market_svc
+    code = market_svc.normalize_code(code) or (code or "").strip().lower()
+    if not code:
+        return {**_empty_ai(), "ok": False, "error": "未指定股票"}
+    ov = load_holder_ai(code) or _empty_ai()
+    return {**ov, "ok": True, "code": code}

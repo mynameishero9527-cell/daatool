@@ -1045,15 +1045,27 @@ function qoqLabel(row) {
 }
 
 let holdersData = null;
-let holdTab = "org";
+let holdTab = "structure";
 let holdOrgType = "";
+let holdStructSub = "top10";
+let holdAiBusy = false;
+
+function normalizeHoldTab() {
+  if (holdTab === "funds") {
+    holdTab = "structure";
+    holdStructSub = "funds";
+  } else if (holdTab === "org") {
+    holdTab = "structure";
+    holdStructSub = "org";
+  }
+}
 
 function holdTabBtns(h) {
+  normalizeHoldTab();
   const unlockN = (h.unlocks || []).length;
   const tabs = [
-    ["org", "机构持仓构成"],
+    ["structure", "持仓构成"],
     ["counts", "股东户数变化"],
-    ["funds", "基金持股"],
     ["unlocks", "限售解禁"],
     ["ai", "AI分析结果"],
   ];
@@ -1062,6 +1074,23 @@ function holdTabBtns(h) {
     const aiOn = id === "ai" && h.ai && h.ai.applied;
     return `<button type="button" class="opt js-hold-tab ${holdTab === id ? "active" : ""}" data-tab="${id}">${title}${extra}${aiOn ? " · 已存" : ""}</button>`;
   }).join("")}</div>`;
+}
+
+function structurePane(h) {
+  const subs = [
+    ["top10", "十大股东"],
+    ["org", "机构持仓"],
+    ["funds", "基金持股"],
+  ];
+  const bar = `<div class="btn-group hold-org-tabs hold-struct-tabs" id="holdStructTabs">${subs.map(([id, title]) =>
+    `<button type="button" class="opt js-hold-struct ${holdStructSub === id ? "active" : ""}" data-sub="${id}">${title}</button>`
+  ).join("")}</div>`;
+  if (holdStructSub === "funds") return bar + fundsPane(h);
+  if (holdStructSub === "org") return bar + orgHoldPane(h);
+  return bar + `<div class="hold-tables">
+    ${holderTable("十大股东", h.top10, false)}
+    ${holderTable("十大流通股东", h.top10_float, true)}
+  </div>`;
 }
 
 function orgHoldPane(h) {
@@ -1144,31 +1173,34 @@ function unlocksPane(h) {
 
 function holderAiPane(h) {
   const ai = h.ai || {};
-  const has = !!(ai.applied && (ai.text || "").trim());
+  const text = (ai.text || "").trim();
+  const has = !!(ai.applied && text);
   const when = ai.analyzed_at || ai.updated_at || "";
   const stamp = has
     ? `上次分析 ${esc(when)} · ${esc(ai.source || "")}${ai.asof ? " · 报告期 " + esc(ai.asof) : ""}`
-    : "尚未保存大模型分析结果。点击「更新AI分析」手动调用；失败不覆盖旧结果、不假装成功。";
+    : "尚未保存大模型分析结果。点「更新AI分析」手动调用；失败不覆盖旧结果、不假装成功。";
   const body = has
     ? `<div class="hold-ai-text">${esc(ai.text).replace(/\n/g, "<br>")}</div>`
-    : `<div class="empty">${esc(ai.text ? "" : "暂无已保存的 AI 分析结果")}</div>`;
-  const localPreview = (!has && ai.text)
-    ? `<div class="muted" style="margin-top:8px">本地说明（未落库）：</div><div class="hold-ai-text">${esc(ai.text).replace(/\n/g, "<br>")}</div>`
+    : (text
+      ? `<div class="muted" style="margin-bottom:6px">本地说明（未落库）：</div><div class="hold-ai-text">${esc(ai.text).replace(/\n/g, "<br>")}</div>`
+      : `<div class="empty">暂无已保存的 AI 分析结果</div>`);
+  const lastErr = ai.error
+    ? aiErrBanner(ai, ai.kept ? "。已保留上次成功分析，未覆盖。" : "。未假装成功。")
     : "";
   return `<div class="hold-ai-bar">
       <div class="muted" style="font-size:12px">${stamp}</div>
       <button type="button" class="btn small" id="holderAiBtn">更新AI分析</button>
     </div>
-    <div id="holderAiBanner"></div>
-    <div id="holderAiBody">${has ? body : (localPreview || body)}</div>`;
+    <div id="holderAiBanner">${lastErr}</div>
+    <div id="holderAiBody">${body}</div>`;
 }
 
 function holdPaneHtml(h) {
+  normalizeHoldTab();
   if (holdTab === "counts") return countsPane(h);
-  if (holdTab === "funds") return fundsPane(h);
   if (holdTab === "unlocks") return unlocksPane(h);
   if (holdTab === "ai") return holderAiPane(h);
-  return orgHoldPane(h);
+  return structurePane(h);
 }
 
 function paintHoldersCard(h) {
@@ -1202,10 +1234,6 @@ function paintHoldersCard(h) {
       <div class="hold-kpi"><div class="v ${k === "户数环比" ? qoqClass : ""}">${esc(String(v))}</div>
       <div class="k">${esc(k)}</div></div>`).join("")}</div>
     ${split}
-    <div class="hold-tables">
-      ${holderTable("十大股东", h.top10, false)}
-      ${holderTable("十大流通股东", h.top10_float, true)}
-    </div>
     ${holdTabBtns(h)}
     <div class="hold-pane" id="holdPane">${holdPaneHtml(h)}</div>
     <div class="muted" style="font-size:11px;margin-top:8px">${esc(h.note || "")} 数据来源：${esc(h.source || "")}${h.fetched_at ? " · " + esc(h.fetched_at) : ""}</div>`;
@@ -1263,7 +1291,9 @@ async function loadHolders() {
 window.loadHolders = loadHolders;
 
 window.refreshHolderAi = async () => {
-  if (!currentStock) return;
+  if (!currentStock || holdAiBusy) return;
+  holdAiBusy = true;
+  holdTab = "ai";
   const btn = $("#holderAiBtn");
   const banner = $("#holderAiBanner");
   const body = $("#holderAiBody");
@@ -1275,22 +1305,45 @@ window.refreshHolderAi = async () => {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code: currentStock.code }),
     });
-    if (holdersData) holdersData.ai = {
-      applied: !!(d.applied || (d.kept && d.text)),
-      text: d.text || "", source: d.source || "",
-      updated_at: d.updated_at || "", analyzed_at: d.analyzed_at || d.updated_at || "",
-      asof: d.asof || "", error: d.error || "", hint: d.hint || "", kept: !!d.kept,
-    };
+    if (!holdersData || holdersData.empty) {
+      await loadHolders();
+    }
+    if (holdersData) {
+      holdersData.ai = {
+        applied: !!(d.applied || (d.kept && d.text)),
+        text: d.text || "", source: d.source || "",
+        updated_at: d.updated_at || "", analyzed_at: d.analyzed_at || d.updated_at || "",
+        asof: d.asof || "", error: d.error || "", hint: d.hint || "", kept: !!d.kept,
+      };
+    }
     holdTab = "ai";
     if (holdersData && !holdersData.empty) paintHoldersCard(holdersData);
     const b = $("#holderAiBanner");
     if (b) {
-      const extra = d.kept ? "。已保留上次成功分析，未覆盖。" : "。未写入分析结果。";
-      b.innerHTML = aiErrBanner(d, extra);
+      if (d.applied) {
+        b.innerHTML = `<div class="muted" style="margin-bottom:8px">已保存本次分析 · ${esc(d.analyzed_at || d.updated_at || "")}</div>`;
+      } else {
+        const err = d.error || (String(d.source || "").includes("未配置") ? "未配置AI大模型" : "未写入分析结果");
+        const extra = d.kept ? "。已保留上次成功分析，未覆盖。" : "。未假装成功。";
+        b.innerHTML = aiErrBanner({ error: err, hint: d.hint }, extra);
+      }
     }
   } catch (err) {
-    if (body) body.innerHTML = `<div class="empty">分析失败：${esc(err.message || err)}</div>`;
+    if (holdersData) {
+      const prev = holdersData.ai || {};
+      holdersData.ai = {
+        ...prev,
+        error: err.message || String(err),
+        hint: "请确认从 http 页面打开，并已在 AI 分析页配置密钥。",
+        kept: !!(prev.applied && prev.text),
+      };
+    }
+    const body2 = $("#holderAiBody");
+    if (body2) body2.innerHTML = `<div class="empty">分析失败：${esc(err.message || err)}</div>`;
+    const b = $("#holderAiBanner");
+    if (b) b.innerHTML = aiErrBanner({ error: err.message || String(err), hint: "请确认从 http 页面打开，并已在 AI 分析页配置密钥。" });
   } finally {
+    holdAiBusy = false;
     const b2 = $("#holderAiBtn");
     if (b2) { b2.disabled = false; b2.textContent = "更新AI分析"; }
   }
@@ -1300,19 +1353,31 @@ document.addEventListener("click", (e) => {
   const tab = e.target.closest(".js-hold-tab");
   if (tab && $("#holdersSec") && $("#holdersSec").contains(tab)) {
     e.preventDefault();
-    holdTab = tab.dataset.tab || "org";
+    e.stopPropagation();
+    holdTab = tab.dataset.tab || "structure";
+    if (holdersData && !holdersData.empty) paintHoldersCard(holdersData);
+    return;
+  }
+  const sub = e.target.closest(".js-hold-struct");
+  if (sub && $("#holdersSec") && $("#holdersSec").contains(sub)) {
+    e.preventDefault();
+    e.stopPropagation();
+    holdTab = "structure";
+    holdStructSub = sub.dataset.sub || "top10";
     if (holdersData && !holdersData.empty) paintHoldersCard(holdersData);
     return;
   }
   const org = e.target.closest(".js-hold-org");
   if (org && $("#holdersSec") && $("#holdersSec").contains(org)) {
     e.preventDefault();
+    e.stopPropagation();
     holdOrgType = org.dataset.org || "";
     if (holdersData && !holdersData.empty) paintHoldersCard(holdersData);
     return;
   }
   if (e.target.closest("#holderAiBtn")) {
     e.preventDefault();
+    e.stopPropagation();
     refreshHolderAi();
   }
 });
