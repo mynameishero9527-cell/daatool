@@ -178,6 +178,13 @@ input:focus { border-color: var(--accent); }
 .kind-na { background: #3a4556; color: #c6d2e2; }
 #holdersSec table { font-size: 12px; }
 #holdersSec tbody tr { cursor: default; }
+.hold-mini {
+  display: flex; flex-wrap: wrap; gap: 10px 16px;
+  font-size: 12px; color: var(--muted);
+  margin: 0 0 10px; padding: 8px 10px;
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 8px;
+}
+.hold-mini span { color: var(--text); }
 
 /* 评分卡 */
 .score-head { text-align: center; padding: 6px 0 12px; }

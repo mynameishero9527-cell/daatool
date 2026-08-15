@@ -10,7 +10,7 @@ import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from ..cache import cached
+from ..cache import cache
 from ..database import execute, query
 from ..datasources import eastmoney
 
@@ -134,7 +134,9 @@ def _holder_row(r: dict, *, float_holder: bool) -> dict | None:
     name = (r.get("HOLDER_NAME") or "").strip()
     if not name:
         return None
-    holder_type = (r.get("HOLDER_TYPE") or "").strip() or None
+    holder_type = (r.get("HOLDER_TYPE") or r.get("HOLDER_NEWTYPE") or "").strip() or None
+    if not holder_type and str(r.get("IS_HOLDORG") or "") == "1":
+        holder_type = "机构"
     ratio = _round(r.get("FREE_HOLDNUM_RATIO") if float_holder else r.get("HOLD_NUM_RATIO"), 4)
     if ratio is None:
         ratio = _round(r.get("HOLD_NUM_RATIO"), 4)
@@ -187,7 +189,8 @@ def parse_shareholders(raw: dict) -> dict:
         ratio = _round(r.get("TOTAL_SHARES_RATIO"), 4)
         item = {
             "org_type": code,
-            "name": ORG_TYPE_NAME.get(code, f"机构类型{code}"),
+            "name": (r.get("ORG_TYPEName") or r.get("ORG_TYPE_NAME")
+                     or ORG_TYPE_NAME.get(code, f"机构类型{code}")),
             "count": int(_num(r.get("TOTAL_ORG_NUM")) or 0) or None,
             "shares": _num(r.get("TOTAL_FREE_SHARES")),
             "shares_txt": _shares_txt(r.get("TOTAL_FREE_SHARES")),
@@ -299,44 +302,64 @@ def _load_db(code: str) -> dict | None:
 
 def _persist(code: str, payload: dict) -> None:
     execute(
+        "CREATE TABLE IF NOT EXISTS stock_holders ("
+        "code TEXT PRIMARY KEY, payload TEXT NOT NULL, fetched_at TEXT NOT NULL)"
+    )
+    execute(
         "INSERT OR REPLACE INTO stock_holders(code, payload, fetched_at) VALUES(?,?,?)",
         (code, json.dumps(payload, ensure_ascii=False), payload.get("fetched_at") or _now()),
     )
 
 
 def get_holders(code: str) -> dict:
-    """持股情况：优先网络（缓存 24h），失败回退本地库。code 形如 sz300750。"""
+    """持股情况：F10 优先、数据中心兜底；成功缓存 24h，失败不长期当空数据。"""
     code = (code or "").strip().lower()
     if not code or not eastmoney.f10_code(code):
         return _empty(code, "该代码没有股东披露数据")
     if code.startswith(("sh000", "sz399", "bj899", "sh880")):
         return _empty(code, "指数没有股东持股披露")
 
-    def loader():
-        try:
-            raw = eastmoney.fetch_shareholders(code)
-            parsed = parse_shareholders(raw)
-            parsed["code"] = code
-            parsed["offline"] = False
-            parsed["fetched_at"] = _now()
-            parsed["source"] = SOURCE
-            if parsed.get("empty"):
-                db = _load_db(code)
-                if db and not db.get("empty"):
-                    return db
-                parsed["note"] = "该公司暂无股东披露数据"
-            else:
-                parsed["note"] = (
-                    "机构占比为已披露机构持仓合计；个人及其他为流通盘剩余，"
-                    "不是单独公布的零售户口径。"
-                )
-            _persist(code, parsed)
-            return parsed
-        except Exception as exc:  # noqa: BLE001
-            log.warning("持股拉取失败 %s: %s", code, exc)
-            return _load_db(code)
+    key = f"holders:v2:{code}"
+    hit = cache.get(key)
+    if hit is not None:
+        return hit
 
-    data = cached(f"holders:v1:{code}", 86400, loader)
-    if not data:
-        return _empty(code, "暂无持股数据（披露接口不可用且本地无缓存）")
-    return data
+    last_err: Exception | None = None
+    parsed: dict | None = None
+    try:
+        raw = eastmoney.fetch_shareholders(code)
+        parsed = parse_shareholders(raw)
+    except Exception as exc:  # noqa: BLE001
+        last_err = exc
+        log.warning("持股拉取失败 %s: %s", code, exc)
+
+    if parsed and not parsed.get("empty"):
+        parsed["code"] = code
+        parsed["offline"] = False
+        parsed["fetched_at"] = _now()
+        parsed["source"] = SOURCE
+        parsed["note"] = (
+            "机构占比为已披露机构持仓合计；个人及其他为流通盘剩余，"
+            "不是单独公布的零售户口径。"
+        )
+        try:
+            _persist(code, parsed)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("持股落库失败 %s: %s", code, exc)
+        cache.set(key, parsed, 86400)
+        return parsed
+
+    db = _load_db(code)
+    if db and not db.get("empty"):
+        cache.set(key, db, 300)
+        return db
+
+    if last_err:
+        note = f"持股数据暂时拉不到（{last_err}）。已尝试东方财富 F10 与数据中心。"
+    elif parsed and parsed.get("empty"):
+        note = "该公司暂无股东披露数据"
+    else:
+        note = "暂无持股数据（披露接口不可用且本地无缓存）"
+    empty = _empty(code, note, offline=bool(last_err))
+    cache.set(key, empty, 45)
+    return empty

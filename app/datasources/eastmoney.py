@@ -171,14 +171,22 @@ def fetch_market_amounts() -> dict:
     }
 
 
+_F10_SOURCE = "东方财富F10"
 _F10_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
     "Referer": "https://emweb.securities.eastmoney.com/",
     "Accept": "application/json,text/plain,*/*",
 }
+_DC_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+    "Referer": "https://data.eastmoney.com/",
+    "Accept": "application/json,text/plain,*/*",
+}
 _F10_SHAREHOLDER = (
     "https://emweb.securities.eastmoney.com/PC_HSF10/ShareholderResearch/PageAjax?code={code}"
 )
+_DC_WEB = "https://datacenter-web.eastmoney.com/api/data/v1/get"
+_DC_SEC_HOST = "https://datacenter.eastmoney.com/securities/api/data/v1/get"
 
 
 def f10_code(code: str) -> str | None:
@@ -189,22 +197,188 @@ def f10_code(code: str) -> str | None:
     return None
 
 
-def fetch_shareholders(code: str) -> dict:
-    """F10 股东研究一次性 JSON：户数、实控人、机构构成、十大股东等。缺数返回空 dict。"""
-    em = f10_code(code)
-    if not em:
-        return {}
-    url = _F10_SHAREHOLDER.format(code=em)
+def _security_code(code: str) -> str | None:
+    s = (code or "").strip().lower()
+    if len(s) >= 6 and s[-6:].isdigit():
+        return s[-6:]
+    return None
+
+
+def _shareholder_raw_ok(raw: dict | None) -> bool:
+    if not isinstance(raw, dict) or not raw:
+        return False
+    for key in ("gdrs", "sdgd", "sdltgd", "jgcc", "sjkzr", "jjcg"):
+        val = raw.get(key)
+        if isinstance(val, list) and val:
+            return True
+    return False
+
+
+def _json_get(source: str, url: str, headers: dict, timeout: float = 8.0,
+              params: dict | None = None) -> dict:
+    """独立短连接，避免拖垮板块资金用的东方财富熔断。"""
     last: Exception | None = None
-    for attempt in range(3):
+    for attempt in range(2):
         try:
-            resp = tracked_get(SOURCE, url, headers=_F10_HEADERS, timeout=12.0)
-            data = resp.json()
-            return data if isinstance(data, dict) else {}
+            with httpx.Client(timeout=timeout, headers=headers, follow_redirects=True) as client:
+                resp = client.get(url, params=params)
+                resp.raise_for_status()
+                data = _parse_json_maybe_jsonp(resp.text)
+                if not data:
+                    try:
+                        data = resp.json()
+                    except Exception:  # noqa: BLE001
+                        data = {}
+                if isinstance(data, dict):
+                    return data
+                return {}
         except Exception as exc:  # noqa: BLE001
             last = exc
-            time.sleep(0.3 * (attempt + 1))
+            time.sleep(0.2 * (attempt + 1))
     if last:
-        log.warning("F10 股东研究 %s 失败: %s", em, last)
+        log.warning("%s 请求失败 %s: %s", source, url.split("?")[0], last)
         raise last
+    return {}
+
+
+def _dc_rows(report: str, filt: str, sort: str, st: str, pz: int = 20) -> list[dict]:
+    last: Exception | None = None
+    specs = (
+        (_DC_WEB, {"reportName": report, "columns": "ALL", "pageNumber": 1, "pageSize": pz,
+                   "sortColumns": sort, "sortTypes": st, "filter": filt,
+                   "source": "WEB", "client": "WEB"}),
+        (_DC_SEC_HOST, {"reportName": report, "columns": "ALL", "pageNumber": 1, "pageSize": pz,
+                        "sortColumns": sort, "sortTypes": st, "filter": filt,
+                        "source": "HSF10", "client": "PC"}),
+    )
+    for url, params in specs:
+        try:
+            body = _json_get(_F10_SOURCE, url, _DC_HEADERS, timeout=8.0, params=params)
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+            continue
+        rows = ((body.get("result") or {}).get("data")) or []
+        if isinstance(rows, list) and rows:
+            return [r for r in rows if isinstance(r, dict)]
+    if last:
+        raise last
+    return []
+
+
+def _latest_date(rows: list[dict], field: str = "END_DATE") -> str | None:
+    dates = []
+    for r in rows:
+        s = str(r.get(field) or "").strip()
+        if len(s) >= 10:
+            dates.append(s[:10])
+    return max(dates) if dates else None
+
+
+def _same_day(rows: list[dict], day: str | None, field: str = "END_DATE") -> list[dict]:
+    if not day:
+        return rows
+    return [r for r in rows if str(r.get(field) or "").startswith(day)]
+
+
+def _fetch_f10_pageajax(em: str) -> dict:
+    url = _F10_SHAREHOLDER.format(code=em)
+    return _json_get(_F10_SOURCE, url, _F10_HEADERS, timeout=5.0)
+
+
+def _fetch_f10_datacenter(digits: str) -> dict:
+    """data.eastmoney.com 股东户数/十大股东/机构持仓，F10 页面被拦时的备源。"""
+    filt = f'(SECURITY_CODE="{digits}")'
+    gdrs = _dc_rows("RPT_F10_EH_HOLDERNUM", filt, "END_DATE", "-1", 8)
+    holders = _dc_rows("RPT_F10_EH_HOLDERS", filt, "END_DATE,HOLDER_RANK", "-1,1", 30)
+    hold_day = _latest_date(holders)
+    if hold_day:
+        holders = _same_day(holders, hold_day) or holders[:10]
+        more = _dc_rows(
+            "RPT_F10_EH_HOLDERS",
+            f'{filt}(END_DATE=\'{hold_day}\')',
+            "HOLDER_RANK", "1", 15,
+        )
+        if more:
+            holders = more
+    free = _dc_rows(
+        "RPT_F10_EH_FREEHOLDERS",
+        f'{filt}(IS_MAX_REPORTDATE="1")',
+        "HOLDER_RANK", "1", 15,
+    )
+    if not free:
+        free = _dc_rows("RPT_F10_EH_FREEHOLDERS", filt, "END_DATE,HOLDER_RANK", "-1,1", 20)
+        free = _same_day(free, _latest_date(free))
+    org = _dc_rows("RPT_MAIN_ORGHOLD", filt, "REPORT_DATE,ORG_TYPE", "-1,1", 30)
+    org_day = _latest_date(org, "REPORT_DATE")
+    org = _same_day(org, org_day, "REPORT_DATE")
+    jgcc = []
+    for r in org:
+        jgcc.append({
+            "ORG_TYPE": r.get("ORG_TYPE"),
+            "ORG_TYPEName": r.get("ORG_TYPE_NAME"),
+            "TOTAL_ORG_NUM": r.get("HOULD_NUM") or r.get("TYPE_NUM"),
+            "TOTAL_FREE_SHARES": r.get("FREE_SHARES") or r.get("TOTAL_SHARES"),
+            "TOTAL_SHARES_RATIO": r.get("FREESHARES_RATIO") or r.get("TOTALSHARES_RATIO"),
+            "ALL_SHARES_RATIO": r.get("TOTALSHARES_RATIO") or r.get("FREESHARES_RATIO"),
+            "REPORT_DATE": r.get("REPORT_DATE"),
+        })
+    ctrl = _dc_rows(
+        "RPT_F10_EH_FREEHOLDERS",
+        f'{filt}(IS_SJKZR="1")',
+        "END_DATE", "-1", 8,
+    )
+    ctrl_day = _latest_date(ctrl)
+    sjkzr = []
+    seen: set[str] = set()
+    for r in _same_day(ctrl, ctrl_day):
+        name = (r.get("HOLDER_NAME") or "").strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        sjkzr.append({"HOLDER_NAME": name, "HOLD_RATIO": r.get("HOLD_RATIO")})
+    funds = []
+    if org_day:
+        funds = _dc_rows(
+            "RPT_MAIN_ORGHOLDDETAIL",
+            f'{filt}(REPORT_DATE=\'{org_day}\')',
+            "TOTALSHARES_RATIO", "-1", 12,
+        )
+    return {
+        "gdrs": gdrs,
+        "sdgd": holders,
+        "sdltgd": free,
+        "jgcc": jgcc,
+        "sjkzr": sjkzr,
+        "jjcg": funds,
+        "xsjj": [],
+        "ltgf": [],
+    }
+
+
+def fetch_shareholders(code: str) -> dict:
+    """股东研究。优先 F10 一页 JSON，失败改走数据中心接口。缺数返回空 dict。"""
+    em = f10_code(code)
+    digits = _security_code(code)
+    if not em or not digits:
+        return {}
+    errors: list[str] = []
+    try:
+        raw = _fetch_f10_pageajax(em)
+        if _shareholder_raw_ok(raw):
+            return raw
+        if raw:
+            errors.append("F10页面无股东字段")
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"F10页面: {exc}")
+    try:
+        raw = _fetch_f10_datacenter(digits)
+        if _shareholder_raw_ok(raw):
+            return raw
+        if raw:
+            errors.append("数据中心无股东字段")
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"数据中心: {exc}")
+    if errors:
+        log.warning("股东数据均失败 %s: %s", em, " | ".join(errors))
+        raise RuntimeError("；".join(errors))
     return {}

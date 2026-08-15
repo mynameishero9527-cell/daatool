@@ -600,6 +600,8 @@ window.openStock = (code, name) => {
   const holdersCard = $("#holdersCard");
   if (isIndexCode(code)) {
     $("#stockProfile").innerHTML = "";
+    const mini = $("#holdersMini");
+    if (mini) mini.innerHTML = "";
     if (holdersCard) holdersCard.style.display = "none";
     loadIndexPanel();
   } else {
@@ -607,6 +609,8 @@ window.openStock = (code, name) => {
       holdersCard.style.display = "";
       $("#holdersMeta").textContent = "";
       $("#holdersSec").innerHTML = '<div class="empty">持股数据加载中…</div>';
+      const mini = $("#holdersMini");
+      if (mini) mini.innerHTML = "";
     }
     loadProfile();
     loadAnalysis();
@@ -949,8 +953,11 @@ async function loadHolders() {
   try {
     const h = await api(`/api/holders?code=${currentStock.code}`);
     if (h.empty) {
-      box.innerHTML = `<div class="empty">${esc(h.note || "暂无持股数据")}</div>`;
-      if (meta) meta.textContent = h.offline ? "本地缓存" : "";
+      box.innerHTML = `<div class="empty">${esc(h.note || "暂无持股数据")}
+        <div style="margin-top:10px"><button class="btn ghost" type="button" onclick="loadHolders()">重新加载</button></div></div>`;
+      if (meta) meta.textContent = h.offline ? "拉取失败" : "";
+      const mini = $("#holdersMini");
+      if (mini) mini.innerHTML = "";
       return;
     }
     const L = h.latest || {};
@@ -1022,6 +1029,16 @@ async function loadHolders() {
           <td>${esc(r.lift_type || "-")}</td>
         </tr>`).join("")}</tbody></table>` : "";
     const qoqClass = L.holders_qoq > 0 ? "up" : L.holders_qoq < 0 ? "down" : "";
+    const mini = $("#holdersMini");
+    if (mini) {
+      mini.innerHTML = `<div class="hold-mini">
+        <span>股东 ${L.holders != null ? fmtInt(L.holders) + " 户" : "-"}</span>
+        <span class="${qoqClass}">${L.holders_qoq != null ? "环比 " + sign(L.holders_qoq) + fmt(L.holders_qoq, 1) + "%" : ""}</span>
+        <span>${inst != null ? "机构 " + fmt(inst, 1) + "%" : ""}</span>
+        <span>${person != null ? "个人及其他 " + fmt(person, 1) + "%" : ""}</span>
+        <span>${ctrl ? "实控人 " + esc(ctrl) : ""}</span>
+      </div>`;
+    }
     box.innerHTML = `
       <div class="hold-kpis">${kpis.map(([k, v]) => `
         <div class="hold-kpi"><div class="v ${k === "户数环比" ? qoqClass : ""}">${esc(String(v))}</div>
@@ -1037,7 +1054,10 @@ async function loadHolders() {
       ${unlockHtml}
       <div class="muted" style="font-size:11px;margin-top:8px">${esc(h.note || "")} 数据来源：${esc(h.source || "")}${h.fetched_at ? " · " + esc(h.fetched_at) : ""}</div>`;
   } catch (err) {
-    box.innerHTML = '<div class="empty">持股数据加载失败</div>';
+    box.innerHTML = `<div class="empty">持股数据加载失败
+      <div style="margin-top:10px"><button class="btn ghost" type="button" onclick="loadHolders()">重新加载</button></div></div>`;
+    const mini = $("#holdersMini");
+    if (mini) mini.innerHTML = "";
     console.warn(err);
   }
 }
