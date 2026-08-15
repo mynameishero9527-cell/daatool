@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>A股量化工具</title>
-<link rel="stylesheet" href="/static/style.css?v=11.0.19">
-<script src="/static/vendor/echarts.min.js?v=11.0.19"></script>
+<link rel="stylesheet" href="/static/style.css?v=11.0.20">
+<script src="/static/vendor/echarts.min.js?v=11.0.20"></script>
 </head>
 <body>
 <header class="topbar">
@@ -598,17 +598,23 @@
         </div>
         <div id="strategyExecBody" class="strategy-exec">加载中…</div>
       </div>
-      <div class="card">
-        <div class="card-title">策略方案
-          <span class="muted">可多选并行，勾选后立即生效；买点/卖点会标明由哪套方案选出</span>
-          <span>
-            <button class="btn ghost" type="button" id="btnStrategyReset">仅保留方案A</button>
-            <button class="btn" type="button" id="btnSaveStrategy">应用所选方案</button>
-          </span>
+      <div class="grid-2">
+        <div class="card plan-col-buy">
+          <div class="card-title">最佳买点策略
+            <span class="muted">红色 · 只扫描买点规则 · 可多选</span>
+            <button class="btn ghost" type="button" id="btnResetBuy">买点默认A</button>
+          </div>
+          <div id="strategyPlansBuy"></div>
         </div>
-        <div id="strategySaveMsg" class="muted" style="margin-bottom:8px"></div>
-        <div id="strategyPlans"></div>
+        <div class="card plan-col-sell">
+          <div class="card-title">最佳卖点策略
+            <span class="muted">绿色 · 只扫描卖点规则 · 可多选</span>
+            <button class="btn ghost" type="button" id="btnResetSell">卖点默认A</button>
+          </div>
+          <div id="strategyPlansSell"></div>
+        </div>
       </div>
+      <div class="muted" id="strategySaveMsg" style="margin-top:4px"></div>
     </div>
   </section>
 </main>
@@ -667,6 +673,6 @@
   <div class="ctx-item" id="ctxNewsAi" style="display:none">🤖 发送AI分析（消息）</div>
 </div>
 
-<script src="/static/app.js?v=11.0.19"></script>
+<script src="/static/app.js?v=11.0.20"></script>
 </body>
 </html>

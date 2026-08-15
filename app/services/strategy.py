@@ -9,7 +9,9 @@ from dataclasses import dataclass
 
 from ..database import get_meta_json, query, set_meta_json
 
-META_KEY = "strategy_enabled"
+META_KEY = "strategy_enabled"  # 兼容旧键：曾同时控制买/卖
+META_KEY_BUY = "strategy_enabled_buy"
+META_KEY_SELL = "strategy_enabled_sell"
 DEFAULT_IDS = ["A"]
 NAME_OK = "s.name NOT LIKE '%ST%' AND s.name NOT LIKE '%退%'"
 PER_PLAN_CAP = 80
@@ -220,6 +222,35 @@ _reg(Plan(
 
 PLAN_ORDER = list(PLANS.keys())
 
+BUY_TITLE = {
+    "A": "购买指数高位", "B": "企稳四闸门", "C": "超跌RSI反弹", "D": "暗中吸筹",
+    "E": "均线多头金叉", "F": "低位放量回补", "G": "量能回踩均线", "H": "乖离率超卖",
+}
+SELL_TITLE = {
+    "A": "购买指数低位/过热兑现", "B": "高位闸门失效", "C": "RSI超买高乖离", "D": "暗中派发",
+    "E": "均线破坏", "F": "高位过热兑现", "G": "放量高乖离减仓", "H": "乖离率超买",
+}
+BUY_SUMMARY = {
+    "A": "购买指数≥80 且主力净流入，现行买点主规则。",
+    "B": "四闸门全过、低位、资金回流的企稳买点。",
+    "C": "RSI 超卖 + 缩量回调 + 资金回流。",
+    "D": "价跌资金进，暗盘偏买。",
+    "E": "均线多头、站上 MA20、近3日 MACD 金叉且资金流入。",
+    "F": "中低位购买指数尚可且放量净流入。",
+    "G": "站上 MA20 后缩量回踩，MACD 柱仍红。",
+    "H": "相对 MA20 负乖离较大且仍有资金回流。",
+}
+SELL_SUMMARY = {
+    "A": "购买指数≤30，或主力大幅净流出叠加情绪过热。",
+    "B": "60 日高位且情绪过热，或企稳闸门失效。",
+    "C": "RSI 超买且正乖离过大，注意兑现。",
+    "D": "价涨资金出，暗中派发。",
+    "E": "均线多头破坏、MACD 柱转负且近5日下跌。",
+    "F": "走到 60 日高位，情绪过热或资金流出则兑现。",
+    "G": "放量、高乖离、情绪偏热，减仓防回吐。",
+    "H": "正乖离过大叠加 RSI 超买，注意均值回归。",
+}
+
 
 def _normalize_ids(ids) -> list[str]:
     if not isinstance(ids, (list, tuple)):
@@ -232,17 +263,25 @@ def _normalize_ids(ids) -> list[str]:
     return out or list(DEFAULT_IDS)
 
 
-def get_enabled() -> list[str]:
-    raw = get_meta_json(META_KEY, None)
+def get_enabled(kind: str = "buy") -> list[str]:
+    key = META_KEY_BUY if kind == "buy" else META_KEY_SELL
+    raw = get_meta_json(key, None)
+    if raw is None:
+        raw = get_meta_json(META_KEY, None)
     if raw is None:
         return list(DEFAULT_IDS)
     return _normalize_ids(raw)
 
 
-def set_enabled(ids) -> list[str]:
-    enabled = _normalize_ids(ids)
-    set_meta_json(META_KEY, enabled)
-    return enabled
+def set_enabled(ids=None, *, buy_ids=None, sell_ids=None) -> dict:
+    """买点方案与卖点方案分开保存。旧参数 ids 会同时写入两侧（兼容）。"""
+    if buy_ids is None and sell_ids is None and ids is not None:
+        buy_ids = sell_ids = ids
+    if buy_ids is not None:
+        set_meta_json(META_KEY_BUY, _normalize_ids(buy_ids))
+    if sell_ids is not None:
+        set_meta_json(META_KEY_SELL, _normalize_ids(sell_ids))
+    return {"buy": get_enabled("buy"), "sell": get_enabled("sell")}
 
 
 def _where(fragment: str) -> str:
@@ -285,17 +324,21 @@ def _sort_hits(items: list[dict], kind: str) -> list[dict]:
     return items
 
 
-def plan_caption(pid: str) -> str:
+def plan_caption(pid: str, kind: str = "buy") -> str:
     p = PLANS.get(pid)
-    return f"方案{pid}·{p.name}" if p else f"方案{pid}"
+    titles = BUY_TITLE if kind == "buy" else SELL_TITLE
+    prefix = "买点方案" if kind == "buy" else "卖点方案"
+    name = titles.get(pid) or (p.name if p else pid)
+    return f"{prefix}{pid}·{name}"
 
 
 def stamp_plans(row: dict, plans: list[str] | None, kind: str) -> dict:
-    """给命中行打上可读的方案出处（完整名称，不是只写 A）。"""
+    """给命中行打上该侧方案出处。买点只标买点方案，卖点只标卖点方案。"""
     ids = [p for p in (plans or []) if p in PLANS]
+    row["side"] = "sell" if kind == "sell" else "buy"
     row["plans"] = ids
     row["plan_id"] = ",".join(ids)
-    row["plan_labels"] = [plan_caption(p) for p in ids]
+    row["plan_labels"] = [plan_caption(p, kind) for p in ids]
     row["plan_names"] = "、".join(row["plan_labels"])
     if kind == "buy":
         actions = [PLANS[p].buy_action for p in ids]
@@ -360,10 +403,10 @@ def _fair_take(items: list[dict], enabled: list[str], limit: int) -> list[dict]:
 
 
 def collect_hits(kind: str, enabled: list[str] | None = None, limit: int = PER_PLAN_CAP) -> list[dict]:
-    """启用方案并集。同一代码命中多个方案只保留一行并叠加方案出处。"""
+    """启用方案并集。买点只跑买点规则，卖点只跑卖点规则，互不混用。"""
     if kind not in ("buy", "sell"):
         raise ValueError("kind must be buy or sell")
-    enabled = enabled if enabled is not None else get_enabled()
+    enabled = enabled if enabled is not None else get_enabled(kind)
     bucket: dict[str, dict] = {}
     for pid in enabled:
         plan = PLANS.get(pid)
@@ -380,7 +423,7 @@ def collect_hits(kind: str, enabled: list[str] | None = None, limit: int = PER_P
 def collect_buy_points(limit: int = 12) -> tuple[list[dict], str, str]:
     """实时买点窗：主规则并集 →（仅当全空且 A 启用）A 的 65 回退 → 观察池。"""
     limit = max(3, min(int(limit or 12), 40))
-    enabled = get_enabled()
+    enabled = get_enabled("buy")
     items = collect_hits("buy", enabled, limit=limit)
     source, note = "hit", _hit_note(enabled, "buy")
     if items:
@@ -411,29 +454,29 @@ def collect_buy_points(limit: int = 12) -> tuple[list[dict], str, str]:
             )
             return rows[:limit], "top_buy_index", note
 
-    names = "、".join(plan_caption(i) for i in enabled)
-    return [], "empty", f"当前启用方案（{names}）暂无买点命中，请确认已同步行情并重建指标"
+    names = "、".join(plan_caption(i, "buy") for i in enabled)
+    return [], "empty", f"当前启用买点方案（{names}）暂无买点命中，请确认已同步行情并重建指标"
 
 
 def collect_sell_points(limit: int = 12) -> tuple[list[dict], str, str]:
     limit = max(3, min(int(limit or 12), 40))
-    enabled = get_enabled()
+    enabled = get_enabled("sell")
     items = collect_hits("sell", enabled, limit=limit)
     if items:
         return items, "hit", _hit_note(enabled, "sell")
-    names = "、".join(plan_caption(i) for i in enabled)
-    return [], "empty", f"当前启用方案（{names}）暂无卖点命中"
+    names = "、".join(plan_caption(i, "sell") for i in enabled)
+    return [], "empty", f"当前启用卖点方案（{names}）暂无卖点命中"
 
 
 def _hit_note(enabled: list[str], kind: str) -> str:
-    labels = "、".join(plan_caption(i) for i in enabled)
+    labels = "、".join(plan_caption(i, kind) for i in enabled)
     verb = "买点" if kind == "buy" else "卖点"
     if len(enabled) > 1:
         return (
-            f"并行方案 {labels} 取并集：命中任一方案即入选；同一标的会注明全部选出方案。"
+            f"并行{verb}方案 {labels} 取并集：只使用{verb}规则，不与另一侧混淆。"
             f"不构成投资建议"
         )
-    return f"当前执行{labels} 的{verb}规则。每条个股会标明由该方案选出。不构成投资建议"
+    return f"当前执行{labels}。只使用{verb}规则。不构成投资建议"
 
 
 def plan_counts() -> dict[str, dict[str, int]]:
@@ -443,70 +486,94 @@ def plan_counts() -> dict[str, dict[str, int]]:
     return out
 
 
-def executing_text(enabled: list[str] | None = None) -> dict:
-    enabled = enabled if enabled is not None else get_enabled()
-    names = [f"{pid} {PLANS[pid].name}" for pid in enabled]
-    title = ("方案 " + "、".join(names) + " 并行") if len(enabled) > 1 else f"方案 {names[0]}"
+def executing_text(kind: str = "buy", enabled: list[str] | None = None) -> dict:
+    kind = "sell" if kind == "sell" else "buy"
+    enabled = enabled if enabled is not None else get_enabled(kind)
+    titles = BUY_TITLE if kind == "buy" else SELL_TITLE
+    summaries = BUY_SUMMARY if kind == "buy" else SELL_SUMMARY
+    prefix = "买点" if kind == "buy" else "卖点"
+    names = [plan_caption(pid, kind) for pid in enabled]
+    title = (prefix + " " + "、".join(names) + " 并行") if len(enabled) > 1 else names[0]
     blocks = [
-        f"当前执行：{title}",
-        "并行规则：启用方案同时扫描，买点/卖点取并集；同一代码命中多个方案只显示一行，并注明全部选出方案。",
-        "财报评级为独立维度，不并入购买指数，也不作为本菜单的买卖条件。",
+        f"当前执行的{prefix}策略：{title}",
+        f"{prefix}与另一侧完全分开勾选、分开扫描，个股不会串到另一列。",
+        "财报评级为独立维度，不并入购买指数。",
         "",
     ]
     for pid in enabled:
         p = PLANS[pid]
-        blocks.append(f"—— 方案 {pid} {p.name} ——")
-        blocks.append(p.summary)
-        blocks.append("买点：" + p.buy_formula)
-        blocks.append("卖点：" + p.sell_formula)
-        if p.extra_docs:
-            blocks.append(p.extra_docs)
+        blocks.append(f"—— {plan_caption(pid, kind)} ——")
+        blocks.append(summaries.get(pid) or p.summary)
+        if kind == "buy":
+            blocks.append("买点公式：" + p.buy_formula)
+            if p.extra_docs and pid in ("A", "B", "D"):
+                blocks.append(p.extra_docs)
+        else:
+            blocks.append("卖点公式：" + p.sell_formula)
         blocks.append("")
-    if "A" in enabled:
-        blocks.append("方案 A 说明：主规则与历史线上一致（购买指数≥80 且主力净流入>0）；"
-                      "买点窗在全市场无主规则命中时才回退到≥65 或观察池。定时提醒只推主规则命中。")
+    if kind == "buy" and "A" in enabled:
+        blocks.append("买点方案A 与历史线上一致：购买指数≥80 且主力净流入>0；"
+                      "全部买点方案均无命中时才回退到≥65 或观察池。")
     return {
         "ids": enabled,
+        "kind": kind,
         "title": title,
         "detail": "\n".join(blocks).strip(),
         "parallel": len(enabled) > 1,
     }
 
 
-def catalog() -> list[dict]:
+def catalog(kind: str = "buy") -> list[dict]:
+    kind = "sell" if kind == "sell" else "buy"
     counts = plan_counts()
-    enabled = set(get_enabled())
+    enabled = set(get_enabled(kind))
+    titles = BUY_TITLE if kind == "buy" else SELL_TITLE
+    summaries = BUY_SUMMARY if kind == "buy" else SELL_SUMMARY
     rows = []
     for pid in PLAN_ORDER:
         p = PLANS[pid]
         c = counts.get(pid) or {"buy": 0, "sell": 0}
         rows.append({
             "id": p.id,
-            "name": p.name,
-            "summary": p.summary,
+            "kind": kind,
+            "name": titles.get(pid) or p.name,
+            "summary": summaries.get(pid) or p.summary,
+            "formula": p.buy_formula if kind == "buy" else p.sell_formula,
             "buy_formula": p.buy_formula,
             "sell_formula": p.sell_formula,
-            "extra_docs": p.extra_docs,
-            "buy_action": p.buy_action,
-            "sell_action": p.sell_action,
+            "extra_docs": p.extra_docs if kind == "buy" and pid in ("A", "B", "D") else "",
+            "action": p.buy_action if kind == "buy" else p.sell_action,
             "enabled": p.id in enabled,
             "is_default": p.id == "A",
+            "count": c["buy"] if kind == "buy" else c["sell"],
             "buy_count": c["buy"],
             "sell_count": c["sell"],
+            "caption": plan_caption(pid, kind),
         })
     return rows
 
 
 def get_config() -> dict:
-    enabled = get_enabled()
-    exe = executing_text(enabled)
+    buy_ids = get_enabled("buy")
+    sell_ids = get_enabled("sell")
+    buy_exe = executing_text("buy", buy_ids)
+    sell_exe = executing_text("sell", sell_ids)
     return {
-        "enabled": enabled,
-        "parallel": len(enabled) > 1,
-        "plans": catalog(),
-        "executing": exe,
+        "buy_enabled": buy_ids,
+        "sell_enabled": sell_ids,
+        "enabled": buy_ids,
+        "parallel": len(buy_ids) > 1 or len(sell_ids) > 1,
+        "buy_plans": catalog("buy"),
+        "sell_plans": catalog("sell"),
+        "plans": catalog("buy"),
+        "executing": {
+            "buy": buy_exe,
+            "sell": sell_exe,
+            "title": f"{buy_exe['title']} ｜ {sell_exe['title']}",
+            "detail": "【最佳买点】\n" + buy_exe["detail"] + "\n\n【最佳卖点】\n" + sell_exe["detail"],
+        },
         "note": (
-            "可多选并行。买点/卖点取启用方案并集；多方案命中同一标的会叠加标签。"
-            "财报评级不并入购买指数。空列表将强制回退为方案 A。"
+            "买点策略与卖点策略分开勾选、分开扫描。"
+            "红色为买点方案，绿色为卖点方案。空列表将强制回退为方案 A。"
         ),
     }

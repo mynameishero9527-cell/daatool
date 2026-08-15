@@ -103,13 +103,17 @@ def strategy_plans():
 
 @router.post("/strategy/enable")
 def strategy_enable(payload: dict = Body(default={})):
-    ids = strategy.set_enabled((payload or {}).get("ids"))
+    saved = strategy.set_enabled(
+        ids=(payload or {}).get("ids"),
+        buy_ids=(payload or {}).get("buy_ids"),
+        sell_ids=(payload or {}).get("sell_ids"),
+    )
     try:
         alerts.scan_all()
     except Exception:  # noqa: BLE001
         pass
     cfg = strategy.get_config()
-    cfg["saved"] = ids
+    cfg["saved"] = saved
     cfg["ok"] = True
     return cfg
 

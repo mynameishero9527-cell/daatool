@@ -62,11 +62,12 @@ const cls = (v) => (v > 0 ? "up" : v < 0 ? "down" : "flat");
 const sign = (v) => (v > 0 ? "+" : "");
 const pct = (v) => (v === null || v === undefined) ? "-" : `${sign(v)}${fmt(v)}%`;
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-function planPickedHtml(row) {
+function planPickedHtml(row, kind) {
+  const side = (row && row.side) || kind || "buy";
+  const clsName = side === "sell" ? "sell" : "buy";
   const labels = Array.isArray(row && row.plan_labels) ? row.plan_labels.filter(Boolean) : [];
-  const multi = labels.length > 1 ? " multi" : "";
   if (labels.length) {
-    return `<div class="plan-picked">${labels.map((l) => `<span class="plan-badge-full${multi}">${esc(l)}</span>`).join("")}<span class="plan-picked-verb">选出</span></div>`;
+    return `<div class="plan-picked">${labels.map((l) => `<span class="plan-badge-full ${clsName}">${esc(l)}</span>`).join("")}<span class="plan-picked-verb">选出</span></div>`;
   }
   const text = (row && (row.picked_text || row.picked_by)) || "";
   return text ? `<div class="plan-picked"><span class="plan-picked-verb">${esc(text)}</span></div>` : "";
@@ -447,7 +448,7 @@ async function loadAlerts() {
           <span class="badge at-${typeCls}">${typeName}</span>
           <b>${esc(name)}</b> <span class="muted">${esc(code)}</span>
           <span class="num ${cls(r.pct)}">${pct(r.pct)}</span>
-          ${planPickedHtml(r)}
+          ${planPickedHtml(r, kind)}
           ${signalContextHtml(r)}
           <div class="advice-summary">${esc(r.advice_summary || r.advice || r.hit_action || "")}</div>
         </div>
@@ -465,7 +466,7 @@ async function loadAlerts() {
         <span class="time">${esc((a.created_at || "").slice(5, 16).replace("T", " "))}</span>
         <div class="body">
           <span class="badge at-${a.alert_type}">${esc(a.type_name)}</span> ${esc(a.title)}
-          ${planPickedHtml(a)}
+          ${planPickedHtml(a, a.side || (a.alert_type === "sell_point" ? "sell" : "buy"))}
           ${a.detail ? `<div class="detail">${esc(a.detail)}</div>` : ""}
         </div>
         ${watchBtn}
@@ -481,8 +482,8 @@ async function loadAlerts() {
     const sellHtml = liveSells.length ? liveSells.map((r) => signalItem(r, "sell")).join("") : '<div class="empty">暂无卖点</div>';
     feed.innerHTML = `
       <div class="alert-cols">
-        <div><div class="alert-col-title">最佳买点 <span class="muted">${esc(buyLive.executing || "")}</span></div>${buyHtml}</div>
-        <div><div class="alert-col-title">最佳卖点 <span class="muted">${esc(sellLive.executing || "")}</span></div>${sellHtml}</div>
+        <div><div class="alert-col-title buy">最佳买点 <span class="muted">${esc(buyLive.executing || "")}</span></div>${buyHtml}</div>
+        <div><div class="alert-col-title sell">最佳卖点 <span class="muted">${esc(sellLive.executing || "")}</span></div>${sellHtml}</div>
       </div>
       ${others.length ? `<div class="alert-other">${others.map(item).join("")}</div>` : ""}`;
     syncWatchButtons();
@@ -3319,8 +3320,10 @@ $("#settingsTabs")?.addEventListener("click", (e) => {
   else loadSettings();
 });
 
-function selectedStrategyIds() {
-  return $$("#strategyPlans input[type=checkbox][data-plan-id]")
+function selectedStrategyIds(kind) {
+  const box = kind === "sell" ? $("#strategyPlansSell") : $("#strategyPlansBuy");
+  if (!box) return [];
+  return [...box.querySelectorAll("input[type=checkbox][data-plan-id]")]
     .filter((el) => el.checked)
     .map((el) => el.dataset.planId);
 }
@@ -3333,24 +3336,20 @@ function renderStrategyExec(d) {
   if (body) body.textContent = exe.detail || d.note || "暂无说明";
 }
 
-function renderStrategyPlans(d, { keepChecks } = {}) {
-  const box = $("#strategyPlans");
+function renderPlanList(box, plans, kind) {
   if (!box) return;
-  const prev = keepChecks ? new Set(selectedStrategyIds()) : null;
-  const plans = (d && d.plans) || [];
-  box.innerHTML = plans.map((p) => {
-    const on = prev ? prev.has(p.id) : !!p.enabled;
-    const docs = [p.buy_formula && `买点\n${p.buy_formula}`, p.sell_formula && `卖点\n${p.sell_formula}`, p.extra_docs]
-      .filter(Boolean).join("\n\n");
+  box.innerHTML = (plans || []).map((p) => {
+    const on = !!p.enabled;
+    const docs = [p.formula, p.extra_docs].filter(Boolean).join("\n\n");
     return `
-      <div class="plan-card${on ? " on" : ""}" data-plan-id="${esc(p.id)}">
+      <div class="plan-card ${kind}${on ? " on" : ""}" data-plan-id="${esc(p.id)}" data-kind="${kind}">
         <div class="plan-head">
           <label>
-            <input type="checkbox" data-plan-id="${esc(p.id)}" ${on ? "checked" : ""}>
-            <span class="plan-id">方案 ${esc(p.id)}</span>${esc(p.name)}
-            ${p.is_default ? '<span class="muted">现行默认</span>' : ""}
+            <input type="checkbox" data-plan-id="${esc(p.id)}" data-kind="${kind}" ${on ? "checked" : ""}>
+            <span class="plan-id">${kind === "buy" ? "买点" : "卖点"}方案 ${esc(p.id)}</span>${esc(p.name)}
+            ${p.is_default ? '<span class="muted">默认</span>' : ""}
           </label>
-          <span class="plan-counts" data-plan-counts="${esc(p.id)}">买点 ${p.buy_count ?? 0} · 卖点 ${p.sell_count ?? 0}</span>
+          <span class="plan-counts" data-plan-counts="${kind}-${esc(p.id)}">命中 ${p.count ?? 0}</span>
         </div>
         <div class="plan-summary">${esc(p.summary || "")}</div>
         <div class="plan-formula">${esc(docs)}</div>
@@ -3358,19 +3357,26 @@ function renderStrategyPlans(d, { keepChecks } = {}) {
   }).join("") || '<div class="empty">暂无策略方案</div>';
 }
 
+function renderStrategyPlans(d) {
+  renderPlanList($("#strategyPlansBuy"), d.buy_plans || d.plans || [], "buy");
+  renderPlanList($("#strategyPlansSell"), d.sell_plans || [], "sell");
+}
+
 function patchStrategyCounts(d) {
-  for (const p of (d.plans || [])) {
-    const el = document.querySelector(`[data-plan-counts="${p.id}"]`);
-    if (el) el.textContent = `买点 ${p.buy_count ?? 0} · 卖点 ${p.sell_count ?? 0}`;
+  for (const [kind, plans] of [["buy", d.buy_plans || []], ["sell", d.sell_plans || []]]) {
+    for (const p of plans) {
+      const el = document.querySelector(`[data-plan-counts="${kind}-${p.id}"]`);
+      if (el) el.textContent = `命中 ${p.count ?? 0}`;
+    }
   }
-  $$("#strategyPlans .plan-card").forEach((card) => {
+  $$("#strategyPlansBuy .plan-card, #strategyPlansSell .plan-card").forEach((card) => {
     const cb = card.querySelector("input[type=checkbox]");
     card.classList.toggle("on", !!(cb && cb.checked));
   });
 }
 
 async function loadStrategyPage(force) {
-  const box = $("#strategyPlans");
+  const box = $("#strategyPlansBuy");
   if (!box) return;
   try {
     const d = await api("/api/strategy/plans");
@@ -3387,17 +3393,22 @@ async function loadStrategyPage(force) {
   }
 }
 
-$("#strategyPlans")?.addEventListener("change", (e) => {
-  if (!e.target.closest("input[type=checkbox][data-plan-id]")) return;
-  strategyDirty = true;
-  $$("#strategyPlans .plan-card").forEach((card) => {
-    const cb = card.querySelector("input[type=checkbox]");
-    card.classList.toggle("on", !!(cb && cb.checked));
+function bindStrategyChecks(root) {
+  root?.addEventListener("change", (e) => {
+    if (!e.target.closest("input[type=checkbox][data-plan-id]")) return;
+    strategyDirty = true;
+    const card = e.target.closest(".plan-card");
+    if (card) {
+      const cb = card.querySelector("input[type=checkbox]");
+      card.classList.toggle("on", !!(cb && cb.checked));
+    }
+    const msg = $("#strategySaveMsg");
+    if (msg) msg.textContent = "已勾选，正在分别应用买点/卖点方案…";
+    saveStrategySoon();
   });
-  const msg = $("#strategySaveMsg");
-  if (msg) msg.textContent = "已勾选，正在应用多方案并行…";
-  saveStrategySoon();
-});
+}
+bindStrategyChecks($("#strategyPlansBuy"));
+bindStrategyChecks($("#strategyPlansSell"));
 
 const saveStrategySoon = (() => {
   let t;
@@ -3407,22 +3418,23 @@ const saveStrategySoon = (() => {
   };
 })();
 
-window.saveStrategyPlans = async (ids) => {
+window.saveStrategyPlans = async (preset) => {
   const msg = $("#strategySaveMsg");
-  const picked = ids || selectedStrategyIds();
+  const buyIds = preset && preset.buy_ids ? preset.buy_ids : selectedStrategyIds("buy");
+  const sellIds = preset && preset.sell_ids ? preset.sell_ids : selectedStrategyIds("sell");
   if (msg) msg.textContent = "保存中…";
   try {
     const d = await api("/api/strategy/enable", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ids: picked }),
+      body: JSON.stringify({ buy_ids: buyIds, sell_ids: sellIds }),
     });
     strategyDirty = false;
     strategyLoaded = true;
     renderStrategyExec(d);
     renderStrategyPlans(d);
-    const title = (d.executing && d.executing.title) || (d.enabled || []).join("、") || "A";
-    if (msg) msg.textContent = `已应用：${title}。买点/卖点每条会标明由哪套方案选出。`;
+    const title = (d.executing && d.executing.title) || "";
+    if (msg) msg.textContent = `已应用：${title}。买点红色、卖点绿色，两侧互不混淆。`;
     loadBuyPoints();
     loadAlerts();
   } catch (err) {
@@ -3430,8 +3442,8 @@ window.saveStrategyPlans = async (ids) => {
   }
 };
 
-$("#btnSaveStrategy")?.addEventListener("click", () => saveStrategyPlans());
-$("#btnStrategyReset")?.addEventListener("click", () => saveStrategyPlans(["A"]));
+$("#btnResetBuy")?.addEventListener("click", () => saveStrategyPlans({ buy_ids: ["A"], sell_ids: selectedStrategyIds("sell") }));
+$("#btnResetSell")?.addEventListener("click", () => saveStrategyPlans({ buy_ids: selectedStrategyIds("buy"), sell_ids: ["A"] }));
 
 async function loadSettings() {
   try {
@@ -3919,6 +3931,11 @@ async function loadBuyPoints() {
   const kindLabel = kind === "sell" ? "最佳卖点" : "最佳买点";
   const titleEl = $("#buyFlashKindLabel");
   if (titleEl) titleEl.textContent = kindLabel;
+  const panel = $("#buyFlash");
+  if (panel) {
+    panel.classList.toggle("kind-buy", kind === "buy");
+    panel.classList.toggle("kind-sell", kind === "sell");
+  }
   const paintEmpty = (text, countText) => {
     if (countEl) countEl.textContent = countText;
     if (noteEl) { noteEl.textContent = text || ""; noteEl.classList.toggle("warn", true); }
@@ -3962,7 +3979,7 @@ async function loadBuyPoints() {
           <span class="hl-code">${esc(r.code)}</span>
           <span class="num ${cls(r.pct)}">${pct(r.pct)}</span>
         </div>
-        ${planPickedHtml(r)}
+        ${planPickedHtml(r, kind)}
         ${signalContextHtml(r)}
         <div class="buy-flash-meta">
           <span>购买指数 <b>${fmt(r.buy_index, 0)}</b> ${esc(r.buy_level || "")}</span>

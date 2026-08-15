@@ -476,12 +476,19 @@ tr.score-95 td { background: rgba(255, 60, 60, .30); }
   background: var(--bg); border: 1px solid var(--border);
   border-radius: 6px; padding: 8px 10px; margin: 6px 0 0 26px; color: #c9d6e8;
 }
+.plan-col-buy { border-color: rgba(255,82,82,.4); }
+.plan-col-sell { border-color: rgba(38,194,129,.4); }
+.plan-card.buy.on { border-color: var(--up); box-shadow: inset 0 0 0 1px rgba(255,82,82,.28); }
+.plan-card.sell.on { border-color: var(--down); box-shadow: inset 0 0 0 1px rgba(38,194,129,.28); }
+.plan-col-buy .plan-id { color: #ff8a80; }
+.plan-col-sell .plan-id { color: #7ee0b0; }
+.plan-col-buy label input[type=checkbox] { accent-color: var(--up); }
+.plan-col-sell label input[type=checkbox] { accent-color: var(--down); }
 .plan-badge {
   display: inline-block; font-size: 11px; line-height: 1.2;
   padding: 1px 6px; margin-right: 4px; border-radius: 4px;
-  background: rgba(255,210,122,.16); color: #ffd27a; border: 1px solid rgba(255,210,122,.35);
+  background: rgba(255,82,82,.16); color: #ffb3b3; border: 1px solid rgba(255,82,82,.4);
 }
-.plan-badge.multi { background: rgba(38,194,129,.16); color: #8ef0c4; border-color: rgba(38,194,129,.4); }
 .plan-picked {
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
   margin: 4px 0 6px;
@@ -489,15 +496,24 @@ tr.score-95 td { background: rgba(255, 60, 60, .30); }
 .plan-badge-full {
   display: inline-block; font-size: 12px; line-height: 1.35;
   padding: 2px 8px; border-radius: 6px; font-weight: 600;
-  background: rgba(255,210,122,.18); color: #ffe3a3;
-  border: 1px solid rgba(255,210,122,.45);
 }
-.plan-badge-full.multi {
-  background: rgba(38,194,129,.18); color: #b7f5d6;
-  border-color: rgba(38,194,129,.45);
+.plan-badge-full.buy {
+  background: rgba(255,82,82,.18); color: #ffb3b3;
+  border: 1px solid rgba(255,82,82,.45);
+}
+.plan-badge-full.sell {
+  background: rgba(38,194,129,.18); color: #a9eccd;
+  border: 1px solid rgba(38,194,129,.45);
 }
 .plan-picked-verb { font-size: 12px; color: var(--muted); }
-.plan-card label input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--down); }
+.plan-card label input[type=checkbox] { width: 16px; height: 16px; }
+.alert-col-title.buy { color: #ff8a80; }
+.alert-col-title.sell { color: #7ee0b0; }
+.buy-flash.kind-sell .buy-flash-head {
+  background: linear-gradient(90deg, rgba(15,92,61,.6), rgba(10,50,30,.25));
+}
+.buy-flash.kind-sell .buy-flash-advice { color: #a9eccd; }
+.buy-flash.kind-buy .buy-flash-advice { color: #ffd0d0; }
 
 /* 购买指数 / 暗盘力量条 */
 .gauge { margin: 8px 0; }

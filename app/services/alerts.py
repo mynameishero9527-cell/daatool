@@ -29,11 +29,11 @@ def _flow_yi(v) -> str:
 
 def _scan_buy_points() -> None:
     from . import strategy as strategy_svc
-    enabled = strategy_svc.get_enabled()
+    enabled = strategy_svc.get_enabled("buy")
     cap = min(18, max(5, 3 * max(1, len(enabled))))
     rows = strategy_svc.collect_hits("buy", enabled, limit=cap)
     for r in rows:
-        picked = r.get("picked_text") or "由方案A选出"
+        picked = r.get("picked_text") or "由买点方案A选出"
         bi = r.get("buy_index")
         bi_txt = f"{bi:.0f}" if bi is not None else "-"
         pos = r.get("pos60")
@@ -46,11 +46,11 @@ def _scan_buy_points() -> None:
 
 def _scan_sell_points() -> None:
     from . import strategy as strategy_svc
-    enabled = strategy_svc.get_enabled()
+    enabled = strategy_svc.get_enabled("sell")
     cap = min(18, max(5, 3 * max(1, len(enabled))))
     rows, _src, _note = strategy_svc.collect_sell_points(limit=cap)
     for r in rows:
-        picked = r.get("picked_text") or "由方案A选出"
+        picked = r.get("picked_text") or "由卖点方案A选出"
         bi = r.get("buy_index")
         bi_txt = f"{bi:.0f}" if bi is not None else "-"
         extra = "，情绪过热注意兑现" if (r.get("sentiment") or 0) >= 80 else ""
@@ -141,7 +141,9 @@ def get_alerts(limit: int = 50) -> dict:
         pid = (r.get("plan_id") or "").strip()
         plans = [p for p in pid.split(",") if p] if pid else []
         r["plans"] = plans
-        r["plan_labels"] = [strategy_svc.plan_caption(p) for p in plans]
+        side = "sell" if r.get("alert_type") == "sell_point" else "buy"
+        r["side"] = side
+        r["plan_labels"] = [strategy_svc.plan_caption(p, side) for p in plans]
         r["picked_text"] = f"由{'、'.join(r['plan_labels'])}选出" if r["plan_labels"] else ""
         title = r.get("title") or ""
         m = None
@@ -306,13 +308,12 @@ def get_buy_points(limit: int = 8) -> dict:
     metric_n = query("SELECT COUNT(*) AS n FROM stock_metrics")[0]["n"]
     snap_n = query("SELECT COUNT(*) AS n FROM stock_snapshot")[0]["n"]
     asof = (query("SELECT MAX(updated_at) AS t FROM stock_snapshot")[0]["t"] or "")[:19]
-    enabled = strategy_svc.get_enabled()
-    exe = strategy_svc.executing_text(enabled)
+    enabled = strategy_svc.get_enabled("buy")
+    exe = strategy_svc.executing_text("buy", enabled)
     base = {
         "metrics_count": metric_n, "snapshot_count": snap_n, "asof": asof,
-        "enabled": enabled, "executing": exe.get("title") or "",
+        "enabled": enabled, "side": "buy", "executing": exe.get("title") or "",
     }
-
     if metric_n == 0:
         return {**base, "items": [], "count": 0, "source": "empty",
                 "empty_reason": "no_metrics",
@@ -358,11 +359,11 @@ def get_sell_points(limit: int = 12) -> dict:
     metric_n = query("SELECT COUNT(*) AS n FROM stock_metrics")[0]["n"]
     snap_n = query("SELECT COUNT(*) AS n FROM stock_snapshot")[0]["n"]
     asof = (query("SELECT MAX(updated_at) AS t FROM stock_snapshot")[0]["t"] or "")[:19]
-    enabled = strategy_svc.get_enabled()
-    exe = strategy_svc.executing_text(enabled)
+    enabled = strategy_svc.get_enabled("sell")
+    exe = strategy_svc.executing_text("sell", enabled)
     base = {
         "metrics_count": metric_n, "snapshot_count": snap_n, "asof": asof,
-        "enabled": enabled, "executing": exe.get("title") or "",
+        "enabled": enabled, "side": "sell", "executing": exe.get("title") or "",
     }
     if metric_n == 0:
         return {**base, "items": [], "count": 0, "source": "empty",
