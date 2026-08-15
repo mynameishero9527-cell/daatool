@@ -1515,12 +1515,13 @@ window.drillSector = async (name) => {
 
 /* ---------------- 板块资金分析（FR10-03） ---------------- */
 const flowBarState = { dim: "industry", range: "1d", sort: "inflow", selected: "", limit: 50,
-  view: "hbar", dir: "", q: "", minStocks: 0, fin: "" };
+  view: "hbar", dir: "", q: "", minStocks: 0, fin: "", day: "" };
 let flowBarChart = null;
+let flowTrendChart = null;
 let flowBarRawItems = [];
 let flowBarStockRows = [];
 
-for (const [id, key] of [["flowBarDim", "dim"], ["flowBarRange", "range"], ["flowBarSort", "sort"]]) {
+for (const [id, key] of [["flowBarDim", "dim"], ["flowBarRange", "range"]]) {
   const el = $(`#${id}`);
   if (!el) continue;
   el.addEventListener("click", (e) => {
@@ -1530,6 +1531,7 @@ for (const [id, key] of [["flowBarDim", "dim"], ["flowBarRange", "range"], ["flo
     if (!val) return;
     flowBarState[key] = val;
     flowBarState.selected = "";
+    flowBarState.day = "";
     flowBarState.limit = 50;
     $$(`#${id} .opt`).forEach((b) => b.classList.toggle("active", b === btn));
     const stockBox = $("#flowBarStocks");
@@ -1537,6 +1539,15 @@ for (const [id, key] of [["flowBarDim", "dim"], ["flowBarRange", "range"], ["flo
     loadFlowBar();
   });
 }
+$("#flowBarSort")?.addEventListener("click", (e) => {
+  const btn = e.target.closest(".opt");
+  if (!btn) return;
+  const val = btn.dataset.sort || "";
+  if (!val) return;
+  flowBarState.sort = val;
+  $$("#flowBarSort .opt").forEach((b) => b.classList.toggle("active", b === btn));
+  loadFlowBar();
+});
 for (const [id, key] of [["flowBarDir", "dir"], ["flowBarView", "view"]]) {
   const el = $(`#${id}`);
   if (!el) continue;
@@ -1592,8 +1603,11 @@ function renderFlowBarHtml(items, note) {
       const fill = v >= 0
         ? `<div class="hbar-neg"></div><div class="hbar-pos"><div class="hbar-fill in" style="width:${pctw}%"></div></div>`
         : `<div class="hbar-neg"><div class="hbar-fill out" style="width:${pctw}%"></div></div><div class="hbar-pos"></div>`;
-      return `<div class="hbar-row${selected}" data-name="${esc(it.name)}">
-        <span class="hbar-name" title="${esc(it.name)}">${esc(it.name)}</span>
+      const tip = `${it.name} 账本 ${v > 0 ? "+" : ""}${fmt(v, 2)}亿`
+        + (it.snap_d1_yi != null ? ` · 快照当日对照 ${Number(it.snap_d1_yi) > 0 ? "+" : ""}${fmt(it.snap_d1_yi, 2)}亿` : "")
+        + (it.snap_d5_yi != null ? ` · 快照5日对照 ${fmt(it.snap_d5_yi, 2)}亿（不计入柱高）` : "");
+      return `<div class="hbar-row${selected}" data-name="${esc(it.name)}" title="${esc(tip)}">
+        <span class="hbar-name" title="${esc(tip)}">${esc(it.name)}</span>
         <span class="hbar-track">${fill}</span>
         <span class="hbar-val num ${cls(v)}">${v > 0 ? "+" : ""}${fmt(v, 1)}亿</span>
       </div>`;
@@ -1625,7 +1639,11 @@ function renderFlowBarEcharts(items) {
       formatter: (ps) => {
         const p = ps[0] || {};
         const v = p.value || 0;
-        return `${p.name}<br>主力净流入 <b>${v > 0 ? "+" : ""}${Number(v).toFixed(2)} 亿</b>`;
+        const it = items[p.dataIndex] || {};
+        let extra = "";
+        if (it.snap_d1_yi != null) extra += `<br>快照当日对照 ${Number(it.snap_d1_yi).toFixed(2)} 亿`;
+        if (it.snap_d5_yi != null) extra += `<br>快照5日对照 ${Number(it.snap_d5_yi).toFixed(2)} 亿（不计入柱高）`;
+        return `${p.name}<br>账本净流入 <b>${v > 0 ? "+" : ""}${Number(v).toFixed(2)} 亿</b>${extra}`;
       },
     },
     grid: { left: 88, right: 56, top: 8, bottom: 8 },
@@ -1684,21 +1702,39 @@ function paintFlowBar(note) {
   }
 }
 
+function paintFlowDayChip() {
+  const chip = $("#flowBarDayChip");
+  if (!chip) return;
+  if (!flowBarState.day) {
+    chip.style.display = "none";
+    chip.innerHTML = "";
+    return;
+  }
+  chip.style.display = "";
+  chip.innerHTML = `正在看账本 <b>${esc(flowBarState.day)}</b> 当日横截面`
+    + ` <button class="btn small ghost" type="button" onclick="clearFlowDay()">看区间合计</button>`;
+}
+
 async function loadFlowBar() {
   const box = $("#flowBarList");
   if (!box && !$("#flowBarChart")) return;
   if (box) box.innerHTML = '<div class="empty">正在汇总全市场板块资金…</div>';
+  paintFlowDayChip();
   try {
-    const d = await api(`/api/sector/flow-bar?dim=${encodeURIComponent(flowBarState.dim)}&range=${encodeURIComponent(flowBarState.range)}&sort=${encodeURIComponent(flowBarState.sort)}`);
+    let url = `/api/sector/flow-bar?dim=${encodeURIComponent(flowBarState.dim)}&range=${encodeURIComponent(flowBarState.range)}&sort=${encodeURIComponent(flowBarState.sort)}`;
+    if (flowBarState.day) url += `&day=${encodeURIComponent(flowBarState.day)}`;
+    const d = await api(url);
     const cov = d.coverage || {};
     const note = d.note || "";
     const noteEl = $("#flowBarNote");
     const dimLabel = flowBarState.dim === "concept" ? "题材概念" : "行业板块";
     if (noteEl) {
-      noteEl.dataset.base = `${d.range_label || "当天"} · 共 ${d.count || (d.items || []).length} 个${dimLabel} · 已累计 ${cov.have || 0}/${cov.target || 0} 个交易日`;
+      noteEl.dataset.base = `${d.range_label || "当天"} · 共 ${d.count || (d.items || []).length} 个${dimLabel}`
+        + ` · 账本 ${d.asof || "-"} · 已覆盖 ${cov.have || 0}/${cov.target || 0} 个交易日`;
     }
     flowBarRawItems = d.items || [];
     paintFlowBar(note);
+    loadFlowTrend();
     if (flowBarState.selected) loadFlowBarStocks(flowBarState.selected);
   } catch (err) {
     const msg = err && err.message ? err.message : String(err);
@@ -1712,6 +1748,7 @@ window.selectFlowBar = (name) => {
   flowBarState.selected = flowBarState.selected === name ? "" : name;
   $$("#flowBarList .hbar-row").forEach((el) =>
     el.classList.toggle("selected", el.dataset.name === flowBarState.selected));
+  loadFlowTrend();
   const stockBox = $("#flowBarStocks");
   if (!flowBarState.selected) {
     if (stockBox) stockBox.style.display = "none";
@@ -1719,6 +1756,132 @@ window.selectFlowBar = (name) => {
   }
   loadFlowBarStocks(flowBarState.selected);
 };
+
+window.clearFlowDay = () => {
+  if (!flowBarState.day) return;
+  flowBarState.day = "";
+  loadFlowBar();
+};
+
+window.selectFlowDay = (day) => {
+  if (!day) return;
+  flowBarState.day = flowBarState.day === day ? "" : day;
+  loadFlowBar();
+};
+
+function kpiNum(v, digits) {
+  if (v === null || v === undefined || Number.isNaN(Number(v))) return "-";
+  const n = Number(v);
+  return `${n > 0 ? "+" : ""}${fmt(n, digits)}亿`;
+}
+
+async function loadFlowTrend() {
+  const host = $("#flowTrendChart");
+  const noteEl = $("#flowTrendNote");
+  const kpisEl = $("#flowTrendKpis");
+  if (!host) return;
+  if (noteEl) noteEl.textContent = "加载中…";
+  try {
+    let url = `/api/sector/flow-trend?dim=${encodeURIComponent(flowBarState.dim)}&range=${encodeURIComponent(flowBarState.range)}`;
+    if (flowBarState.selected) url += `&name=${encodeURIComponent(flowBarState.selected)}`;
+    const d = await api(url);
+    if (noteEl) noteEl.textContent = d.title ? `· ${d.title}` : "";
+    const k = d.kpis || {};
+    if (kpisEl) {
+      kpisEl.innerHTML = `
+        <div class="flow-kpi"><span>区间合计</span><b class="${cls(k.sum_net_yi)}">${kpiNum(k.sum_net_yi, 2)}</b></div>
+        <div class="flow-kpi"><span>账本最新日 ${esc(k.last_date || "-")}</span><b class="${cls(k.last_net_yi)}">${kpiNum(k.last_net_yi, 2)}</b></div>
+        <div class="flow-kpi"><span>覆盖交易日</span><b>${k.days_have || 0}/${k.days_target || 0}</b></div>
+        <div class="flow-kpi"><span>账本日</span><b>${esc(d.asof || "-")}</b></div>`;
+    }
+    paintFlowTrend(d);
+  } catch (err) {
+    if (noteEl) noteEl.textContent = "走势加载失败";
+    if (kpisEl) kpisEl.innerHTML = "";
+    if (host) host.innerHTML = `<div class="empty">日走势加载失败：${esc(err.message || err)}</div>`;
+  }
+}
+
+function paintFlowTrend(d) {
+  const host = $("#flowTrendChart");
+  if (!host || typeof echarts === "undefined") return;
+  host.innerHTML = "";
+  const series = d.series || [];
+  if (!series.length) {
+    try { flowTrendChart?.dispose(); } catch { /* ignore */ }
+    flowTrendChart = null;
+    host.innerHTML = `<div class="empty">${esc(d.note || "尚无日频点。全量同步后会按天落库，不会用涨跌幅填补。")}</div>`;
+    return;
+  }
+  try { flowTrendChart?.dispose(); } catch { /* ignore */ }
+  flowTrendChart = echarts.init(host, "dark");
+  const dates = series.map((p) => p.date);
+  const nets = series.map((p) => {
+    const v = p.missing ? null : p.net_in_yi;
+    return {
+      value: v,
+      itemStyle: {
+        color: v == null ? "#3a4558" : (v >= 0 ? "#ff5252" : "#26c281"),
+        opacity: flowBarState.day && p.date !== flowBarState.day ? 0.35 : 1,
+      },
+    };
+  });
+  const cums = series.map((p) => p.cum_yi);
+  flowTrendChart.setOption({
+    backgroundColor: "transparent",
+    tooltip: {
+      trigger: "axis",
+      backgroundColor: "#1a2230", borderColor: "#2a3548",
+      textStyle: { color: "#dbe4f0", fontSize: 12 },
+      formatter: (ps) => {
+        const idx = (ps[0] || {}).dataIndex;
+        const p = series[idx] || {};
+        if (p.missing) return `${p.date}<br>该日账本缺失（不是 0）`;
+        return `${p.date}<br>当日净流入 <b>${p.net_in_yi > 0 ? "+" : ""}${Number(p.net_in_yi).toFixed(2)} 亿</b>`
+          + `<br>区间累计 ${p.cum_yi > 0 ? "+" : ""}${Number(p.cum_yi).toFixed(2)} 亿`
+          + (p.stocks ? `<br>成分股 ${p.stocks} 只` : "");
+      },
+    },
+    legend: { data: ["当日净流入", "区间累计"], textStyle: { color: "#9aa8bc" }, top: 0 },
+    grid: { left: 52, right: 52, top: 32, bottom: 28 },
+    xAxis: {
+      type: "category", data: dates,
+      axisLabel: { color: "#7d8aa0", fontSize: 11 },
+      axisLine: { lineStyle: { color: "#2a3548" } },
+    },
+    yAxis: [
+      {
+        type: "value", name: "当日(亿)",
+        splitLine: { lineStyle: { color: "#202a3b" } },
+        axisLabel: { color: "#7d8aa0" },
+      },
+      {
+        type: "value", name: "累计(亿)",
+        splitLine: { show: false },
+        axisLabel: { color: "#7d8aa0" },
+      },
+    ],
+    series: [
+      {
+        name: "当日净流入", type: "bar", data: nets, barMaxWidth: 22, yAxisIndex: 0,
+      },
+      {
+        name: "区间累计", type: "line", data: cums, yAxisIndex: 1, smooth: true,
+        symbol: "circle", symbolSize: 7,
+        lineStyle: { color: "#4a9eff", width: 2 },
+        itemStyle: { color: "#4a9eff" },
+      },
+    ],
+  }, true);
+  flowTrendChart.off("click");
+  flowTrendChart.on("click", (p) => {
+    const day = (p && (p.name || (series[p.dataIndex] || {}).date)) || "";
+    if (day) selectFlowDay(day);
+  });
+  requestAnimationFrame(() => flowTrendChart?.resize());
+  const noteEl = $("#flowTrendNote");
+  if (noteEl && d.note) noteEl.textContent = `· ${d.title || ""} · ${d.note}`;
+}
 
 async function loadFlowBarStocks(name) {
   const wrap = $("#flowBarStocks");
@@ -2307,9 +2470,16 @@ window.testAiConfig = async () => {
     const d = await api("/api/ai/test", { method: "POST" });
     if (box) {
       box.style.color = d.ok ? "var(--up)" : "var(--down)";
-      box.textContent = d.ok
-        ? `连通成功（${d.model || ""} @ ${d.api_base || ""}）回复：${d.reply || "ok"}`
-        : `连通失败：${d.error || "未知错误"}`;
+      const lines = [];
+      if (d.ok) lines.push(`连通成功（${d.model || ""} @ ${d.api_base || ""}）回复：${d.reply || "ok"}`);
+      else {
+        lines.push(`连通失败：${d.error || "未知错误"}`);
+        if (d.hint) lines.push("建议：" + d.hint);
+      }
+      (d.steps || []).forEach((s) => {
+        lines.push(`${s.ok ? "✓" : "✗"} ${s.label || s.id}：${s.detail || ""}`);
+      });
+      box.textContent = lines.join("\n");
     }
     $("#aiStatus").textContent = d.ok ? "✅ 已配置且连通" : "⚠️ 已配置但调用失败";
   } catch (err) {
@@ -2878,7 +3048,7 @@ async function loadSettingsHealthOnly() {
   } catch { $("#healthDot").className = "dot bad"; }
 }
 
-window.addEventListener("resize", () => { klineChart?.resize(); sectorChart?.resize(); ckChart?.resize(); miniChart?.resize(); flowBarChart?.resize(); });
+window.addEventListener("resize", () => { klineChart?.resize(); sectorChart?.resize(); ckChart?.resize(); miniChart?.resize(); flowBarChart?.resize(); flowTrendChart?.resize(); });
 
 /* 首屏 */
 loadDashboard();

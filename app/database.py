@@ -174,7 +174,7 @@ CREATE TABLE IF NOT EXISTS stock_finance_grade (
 CREATE TABLE IF NOT EXISTS sector_flow_daily (
     dim         TEXT NOT NULL,          -- industry / concept
     name        TEXT NOT NULL,
-    trade_date  TEXT NOT NULL,          -- 北京交易日 YYYY-MM-DD
+    trade_date  TEXT NOT NULL,          -- 快照 asof 日 YYYY-MM-DD，不是日历今天
     net_in      REAL,                   -- 主力净流入（万元）
     amount      REAL,                   -- 成交额（万元）
     stocks      INTEGER,

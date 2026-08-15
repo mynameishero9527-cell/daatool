@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>A股量化工具</title>
-<link rel="stylesheet" href="/static/style.css?v=11.0.0">
-<script src="/static/vendor/echarts.min.js?v=11.0.0"></script>
+<link rel="stylesheet" href="/static/style.css?v=11.0.1">
+<script src="/static/vendor/echarts.min.js?v=11.0.1"></script>
 </head>
 <body>
 <header class="topbar">
@@ -247,11 +247,18 @@
         <div class="inline-form" style="margin-bottom:8px;width:100%">
           <input id="flowBarSearch" placeholder="搜索板块名称" style="max-width:260px">
         </div>
-        <div class="muted" style="margin-bottom:8px">红入绿出 · 零轴居中 · 同一时间只显示一套图 · 点选一条后底部才出个股。</div>
+        <div class="muted" style="margin-bottom:8px">红入绿出 · 零轴居中 · 同一时间只显示一套图 · 点选一条后下方出日走势与个股。直方图与走势共用日频账本。</div>
+        <div id="flowBarDayChip" class="flow-day-chip" style="display:none"></div>
         <div id="flowBarChart">
           <div id="flowBarEchart" class="chart-lg" style="height:520px;display:none"></div>
           <div id="flowBarList"><div class="empty">正在汇总全市场板块资金…</div></div>
         </div>
+      </div>
+      <div class="card" id="flowTrendCard">
+        <div class="card-title">板块资金日走势 <span class="muted" id="flowTrendNote"></span></div>
+        <div id="flowTrendKpis" class="flow-kpis"></div>
+        <div id="flowTrendChart" class="chart-lg" style="height:280px"></div>
+        <div class="muted" style="margin-top:6px;font-size:12px">柱=当日净流入（红入绿出），线=区间累计。点击某日，上方直方图切到该日横截面；再点同一日取消。个股明细始终为最新快照。</div>
       </div>
       <div class="card" id="flowBarStocks" style="display:none">
         <div class="card-title" id="flowBarStocksTitle"><span id="flowBarStocksLabel">个股</span>
@@ -480,6 +487,7 @@
         <div class="muted" style="margin-top:10px;font-size:12px">
           未配置时自动使用「本地规则分析」。密钥仅存于本地数据库。<br>
           地址会自动补全 <code>/v1</code>（智谱走 <code>/api/paas/v4</code>，不要再加 /v1）。<br>
+          「测试连通」会逐步检查密钥、域名、TCP 与 Chat 接口，失败时给出原因。<br>
           全站任意个股行 <b>右键</b> 可唤起「AI 分析该股」小窗。
         </div>
       </div>
@@ -567,6 +575,6 @@
   <div class="ctx-item" id="ctxNewsAi" style="display:none">🤖 发送AI分析（消息）</div>
 </div>
 
-<script src="/static/app.js?v=11.0.0"></script>
+<script src="/static/app.js?v=11.0.1"></script>
 </body>
 </html>

@@ -1,7 +1,8 @@
 """AI 分析（FR7-07）：可配置 OpenAI 兼容大模型 + 本地规则分析兜底。"""
 import json
 import logging
-import threading
+import socket
+from urllib.parse import urlparse
 
 import httpx
 
@@ -25,23 +26,19 @@ PRESETS = [
      "api_base": "https://api.moonshot.cn/v1", "model": "moonshot-v1-8k"},
     {"id": "zhipu", "name": "智谱 GLM",
      "api_base": "https://open.bigmodel.cn/api/paas/v4", "model": "glm-4-flash"},
+    {"id": "openrouter", "name": "OpenRouter",
+     "api_base": "https://openrouter.ai/api/v1", "model": "openai/gpt-4o-mini"},
 ]
 
-_llm_client: httpx.Client | None = None
-_llm_lock = threading.Lock()
 
-
-def _llm_http() -> httpx.Client:
-    """独立客户端：连接 15s / 总超时 60s，不复用行情 6s 连接池。"""
-    global _llm_client
-    with _llm_lock:
-        if _llm_client is None:
-            _llm_client = httpx.Client(
-                timeout=httpx.Timeout(60.0, connect=15.0),
-                headers={"User-Agent": "daatool-ai/1.0", "Accept": "application/json"},
-                follow_redirects=True,
-            )
-        return _llm_client
+def _new_llm_http() -> httpx.Client:
+    """每次调用新建客户端：跟随系统代理，避免旧连接池/证书状态卡住。"""
+    return httpx.Client(
+        timeout=httpx.Timeout(90.0, connect=20.0),
+        headers={"User-Agent": "daatool-ai/11.0.1", "Accept": "application/json"},
+        follow_redirects=True,
+        trust_env=True,
+    )
 
 
 def normalize_api_base(raw: str) -> str:
@@ -97,8 +94,8 @@ def save_config(api_base: str, api_key: str, model: str) -> dict:
         api_key = old.get("api_key", "")
     set_meta_json("ai_config", {
         "api_base": normalize_api_base(api_base),
-        "api_key": api_key.strip(),
-        "model": model.strip(),
+        "api_key": (api_key or "").strip(),
+        "model": (model or "").strip(),
     })
     _set_last_error("")
     return {"ok": True, **get_config()}
@@ -201,6 +198,45 @@ def _parse_llm_error(resp: httpx.Response) -> str:
     return (resp.text or f"HTTP {resp.status_code}")[:300]
 
 
+def _auth_headers(base: str, key: str) -> dict:
+    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    if "openrouter.ai" in (base or "").lower():
+        headers["HTTP-Referer"] = "https://github.com/mynameishero9527-cell/daatool"
+        headers["X-Title"] = "daatool"
+    return headers
+
+
+def _hint_for_error(err: str) -> str:
+    low = (err or "").lower()
+    if "未配置" in (err or "") or "请先填写" in (err or ""):
+        return "先在左侧填完整地址、密钥、模型名称并保存。"
+    if "401" in low or "unauthorized" in low or "invalid api key" in low or "incorrect api key" in low:
+        return "密钥被拒绝。核对是否粘贴完整、是否选对了服务商，部分平台要先充值开通。"
+    if "403" in low or "permission" in low:
+        return "当前密钥没有该模型权限，换一个已开通的模型名再试。"
+    if "404" in low or "not found" in low:
+        return "地址或模型名不对。地址应止于 /v1（智谱止于 /api/paas/v4），不要再拼 /chat/completions。"
+    if "429" in low or "rate" in low or "quota" in low or "额度" in err:
+        return "触发限流或额度用尽，稍后再试或检查账户余额。"
+    if "timeout" in low or "timed out" in low:
+        return "等待超时。检查代理/科学上网，或换延迟更低的接口。"
+    if "ssl" in low or "certificate" in low:
+        return "TLS 证书校验失败。检查系统时间、公司代理或 HTTPS 中间人。"
+    if "connect" in low or "name or service not known" in low or "nodename" in low or "dns" in low:
+        return "连不上该域名。检查网络出口、DNS，或该服务商在当前环境是否可达。"
+    if "max_tokens" in low or "max_completion_tokens" in low:
+        return "该模型参数不兼容。已自动改用 max_completion_tokens 重试；若仍失败请换模型。"
+    return "把「测试连通」的逐步结果对照检查：密钥、地址、模型名、网络。"
+
+
+def _post_chat(url: str, payload: dict, headers: dict) -> httpx.Response:
+    client = _new_llm_http()
+    try:
+        return client.post(url, json=payload, headers=headers)
+    finally:
+        client.close()
+
+
 def _call_llm(cfg: dict, context: str, task: str) -> str:
     base = normalize_api_base(cfg.get("api_base", "") or "")
     key = (cfg.get("api_key") or "").strip()
@@ -209,22 +245,31 @@ def _call_llm(cfg: dict, context: str, task: str) -> str:
     if not base:
         raise RuntimeError("未配置 API 地址")
     url = base + "/chat/completions"
-    payload = {
-        "model": (cfg.get("model") or "").strip() or "gpt-4o-mini",
-        "messages": [
-            {"role": "system",
-             "content": "你是专业的A股量化分析助手。基于用户提供的实时数据回答，客观严谨，"
-                        "分点作答，不做收益承诺。所有结论附依据。"},
-            {"role": "user", "content": f"【实时数据】{context}\n\n【任务】{task}"},
-        ],
-        "temperature": 0.4,
-        "max_tokens": 900,
-    }
-    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    messages = [
+        {"role": "system",
+         "content": "你是专业的A股量化分析助手。基于用户提供的实时数据回答，客观严谨，"
+                    "分点作答，不做收益承诺。所有结论附依据。"},
+        {"role": "user", "content": f"【实时数据】{context}\n\n【任务】{task}"},
+    ]
+    model = (cfg.get("model") or "").strip() or "gpt-4o-mini"
+    variants = [
+        {"max_tokens": 900, "temperature": 0.4},
+        {"max_completion_tokens": 900, "temperature": 0.4},
+        {"max_completion_tokens": 900},
+    ]
+    headers = _auth_headers(base, key)
     last_exc: Exception | None = None
-    for attempt in range(2):
+    idx, net_try = 0, 0
+    while idx < len(variants):
+        payload = {"model": model, "messages": messages, **variants[idx]}
         try:
-            resp = _llm_http().post(url, json=payload, headers=headers)
+            resp = _post_chat(url, payload, headers)
+            if resp.status_code == 400 and idx < len(variants) - 1:
+                last_exc = RuntimeError(f"HTTP 400：{_parse_llm_error(resp)}")
+                log.warning("LLM 400，切换参数重试: %s", last_exc)
+                idx += 1
+                net_try = 0
+                continue
             if resp.status_code >= 400:
                 raise RuntimeError(f"HTTP {resp.status_code}：{_parse_llm_error(resp)}")
             data = resp.json()
@@ -243,8 +288,11 @@ def _call_llm(cfg: dict, context: str, task: str) -> str:
             _set_last_error("")
             return text
         except (httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError) as exc:
-            last_exc = RuntimeError(f"网络失败：{exc}"[:240])
-            log.warning("LLM 网络失败 attempt=%s: %s", attempt + 1, exc)
+            last_exc = RuntimeError(f"网络失败：{str(exc)[:220]}")
+            log.warning("LLM 网络失败 variant=%s try=%s: %s", idx, net_try + 1, exc)
+            net_try += 1
+            if net_try >= 2:
+                break
             continue
         except Exception as exc:  # noqa: BLE001
             last_exc = exc if isinstance(exc, RuntimeError) else RuntimeError(str(exc)[:240])
@@ -254,19 +302,75 @@ def _call_llm(cfg: dict, context: str, task: str) -> str:
     raise last_exc or RuntimeError(msg)
 
 
-def test_connection() -> dict:
-    """最小连通性探测：配置缺失时给出明确原因，成功则返回模型短回复。"""
+def diagnose() -> dict:
+    """逐步探测：配置 → DNS → TCP → Chat Completions，并给出处理建议。"""
     cfg = get_meta_json("ai_config", {}) or {}
     base = normalize_api_base(cfg.get("api_base", "") or "")
-    if not cfg.get("api_key"):
-        return {"ok": False, "error": "请先填写并保存 API 密钥", "api_base": base, "model": cfg.get("model", "")}
+    key = (cfg.get("api_key") or "").strip()
+    model = (cfg.get("model") or "").strip() or "gpt-4o-mini"
+    steps: list[dict] = []
+
+    def add(sid: str, label: str, ok: bool, detail: str) -> None:
+        steps.append({"id": sid, "label": label, "ok": ok, "detail": detail})
+
+    add("key", "API 密钥", bool(key), "已填写" if key else "未填写")
+    add("base", "API 地址", bool(base), base or "未填写")
+    add("model", "模型名称", True, model)
+    if not key:
+        err = "请先填写并保存 API 密钥"
+        _set_last_error(err)
+        return {"ok": False, "error": err, "hint": _hint_for_error(err),
+                "api_base": base, "model": model, "steps": steps}
     if not base:
-        return {"ok": False, "error": "请先填写并保存 API 地址", "api_base": base, "model": cfg.get("model", "")}
+        err = "请先填写并保存 API 地址"
+        _set_last_error(err)
+        return {"ok": False, "error": err, "hint": _hint_for_error(err),
+                "api_base": base, "model": model, "steps": steps}
+
+    parsed = urlparse(base if "://" in base else f"https://{base}")
+    host = parsed.hostname or ""
+    port = parsed.port or (443 if (parsed.scheme or "https") == "https" else 80)
+    if not host:
+        err = f"无法解析 API 地址：{base}"
+        add("dns", "域名解析", False, err)
+        return {"ok": False, "error": err, "hint": _hint_for_error(err),
+                "api_base": base, "model": model, "steps": steps}
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        ip = infos[0][4][0] if infos else "?"
+        add("dns", "域名解析", True, f"{host} → {ip}")
+    except Exception as exc:  # noqa: BLE001
+        err = f"DNS 失败：{exc}"
+        add("dns", "域名解析", False, str(exc)[:200])
+        _set_last_error(err)
+        return {"ok": False, "error": err, "hint": _hint_for_error(err),
+                "api_base": base, "model": model, "steps": steps}
+    try:
+        with socket.create_connection((host, port), 8):
+            add("tcp", "TCP 连接", True, f"{host}:{port} 可连接")
+    except Exception as exc:  # noqa: BLE001
+        err = f"TCP 失败：{exc}"
+        add("tcp", "TCP 连接", False, str(exc)[:200])
+        _set_last_error(err)
+        return {"ok": False, "error": err, "hint": _hint_for_error(err),
+                "api_base": base, "model": model, "steps": steps}
+
     try:
         text = _call_llm(cfg, "连通性测试", "请只回复两个字：成功")
-        return {"ok": True, "reply": text[:120], "api_base": base, "model": cfg.get("model") or "gpt-4o-mini"}
+        add("chat", "Chat Completions", True, (text or "")[:80] or "ok")
+        return {"ok": True, "reply": (text or "")[:120], "error": "", "hint": "",
+                "api_base": base, "model": model, "steps": steps}
     except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": str(exc)[:300], "api_base": base, "model": cfg.get("model", "")}
+        err = str(exc)[:300]
+        add("chat", "Chat Completions", False, err)
+        _set_last_error(err)
+        return {"ok": False, "error": err, "hint": _hint_for_error(err),
+                "api_base": base, "model": model, "steps": steps}
+
+
+def test_connection() -> dict:
+    """连通性探测：返回逐步检查结果与处理建议。"""
+    return diagnose()
 
 
 def pick_stocks(description: str) -> dict:

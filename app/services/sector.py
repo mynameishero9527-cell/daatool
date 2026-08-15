@@ -8,7 +8,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from ..cache import cached
-from ..database import executemany, query
+from ..database import execute, executemany, query
 from ..datasources import tencent
 from . import metrics as metrics_svc
 from . import rating
@@ -267,7 +267,7 @@ def get_profile(code: str) -> dict:
             "volume_desc": vol_desc, "desc": desc}
 
 
-# ---------------- 板块资金日频 + 横向直方图（FR10-03） ----------------
+# ---------------- 板块资金日频 + 横向直方图 + 日走势（FR10-03 / FR11-03） ----------------
 
 _FLOW_TZ = ZoneInfo("Asia/Shanghai")
 RANGE_DAYS = {"1d": 1, "3d": 3, "5d": 5, "10d": 10, "20d": 20, "1m": 20, "3m": 60}
@@ -281,9 +281,25 @@ def beijing_trade_date() -> str:
     return datetime.now(_FLOW_TZ).strftime("%Y-%m-%d")
 
 
+def snapshot_asof_date() -> str:
+    """账本日 = 快照 MAX(updated_at) 的日期，而不是日历今天。"""
+    rows = query("SELECT MAX(updated_at) AS t FROM stock_snapshot")
+    raw = ((rows[0]["t"] if rows else "") or "").strip()
+    if len(raw) >= 10 and raw[4] == "-" and raw[7] == "-":
+        return raw[:10]
+    return beijing_trade_date()
+
+
+def _valid_day(day: str, asof: str) -> str:
+    d = (day or "").strip()
+    if len(d) == 10 and d[4] == "-" and d[7] == "-" and d <= asof:
+        return d
+    return ""
+
+
 def record_daily_flow() -> dict:
-    """快照成功后 upsert 当日行业/概念资金。单位：万元。"""
-    trade_date = beijing_trade_date()
+    """按快照 asof 日 upsert 行业/概念资金（万元），并清掉晚于 asof 的错账。"""
+    asof = snapshot_asof_date()
     industry_rows = query(
         """SELECT l.industry AS name, COUNT(*) AS stocks,
                   SUM(s.main_net_in) AS net_in, SUM(s.amount) AS amount
@@ -303,9 +319,28 @@ def record_daily_flow() -> dict:
                VALUES(?,?,?,?,?,?)
                ON CONFLICT(dim,name,trade_date) DO UPDATE SET
                  net_in=excluded.net_in, amount=excluded.amount, stocks=excluded.stocks""",
-            [(dim, r["name"], trade_date, r["net_in"] or 0, r["amount"] or 0, r["stocks"] or 0)
+            [(dim, r["name"], asof, r["net_in"] or 0, r["amount"] or 0, r["stocks"] or 0)
              for dim, r in pairs])
-    return {"date": trade_date, "rows": len(pairs)}
+    deleted = 0
+    try:
+        before = query("SELECT COUNT(*) AS n FROM sector_flow_daily WHERE trade_date > ?", (asof,))
+        deleted = (before[0]["n"] if before else 0) or 0
+        if deleted:
+            execute("DELETE FROM sector_flow_daily WHERE trade_date > ?", (asof,))
+    except Exception:  # noqa: BLE001
+        deleted = 0
+    return {"date": asof, "rows": len(pairs), "deleted_future": deleted}
+
+
+def _ensure_ledger() -> str:
+    asof = snapshot_asof_date()
+    try:
+        if query("SELECT COUNT(*) AS n FROM stock_snapshot")[0]["n"]:
+            record_daily_flow()
+            asof = snapshot_asof_date()
+    except Exception:  # noqa: BLE001
+        pass
+    return asof
 
 
 def flow_history_stats() -> dict:
@@ -341,14 +376,30 @@ def _flow_from_snapshot(dim: str, field: str) -> list[dict]:
             GROUP BY c.concept HAVING COUNT(*) >= 5""")
 
 
-def _flow_from_daily(dim: str, target_days: int) -> tuple[list[dict], dict, str]:
+def _flow_from_daily(dim: str, target_days: int, asof: str, day: str = "") -> tuple[list[dict], dict, str]:
+    if day:
+        rows = query(
+            """SELECT name, net_in, amount, stocks FROM sector_flow_daily
+               WHERE dim=? AND trade_date=?""", (dim, day))
+        items = [{
+            "name": r["name"],
+            "net_in_yi": round((r["net_in"] or 0) / 10000.0, 2),
+            "amount_yi": round((r["amount"] or 0) / 10000.0, 1),
+            "stocks": r["stocks"] or 0,
+            "days": 1,
+        } for r in rows]
+        have = 1 if items else 0
+        note = (f"直方图为账本 {day} 当日横截面"
+                if have else f"账本没有 {day} 的记录，未用涨跌幅填补")
+        return items, {"have": have, "target": 1, "dates": [day] if have else []}, note
+
     dates = query(
-        "SELECT DISTINCT trade_date FROM sector_flow_daily WHERE dim=? "
-        "ORDER BY trade_date DESC LIMIT ?", (dim, target_days))
+        "SELECT DISTINCT trade_date FROM sector_flow_daily WHERE dim=? AND trade_date<=? "
+        "ORDER BY trade_date DESC LIMIT ?", (dim, asof, target_days))
     have = len(dates)
     if not have:
         return [], {"have": 0, "target": target_days, "dates": []}, \
-            "尚无板块资金日频记录。当天/近5日可用快照；更长区间需快照同步后逐日落库，不会用涨跌幅填补。"
+            "尚无板块资金日频记录。请先全量同步；不会用涨跌幅填补空白日。"
     date_list = [d["trade_date"] for d in dates]
     ph = ",".join("?" * len(date_list))
     rows = query(
@@ -366,11 +417,46 @@ def _flow_from_daily(dim: str, target_days: int) -> tuple[list[dict], dict, str]
         "days": r["days"],
     } for r in rows]
     if have < target_days:
-        note = (f"已累计 {have} 个交易日（目标 {target_days}），早期日期待落库。"
-                "未用涨跌幅冒充资金流入。")
+        note = (f"账本已覆盖 {have}/{target_days} 个交易日（{date_list[-1]}～{date_list[0]}），"
+                "空白日不填 0、不用涨跌幅冒充资金。")
     else:
-        note = f"已按近 {have} 个交易日板块资金合计（交易日）"
+        note = f"直方图为近 {have} 个交易日账本合计（{date_list[-1]}～{date_list[0]}）"
     return items, {"have": have, "target": target_days, "dates": date_list}, note
+
+
+def _attach_snap_ref(dim: str, items: list[dict]) -> None:
+    """快照字段只作对照，不参与柱高。"""
+    m1 = {r["name"]: r for r in _flow_from_snapshot(dim, "main_net_in")}
+    m5 = {r["name"]: r for r in _flow_from_snapshot(dim, "main_net_in_d5")}
+    for it in items:
+        s1 = m1.get(it["name"]) or {}
+        s5 = m5.get(it["name"]) or {}
+        it["snap_d1_yi"] = s1.get("net_in_yi")
+        it["snap_d5_yi"] = s5.get("net_in_yi")
+
+
+def _reconcile(asof: str) -> dict:
+    """行业合计：账本 asof 日 vs 最新快照，用于校验联动准确性。"""
+    snap = query(
+        """SELECT ROUND(SUM(s.main_net_in) / 10000.0, 2) AS yi
+           FROM stock_snapshot s JOIN stock_list l ON l.code = s.code
+           WHERE s.amount IS NOT NULL AND l.industry != ''""")
+    led = query(
+        """SELECT ROUND(SUM(net_in) / 10000.0, 2) AS yi
+           FROM sector_flow_daily WHERE dim='industry' AND trade_date=?""", (asof,))
+    snap_yi = (snap[0]["yi"] if snap else None)
+    led_yi = (led[0]["yi"] if led else None)
+    match = False
+    if snap_yi is not None and led_yi is not None:
+        match = abs((snap_yi or 0) - (led_yi or 0)) < 0.02
+    return {
+        "asof": asof,
+        "calendar_today": beijing_trade_date(),
+        "snap_industry_net_yi": snap_yi,
+        "ledger_industry_net_yi": led_yi,
+        "match": match,
+        "note": "行业合计账本应等于最新快照主力净流入；概念因一股多概念会重复计入，不作对账。",
+    }
 
 
 def _sort_flow_items(items: list[dict], sort: str) -> list[dict]:
@@ -382,51 +468,112 @@ def _sort_flow_items(items: list[dict], sort: str) -> list[dict]:
 
 
 def get_flow_bar(dim: str = "industry", range_key: str = "1d",
-                 sort: str = "inflow") -> dict:
+                 sort: str = "inflow", day: str = "") -> dict:
     dim = dim if dim in ("industry", "concept") else "industry"
     range_key = range_key if range_key in RANGE_DAYS else "1d"
     sort = sort if sort in ("inflow", "outflow", "abs") else "inflow"
     target = RANGE_DAYS[range_key]
-    try:
-        if query("SELECT COUNT(*) AS n FROM stock_snapshot")[0]["n"]:
-            record_daily_flow()
-    except Exception:  # noqa: BLE001
-        pass
+    asof = _ensure_ledger()
+    day = _valid_day(day, asof)
 
-    snap_1d = _flow_from_snapshot(dim, "main_net_in")
-    snap_5d = _flow_from_snapshot(dim, "main_net_in_d5")
-    daily_items, coverage, daily_note = [], {"have": 0, "target": target, "dates": []}, ""
-    try:
-        daily_items, coverage, daily_note = _flow_from_daily(dim, target)
-    except Exception as exc:  # noqa: BLE001
-        daily_note = f"日频累计暂不可用：{exc}"
-
-    if range_key == "1d":
-        items, note = snap_1d, "当天主力净流入，与资金全景当日口径一致"
-        coverage = {"have": 1 if items else 0, "target": 1, "dates": [beijing_trade_date()]}
-    elif range_key == "5d":
-        items = snap_5d or snap_1d
-        note = ("近5日主力净流入取自行情快照累计字段（交易日）"
-                if snap_5d else "近5日快照字段为空，已回退为当天主力净流入")
-        coverage = {"have": 5 if snap_5d else (1 if items else 0), "target": 5, "dates": []}
-    elif daily_items:
-        items, note = daily_items, daily_note
-    elif target >= 5 and snap_5d:
-        items = snap_5d
-        coverage = {"have": 5, "target": target, "dates": []}
-        note = (f"日频仅 {coverage.get('have', 0)}/{target} 日，已用快照近5日主力净流入展示，"
-                "未用涨跌幅填补。后续同步会补齐日频。")
-    else:
-        items = snap_1d
-        coverage = {"have": 1 if items else 0, "target": target, "dates": [beijing_trade_date()]}
-        note = (f"日频不足（目标 {target} 个交易日），已用当天主力净流入展示。"
-                "未用涨跌幅冒充资金。盘中/盘后同步后会逐日累加。")
-
+    items, coverage, note = _flow_from_daily(dim, target, asof, day)
+    _attach_snap_ref(dim, items)
     items = _sort_flow_items(items or [], sort)
+    rec = _reconcile(asof)
+    if day:
+        extra = f" · 当前查看 {day} 当日横截面"
+    else:
+        extra = f" · 账本日 {asof}"
+        if rec["calendar_today"] != asof:
+            extra += f"（日历 {rec['calendar_today']}，以快照日为准）"
+    if rec.get("match"):
+        extra += " · 行业账本与快照对账一致"
+    elif rec.get("ledger_industry_net_yi") is not None:
+        extra += (f" · 对账 账本{rec.get('ledger_industry_net_yi')}亿"
+                  f"/快照{rec.get('snap_industry_net_yi')}亿")
     return {
         "dim": dim, "range": range_key, "range_label": RANGE_LABELS[range_key],
-        "target_days": target, "items": items, "coverage": coverage, "note": note,
-        "sort": sort, "ranges": RANGE_LABELS, "count": len(items),
+        "target_days": target, "items": items, "coverage": coverage,
+        "note": note + extra, "sort": sort, "ranges": RANGE_LABELS,
+        "count": len(items), "asof": asof, "day": day,
+        "calendar_today": rec["calendar_today"], "reconcile": rec,
+        "source": "sector_flow_daily",
+    }
+
+
+def get_flow_trend(dim: str = "industry", name: str = "",
+                   range_key: str = "1d") -> dict:
+    dim = dim if dim in ("industry", "concept") else "industry"
+    range_key = range_key if range_key in RANGE_DAYS else "1d"
+    name = (name or "").strip()
+    target = RANGE_DAYS[range_key]
+    asof = _ensure_ledger()
+    dates = query(
+        "SELECT DISTINCT trade_date FROM sector_flow_daily WHERE dim=? AND trade_date<=? "
+        "ORDER BY trade_date DESC LIMIT ?", (dim, asof, target))
+    date_list = [d["trade_date"] for d in dates]
+    date_list.reverse()
+    double_count = (not name) and dim == "concept"
+    series: list[dict] = []
+    if date_list:
+        ph = ",".join("?" * len(date_list))
+        if name:
+            rows = query(
+                f"""SELECT trade_date, net_in, amount, stocks FROM sector_flow_daily
+                    WHERE dim=? AND name=? AND trade_date IN ({ph})""",
+                (dim, name, *date_list))
+        else:
+            rows = query(
+                f"""SELECT trade_date, SUM(net_in) AS net_in, SUM(amount) AS amount,
+                           SUM(stocks) AS stocks
+                    FROM sector_flow_daily
+                    WHERE dim=? AND trade_date IN ({ph})
+                    GROUP BY trade_date""",
+                (dim, *date_list))
+        by_d = {r["trade_date"]: r for r in rows}
+        cum = 0.0
+        for d in date_list:
+            r = by_d.get(d)
+            if r is None:
+                series.append({
+                    "date": d, "net_in_yi": None, "amount_yi": None,
+                    "stocks": 0, "missing": True, "cum_yi": round(cum, 2),
+                })
+                continue
+            net_yi = round((r["net_in"] or 0) / 10000.0, 2)
+            cum += net_yi
+            series.append({
+                "date": d, "net_in_yi": net_yi,
+                "amount_yi": round((r["amount"] or 0) / 10000.0, 1),
+                "stocks": r["stocks"] or 0, "missing": False,
+                "cum_yi": round(cum, 2),
+            })
+    have = sum(1 for p in series if not p["missing"])
+    last = next((p for p in reversed(series) if not p["missing"]), None)
+    kpis = {
+        "sum_net_yi": round(sum(p["net_in_yi"] or 0 for p in series if not p["missing"]), 2),
+        "last_net_yi": None if last is None else last["net_in_yi"],
+        "last_date": "" if last is None else last["date"],
+        "days_have": have,
+        "days_target": target,
+    }
+    dim_label = "题材概念" if dim == "concept" else "行业板块"
+    title = name or f"全市场{dim_label}合计"
+    notes = [
+        f"日走势与直方图共用 sector_flow_daily，账本日 {asof}",
+        f"覆盖 {have}/{target} 个交易日，缺日显示为空而非 0",
+    ]
+    if double_count:
+        notes.append("概念合计因一股多概念会重复计入，点选具体概念后口径才是该题材本身")
+    if not series:
+        notes.append("尚无日频点，请先全量同步。不会用涨跌幅冒充资金走势")
+    return {
+        "dim": dim, "name": name, "title": title,
+        "range": range_key, "range_label": RANGE_LABELS[range_key],
+        "asof": asof, "calendar_today": beijing_trade_date(),
+        "coverage": {"have": have, "target": target, "dates": date_list},
+        "series": series, "kpis": kpis, "note": "。".join(notes) + "。",
+        "double_count": double_count, "source": "sector_flow_daily",
     }
 
 
@@ -435,18 +582,20 @@ def get_flow_bar_stocks(dim: str, name: str, range_key: str = "1d",
     dim = dim if dim in ("industry", "concept") else "industry"
     range_key = range_key if range_key in RANGE_DAYS else "1d"
     limit = max(10, min(int(limit or 50), 200))
+    asof = snapshot_asof_date()
     join = ("JOIN stock_list l ON l.code = s.code AND l.industry = ?"
             if dim == "industry" else
             "JOIN concept_map c ON c.code = s.code AND c.concept = ?")
     if range_key == "5d":
-        flow_col, stock_note = "s.main_net_in_d5", "个股贡献为近5日主力净流入"
+        flow_col = "s.main_net_in_d5"
+        stock_note = "个股贡献为最新快照近5日主力净流入"
     elif range_key == "1d":
-        flow_col, stock_note = "s.main_net_in", "个股贡献为当日主力净流入"
+        flow_col = "s.main_net_in"
+        stock_note = "个股贡献为最新快照当日主力净流入"
     else:
-        flow_col, stock_note = (
-            "s.main_net_in",
-            "个股区间资金仅当天/5日可精确，更长区间暂显示当日主力净流入",
-        )
+        flow_col = "s.main_net_in"
+        stock_note = "个股区间资金仅当天/5日可精确到票，更长区间暂显示当日主力净流入"
+    stock_note += f"。个股明细为最新快照，直方图/日走势为板块日频账本（账本日 {asof}）"
     rows = query(
         f"""SELECT s.code, s.name, s.price, s.pct, s.main_net_in, s.main_net_in_d5,
                    s.volume_ratio, s.main_in, s.main_out, s.amount,
@@ -466,4 +615,4 @@ def get_flow_bar_stocks(dim: str, name: str, range_key: str = "1d",
     finance_svc.attach_grades(rows)
     metrics_svc.attach_flow_list(rows)
     return {"dim": dim, "name": name, "range": range_key, "items": rows,
-            "note": stock_note, "total": len(rows)}
+            "note": stock_note, "total": len(rows), "asof": asof}
