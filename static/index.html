@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>A股量化工具</title>
-<link rel="stylesheet" href="/static/style.css?v=13.0.15">
+<link rel="stylesheet" href="/static/style.css?v=13.0.16">
 <script>
 (function () {
   try {
@@ -68,17 +68,17 @@
 
     <!-- 大盘行情视图 -->
     <div id="dashMarket">
-      <div class="grid-3">
-        <div class="card">
+      <div class="grid-3 dash-kpi-row">
+        <div class="card dash-kpi">
           <div class="card-title">市场统计 <span class="muted" id="statsTime"></span></div>
           <div id="marketStats" class="stats-row"></div>
         </div>
-        <div class="card">
+        <div class="card dash-kpi">
           <div class="card-title">市场情绪与大周期</div>
           <div id="marketSentiment"><div class="empty">计算中…</div></div>
           <div id="marketCycle"></div>
         </div>
-        <div class="card">
+        <div class="card dash-kpi">
           <div class="card-title">明日预测概率 <span class="muted">启发式估计</span></div>
           <div id="forecastBox"><div class="empty">计算中…</div></div>
         </div>
@@ -809,6 +809,6 @@
   <div class="ctx-item" id="ctxKbRevert" style="display:none">↩ 还原内置解释</div>
 </div>
 
-<script src="/static/app.js?v=13.0.15"></script>
+<script src="/static/app.js?v=13.0.16"></script>
 </body>
 </html>

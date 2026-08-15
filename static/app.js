@@ -592,14 +592,15 @@ async function loadForecast() {
   try {
     const f = await api("/api/market/forecast");
     $("#forecastBox").innerHTML = `
-      <div style="text-align:center">
+      <div class="forecast-head">
         <span class="prob-num ${f.prob_up >= 58 ? "up" : f.prob_up <= 42 ? "down" : "flat"}">${f.prob_up}%</span>
         <span class="badge ${f.prob_up >= 58 ? "level-4" : f.prob_up <= 42 ? "level-1" : "level-2"}">明日${esc(f.view)}</span>
       </div>
       <div class="prob-bar"><div class="p" style="width:${f.prob_up}%"></div></div>
-      ${f.factors.map((x) => `<div class="kv"><span class="k">${esc(x.name)}</span>
-        <span>${esc(x.value)} <span class="num ${cls(x.impact)}">${sign(x.impact)}${fmt(x.impact, 1)}</span></span></div>`).join("")}
-      <div class="muted" style="font-size:calc(11px * var(--font-scale));margin-top:6px">${esc(f.disclaimer)}</div>`;
+      <div class="fc-factors">${(f.factors || []).map((x) =>
+        `<span class="fc-chip" title="${esc(x.value || "")}"><b>${esc(x.name)}</b><span class="num ${cls(x.impact)}">${sign(x.impact)}${fmt(x.impact, 1)}</span></span>`
+      ).join("")}</div>
+      <div class="muted fc-note">${esc(f.disclaimer)}</div>`;
   } catch (err) { console.warn(err); }
 }
 
@@ -768,11 +769,14 @@ async function loadMarketSentiment() {
     }
     $("#marketSentiment").innerHTML = `
       <div class="thermo">
-        <span class="temp ${s.temp >= 55 ? "up" : s.temp < 45 ? "down" : "flat"}">${s.temp}</span>
-        <span class="badge ${s.temp >= 70 ? "level-4" : s.temp >= 45 ? "level-2" : "level-1"}">${esc(s.level)}</span>
+        <div class="thermo-head">
+          <span class="temp ${s.temp >= 55 ? "up" : s.temp < 45 ? "down" : "flat"}">${s.temp}</span>
+          <span class="badge ${s.temp >= 70 ? "level-4" : s.temp >= 45 ? "level-2" : "level-1"}">${esc(s.level)}</span>
+          <span class="muted">涨停 ${s.limit_up} 家</span>
+        </div>
         <div class="thermo-bar"><div class="pin" style="left:${s.temp}%"></div></div>
         <div class="scale"><span>恐慌</span><span>平静</span><span>亢奋</span></div>
-        <div class="muted" style="margin-top:6px">${esc(s.desc)} · 今日涨停 ${s.limit_up} 家</div>
+        <div class="cycle-note">${esc(s.desc)}</div>
       </div>`;
   } catch (err) { console.warn(err); }
 }
@@ -794,15 +798,13 @@ async function loadMarketCycle() {
     const c = await api("/api/market/cycle");
     if (!c.stage || c.stage === "未知") { $("#marketCycle").innerHTML = ""; return; }
     $("#marketCycle").innerHTML = `
-      <hr style="border-color:var(--border);margin:8px 0">
-      <div class="kv"><span class="k">攻守姿态</span>
-        <span><span class="badge ${c.stance_css}" style="font-size:calc(13px * var(--font-scale));padding:3px 12px">${esc(c.stance)}</span>
-        <span class="muted">恐慌指数 ${fmt(c.panic_index, 0)}</span></span></div>
-      <div class="muted" style="font-size:calc(12px * var(--font-scale));margin-bottom:4px">${esc(c.stance_desc)}</div>
-      <div class="kv"><span class="k">大周期阶段</span>
-        <span><span class="badge ${c.stage_css}">${esc(c.stage)}</span></span></div>
-      <div class="kv"><span class="k">大盘量能</span><span>${esc(c.vol_desc)}（5日/20日均量比 ${fmt(c.vol_ratio)}）</span></div>
-      <div class="muted" style="font-size:calc(12px * var(--font-scale))">${esc(c.stage_desc)} · 市场宽度 ${fmt(c.breadth, 0)}% · 年化波动 ${fmt(c.volatility20, 0)}%${
+      <div class="cycle-kpis">
+        <div class="sqr-cell"><span>攻守</span><b>${esc(c.stance)}</b></div>
+        <div class="sqr-cell"><span>大周期</span><b>${esc(c.stage)}</b></div>
+        <div class="sqr-cell"><span>量能</span><b>${esc(c.vol_desc)}</b></div>
+        <div class="sqr-cell"><span>恐慌</span><b>${fmt(c.panic_index, 0)}</b></div>
+      </div>
+      <div class="cycle-note">${esc(c.stance_desc)} · ${esc(c.stage_desc)} · 宽度 ${fmt(c.breadth, 0)}% · 5/20日量比 ${fmt(c.vol_ratio)}${
         c.consec_days ? ` · ${c.consec_days > 0 ? "连涨" + c.consec_days + "日" : "连跌" + Math.abs(c.consec_days) + "日"}` : ""}</div>`;
   } catch (err) { console.warn(err); }
 }
@@ -816,7 +818,7 @@ function renderStats(s) {
     <div class="stat"><div class="v flat">${s.flat}</div><div class="k">平盘</div></div>
     <div class="stat"><div class="v up">${s.limit_up}</div><div class="k">涨停</div></div>
     <div class="stat"><div class="v down">${s.limit_down}</div><div class="k">跌停</div></div>
-    <div class="stat"><div class="v">${fmt(s.amount_yi, 0)}</div><div class="k">成交额(亿)</div></div>
+    <div class="stat" title="成交额（亿元）"><div class="v">${fmt(s.amount_yi, 0)}</div><div class="k">成交额</div></div>
     <div class="updown-bar"><div class="u" style="width:${(s.up / total) * 100}%"></div><div class="d" style="width:${(s.down / total) * 100}%"></div></div>`;
 }
 
