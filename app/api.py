@@ -364,9 +364,10 @@ def macro_intel_ai_analyze(payload: dict = Body(default={})):
 
 
 @router.get("/macro/hot-intel")
-def macro_hot_intel(source: str = "", limit: int = Query(80, le=200)):
-    """热门信息：全部已落库 AI 词库/板块。"""
-    return intel_ai.list_hot_intel(source, limit)
+def macro_hot_intel(source: str = "", limit: int = Query(80, le=200),
+                    sort: str = "heat", order: str = "desc"):
+    """热门信息：全部已落库 AI 词库/板块。默认热度倒序，可换维度。"""
+    return intel_ai.list_hot_intel(source, limit, sort, order)
 
 
 @router.post("/commodities/watch")

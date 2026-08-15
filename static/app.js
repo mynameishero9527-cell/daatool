@@ -1697,6 +1697,8 @@ let intelAiIndex = {};
 let ctxIntel = null;
 let ctxKb = null;
 const hotIntelFocus = { key: "", sector: "" };
+let hotIntelSort = "heat";
+let hotIntelOrder = "desc";
 let hotStockLimit = 20;
 
 function hotStockLimitBtns(active) {
@@ -2236,12 +2238,35 @@ async function renderHotWords(box) {
 }
 
 async function renderHotIntel(box) {
-  const d = await api(`/api/macro/hot-intel?limit=80`);
+  const d = await api(`/api/macro/hot-intel?sort=${encodeURIComponent(hotIntelSort)}&order=${encodeURIComponent(hotIntelOrder)}&limit=80`);
   const rows = d.items || [];
+  const sorts = (d.sorts && d.sorts.length) ? d.sorts : [
+    { id: "heat", name: "热度" }, { id: "attention", name: "关注度" },
+    { id: "updated_at", name: "更新时间" }, { id: "event_time", name: "事件时间" },
+  ];
+  const curSort = d.sort || hotIntelSort;
+  const curOrder = d.order || hotIntelOrder;
+  hotIntelSort = curSort;
+  hotIntelOrder = curOrder;
   box.innerHTML = `
     <div class="muted" style="margin-bottom:8px">
       热门信息：汇总已保存的 AI 分析词库（快讯/政策/日历/公告/持股/热词）。
       ${esc(d.note || "")} 共 ${d.total || 0} 条。点击卡片看板块，再点板块看个股（默认 TOP20，可选 TOP30/TOP50）。右键可再次分析。
+    </div>
+    <div class="cond-inline" style="margin-bottom:10px;gap:16px">
+      <span><span class="g-label muted">排序</span>
+        <span class="btn-group" id="hotIntelSort">
+          ${sorts.map((s) => {
+            const id = s.id || s;
+            const name = s.name || s;
+            return `<button type="button" class="opt ${id === curSort ? "active" : ""}" data-sort="${esc(id)}">${esc(name)}</button>`;
+          }).join("")}
+        </span></span>
+      <span><span class="g-label muted">方向</span>
+        <span class="btn-group" id="hotIntelOrder">
+          <button type="button" class="opt ${curOrder === "desc" ? "active" : ""}" data-order="desc">倒序</button>
+          <button type="button" class="opt ${curOrder === "asc" ? "active" : ""}" data-order="asc">正序</button>
+        </span></span>
     </div>
     <div id="hotIntelDetail"></div>
     ${rows.length ? `<div class="intel-grid">${rows.map((it) => {
@@ -2271,6 +2296,18 @@ async function renderHotIntel(box) {
         <div class="ic-src">来源：${esc(it.source_label || "")}${it.updated_at ? " · " + esc(it.updated_at) : ""}${it.ai_source ? " · " + esc(it.ai_source) : ""}</div>
       </div>`;
     }).join("")}</div>` : `<div class="empty">${esc(d.empty_reason || "暂无热门信息")}</div>`}`;
+  $("#hotIntelSort")?.addEventListener("click", (e) => {
+    const btn = e.target.closest(".opt");
+    if (!btn) return;
+    hotIntelSort = btn.dataset.sort || "heat";
+    loadMacro();
+  });
+  $("#hotIntelOrder")?.addEventListener("click", (e) => {
+    const btn = e.target.closest(".opt");
+    if (!btn) return;
+    hotIntelOrder = btn.dataset.order || "desc";
+    loadMacro();
+  });
   if (hotIntelFocus.key) await openHotIntelCard(hotIntelFocus.key, false);
 }
 

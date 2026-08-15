@@ -263,14 +263,44 @@ def index() -> dict:
     return {"ok": True, "count": len(items), "items": items}
 
 
-def list_hot_intel(source: str = "", limit: int = 80) -> dict:
-    """热门信息：所有 AI 分析词库/板块，块状展示。"""
+SORT_DIMS = (
+    {"id": "heat", "name": "热度"},
+    {"id": "attention", "name": "关注度"},
+    {"id": "updated_at", "name": "更新时间"},
+    {"id": "event_time", "name": "事件时间"},
+)
+SORT_IDS = {d["id"] for d in SORT_DIMS}
+
+
+def _num_sort_val(v, descending: bool) -> float:
+    try:
+        if v is None or v == "":
+            raise TypeError
+        return float(v)
+    except (TypeError, ValueError):
+        return float("-inf") if descending else float("inf")
+
+
+def _sort_key(card: dict, primary: str, descending: bool):
+    dims = [primary] + [d["id"] for d in SORT_DIMS if d["id"] != primary]
+    keys = []
+    for dim in dims:
+        val = card.get(dim)
+        if dim in ("heat", "attention"):
+            keys.append(_num_sort_val(val, descending))
+        else:
+            keys.append(str(val or ""))
+    return tuple(keys)
+
+
+def list_hot_intel(source: str = "", limit: int = 80, sort: str = "heat", order: str = "desc") -> dict:
+    """热门信息：所有 AI 分析词库/板块，块状展示。默认按热度倒序，可换维度。"""
     idx = index()
     cards = list((idx.get("items") or {}).values())
     src = (source or "").strip()
     if src and src in ALLOWED_SOURCES:
         cards = [c for c in cards if c.get("source") == src]
-    # 热度词汇补 heat
+    # 热度词汇补 heat（只用已落库热度，不编造）
     try:
         today = datetime.now(_TZ).strftime("%Y-%m-%d")
         heats = {r["term"]: r.get("heat") for r in query(
@@ -287,15 +317,23 @@ def list_hot_intel(source: str = "", limit: int = 80) -> dict:
             names = (c.get("bull") or []) + (c.get("bear") or [])
             c["keywords"] = names[:8]
             c["has_keywords"] = bool(c["keywords"])
-    cards.sort(key=lambda x: (x.get("updated_at") or "", x.get("heat") or x.get("attention") or 0), reverse=True)
+    sort = (sort or "heat").strip()
+    if sort not in SORT_IDS:
+        sort = "heat"
+    order = "asc" if (order or "").strip().lower() == "asc" else "desc"
+    descending = order == "desc"
+    cards.sort(key=lambda x: _sort_key(x, sort, descending), reverse=descending)
     limit = max(10, min(int(limit or 80), 200))
     return {
         "ok": True,
         "items": cards[:limit],
         "count": min(len(cards), limit),
         "total": len(cards),
+        "sort": sort,
+        "order": order,
+        "sorts": list(SORT_DIMS),
         "sources": [{"id": k, "name": v} for k, v in SOURCE_LABELS.items()],
-        "note": "仅展示已成功落库的 AI 分析。失败未写入的条目不会出现。点击卡片看板块，再点板块看个股，默认 TOP20，可选 TOP30/TOP50。",
+        "note": "仅展示已成功落库的 AI 分析。默认按热度倒序，缺热度/关注度的排后面。可改关注度、更新时间、事件时间。点击卡片看板块，再点板块看个股，默认 TOP20。",
         "empty_reason": "" if cards else "尚无已保存的 AI 分析词库。请在宏观情报各栏目或持股上右键分析利好/利空、解读或提取词库。",
     }
 
