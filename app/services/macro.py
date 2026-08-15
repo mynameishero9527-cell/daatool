@@ -374,7 +374,8 @@ _SECTOR_SPEC: dict[str, dict[str, list[str]]] = {
 }
 
 _STOCK_COLS = """s.code, s.name, s.price, s.pct, s.main_net_in, s.volume_ratio,
-                 s.turnover_rate, m.buy_index, m.sentiment, m.dark_power, s.float_mv,
+                 s.turnover_rate, s.main_in, s.main_out, s.amount,
+                 m.buy_index, m.sentiment, m.dark_power, s.float_mv,
                  l.industry"""
 
 
@@ -462,6 +463,7 @@ def _annotate_rows(rows: list[dict], sector: str) -> list[dict]:
     wuxing.tags_for_list(rows)
     from . import finance as finance_svc
     finance_svc.attach_grades(rows)
+    metrics_svc.attach_flow_list(rows)
     return rows
 
 

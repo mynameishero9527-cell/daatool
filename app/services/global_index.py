@@ -147,6 +147,7 @@ _ETF_HOLDING_RULES: dict[str, tuple | None] = {
 _HOLDING_SELECT = """
     SELECT s.code, s.name, s.price, s.pct, s.pct_d5, s.pct_d20, s.pct_d60,
            s.float_mv, s.main_net_in, s.volume_ratio, l.industry,
+           s.main_in, s.main_out, s.amount,
            m.buy_index, m.sentiment, m.dark_power
     FROM stock_snapshot s
     JOIN stock_list l ON l.code = s.code
@@ -242,6 +243,7 @@ def get_etf_holdings(code: str, limit: int = 20) -> dict:
         r["volume_desc"] = rating_svc.volume_desc(r["volume_ratio"])
     from . import finance as finance_svc
     finance_svc.attach_grades(rows)
+    metrics_svc.attach_flow_list(rows)
     return {"code": code, "track": track, "holdings": rows,
             "note": "近似持仓：按跟踪标的从本地市值/板块数据推算，非基金实际披露持仓"}
 

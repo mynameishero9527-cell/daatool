@@ -18,6 +18,7 @@ RANK_TYPES = {
 
 _SELECT = ("SELECT s.code, s.name, s.price, s.pct, s.pct_d5, s.pct_d20, s.pct_d60, "
            "s.turnover_rate, s.volume_ratio, s.amplitude, s.main_net_in, s.float_mv, "
+           "s.main_in, s.main_out, s.amount, "
            "l.industry, m.buy_index, m.sentiment "
            "FROM stock_snapshot s "
            "LEFT JOIN stock_list l ON l.code = s.code "
@@ -50,10 +51,12 @@ def get_rank(rank_type: str = "limit_up", limit: int = 50) -> dict:
             r["volume_desc"] = rating_svc.volume_desc(r["volume_ratio"])
         wuxing.tags_for_list(rows)
         from . import finance as finance_svc
+        from . import metrics as metrics_svc
         finance_svc.attach_grades(rows)
+        metrics_svc.attach_flow_list(rows)
         return {
             "type": rank_type, "title": RANK_TYPES[rank_type],
             "types": RANK_TYPES, "items": rows,
             "note": "榜单由本地全市场快照实时计算（官方龙虎榜数据源当前网络不可达，以异动榜口径代替）",
         }
-    return cached(f"ranks:{rank_type}:{limit}", 60, loader)
+    return cached(f"ranks:v2:{rank_type}:{limit}", 60, loader)

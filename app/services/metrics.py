@@ -18,6 +18,53 @@ log = logging.getLogger("metrics")
 _lock = threading.Lock()
 STATE = {"running": False, "stage": "未开始", "progress": 0, "total": 0}
 
+
+def _fnum(v) -> float | None:
+    if v is None or v == "":
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def attach_flow_fields(item: dict) -> dict:
+    """为列表项附加主力/散户资金拆分。金额单位与快照一致（万元）。
+
+    散户买入/卖出 = 成交额与主力流入/流出的差额估算，非逐笔成交。
+    主力买比 = 主力买入 / (主力买入 + 主力卖出)。
+    """
+    main_in = _fnum(item.get("main_in"))
+    if main_in is None:
+        main_in = _fnum(item.get("main_buy"))
+    main_out = _fnum(item.get("main_out"))
+    if main_out is None:
+        main_out = _fnum(item.get("main_sell"))
+    amount = _fnum(item.get("amount"))
+
+    item["main_buy"] = round(main_in, 2) if main_in is not None else None
+    item["main_sell"] = round(main_out, 2) if main_out is not None else None
+
+    if amount is not None and amount > 0:
+        item["retail_buy"] = round(max(amount - (main_in or 0), 0.0), 2)
+        item["retail_sell"] = round(max(amount - (main_out or 0), 0.0), 2)
+    elif main_in is not None or main_out is not None:
+        item["retail_buy"] = round(main_out or 0.0, 2)
+        item["retail_sell"] = round(main_in or 0.0, 2)
+    else:
+        item["retail_buy"] = None
+        item["retail_sell"] = None
+
+    denom = (main_in or 0.0) + (main_out or 0.0)
+    item["main_buy_ratio"] = round((main_in or 0.0) / denom * 100.0, 2) if denom > 0 else None
+    return item
+
+
+def attach_flow_list(rows: list[dict]) -> list[dict]:
+    for r in rows:
+        attach_flow_fields(r)
+    return rows
+
 KLINE_DAYS = 120
 SYNC_WORKERS = 10
 

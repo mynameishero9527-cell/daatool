@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>A股量化工具</title>
-<link rel="stylesheet" href="/static/style.css?v=10.0.1">
-<script src="/static/vendor/echarts.min.js?v=10.0.1"></script>
+<link rel="stylesheet" href="/static/style.css?v=10.0.2">
+<script src="/static/vendor/echarts.min.js?v=10.0.2"></script>
 </head>
 <body>
 <header class="topbar">
@@ -342,6 +342,8 @@
             <button class="opt" data-v="B">B</button>
             <button class="opt" data-v="C">C</button>
             <button class="opt" data-v="D">D</button>
+            <button class="opt" data-v="AB">A+B 绩优</button>
+            <button class="opt" data-v="none">无评级</button>
           </span></span>
         <span><span class="g-label muted">排序</span>
           <span class="btn-group" id="recOrder">
@@ -386,13 +388,18 @@
         <div class="card-title">AI 大模型配置 <span class="muted" id="aiStatus"></span></div>
         <div class="kv"><span class="k">API 地址</span></div>
         <input id="aiBase" placeholder="https://api.openai.com/v1（OpenAI兼容）" style="width:100%;margin-bottom:8px">
+        <div class="muted" style="margin-bottom:8px;font-size:12px">快捷填入</div>
+        <div class="btn-group" id="aiPresets" style="flex-wrap:wrap;margin-bottom:10px;gap:6px"></div>
         <div class="kv"><span class="k">API 密钥</span></div>
         <input id="aiKey" type="password" placeholder="sk-..." style="width:100%;margin-bottom:8px">
         <div class="kv"><span class="k">模型名称</span></div>
         <input id="aiModel" placeholder="如 gpt-4o-mini / deepseek-chat" style="width:100%;margin-bottom:10px">
         <button class="btn" onclick="saveAiConfig()">保存配置</button>
+        <button class="btn ghost" onclick="testAiConfig()">测试连通</button>
+        <div id="aiTestResult" class="muted" style="margin-top:8px;font-size:12px;white-space:pre-wrap"></div>
         <div class="muted" style="margin-top:10px;font-size:12px">
           未配置时自动使用「本地规则分析」。密钥仅存于本地数据库。<br>
+          地址会自动补全 <code>/v1</code>（智谱走 <code>/api/paas/v4</code>，不要再加 /v1）。<br>
           全站任意个股行 <b>右键</b> 可唤起「AI 分析该股」小窗。
         </div>
       </div>
@@ -475,6 +482,6 @@
   <div class="ctx-item" id="ctxNewsAi" style="display:none">🤖 发送AI分析（消息）</div>
 </div>
 
-<script src="/static/app.js?v=10.0.1"></script>
+<script src="/static/app.js?v=10.0.2"></script>
 </body>
 </html>

@@ -81,6 +81,7 @@ PRESETS = [
                                         "volume_ratio": ["mild", "surge"], "exclude_st": True}},
     {"name": "超跌企稳", "conditions": {"tech": ["stabilized"], "exclude_st": True}},
     {"name": "财报优质", "conditions": {"finance_grade": ["A"], "exclude_st": True}},
+    {"name": "绩优A+B", "conditions": {"finance_grade": ["A", "B"], "exclude_st": True}},
 ]
 
 
@@ -136,6 +137,7 @@ def run(conditions: dict, limit: int = 100) -> dict:
     sql = f"""
         SELECT s.code, s.name, l.board, l.industry, s.price, s.pct, s.pct_d5, s.pct_d20,
                s.turnover_rate, s.volume_ratio, s.pe_ttm, s.pb, s.float_mv, s.main_net_in,
+               s.main_in, s.main_out, s.amount,
                m.buy_index, m.sentiment, m.dark_power, m.stabilize_score, m.divergence, m.rsi14,
                g.grade AS finance_grade, g.summary AS finance_summary
         FROM stock_snapshot s
@@ -149,6 +151,7 @@ def run(conditions: dict, limit: int = 100) -> dict:
     for r in rows:
         r["buy_level"] = metrics_svc.buy_index_level(r["buy_index"])[0] if r["buy_index"] is not None else None
         r["sent_level"] = metrics_svc.sentiment_level(r["sentiment"])[0] if r["sentiment"] is not None else None
+        metrics_svc.attach_flow_fields(r)
     from . import wuxing
     wuxing.tags_for_list(rows)
     return {"total": len(rows), "items": rows}

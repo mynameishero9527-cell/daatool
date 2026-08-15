@@ -110,16 +110,39 @@ def get_watchlist() -> list[dict]:
         "FROM watchlist w LEFT JOIN stock_list l ON l.code = w.code "
         "ORDER BY w.pinned DESC, w.created_at")
     quotes = get_quotes([i["code"] for i in items])
+    codes = [i["code"] for i in items]
+    snaps = {}
+    if codes:
+        ph = ",".join("?" * len(codes))
+        for r in query(
+            f"SELECT code, main_in, main_out, main_net_in, amount, volume_ratio, turnover_rate "
+            f"FROM stock_snapshot WHERE code IN ({ph})",
+            tuple(codes),
+        ):
+            snaps[r["code"]] = r
     out = []
     for item in items:
         q = quotes.get(item["code"], {})
-        out.append({**item, **{k: q.get(k) for k in (
+        snap = snaps.get(item["code"], {})
+        row = {**item, **{k: q.get(k) for k in (
             "price", "pct", "change", "volume", "amount", "volume_ratio",
-            "turnover_rate", "amplitude", "time", "source")}})
+            "turnover_rate", "amplitude", "time", "source")}}
+        row["main_in"] = snap.get("main_in")
+        row["main_out"] = snap.get("main_out")
+        row["main_net_in"] = snap.get("main_net_in")
+        if row.get("amount") is None:
+            row["amount"] = snap.get("amount")
+        if row.get("volume_ratio") is None:
+            row["volume_ratio"] = snap.get("volume_ratio")
+        if row.get("turnover_rate") is None:
+            row["turnover_rate"] = snap.get("turnover_rate")
+        out.append(row)
     from . import finance as finance_svc
+    from . import metrics as metrics_svc
     from . import wuxing
     wuxing.tags_for_list(out)
     finance_svc.attach_grades(out)
+    metrics_svc.attach_flow_list(out)
     return out
 
 

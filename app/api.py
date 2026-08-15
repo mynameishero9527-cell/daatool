@@ -412,6 +412,11 @@ def ai_save_config(payload: dict):
                           payload.get("model", ""))
 
 
+@router.post("/ai/test")
+def ai_test():
+    return ai.test_connection()
+
+
 @router.post("/ai/analyze")
 def ai_analyze(payload: dict):
     return ai.analyze(payload.get("mode", "market"), payload.get("code", ""),

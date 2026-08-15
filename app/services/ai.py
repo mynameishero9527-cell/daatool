@@ -1,9 +1,11 @@
 """AI 分析（FR7-07）：可配置 OpenAI 兼容大模型 + 本地规则分析兜底。"""
 import json
 import logging
+import threading
 
-from ..database import get_meta_json, query, set_meta_json
-from ..datasources.base import http_client
+import httpx
+
+from ..database import get_meta, get_meta_json, query, set_meta, set_meta_json
 from . import cycle as cycle_svc
 from . import market as market_svc
 from . import rating as rating_svc
@@ -12,11 +14,75 @@ log = logging.getLogger("ai")
 
 DISCLAIMER = "\n\n——\nAI生成内容仅供参考，不构成投资建议。"
 
+PRESETS = [
+    {"id": "openai", "name": "OpenAI",
+     "api_base": "https://api.openai.com/v1", "model": "gpt-4o-mini"},
+    {"id": "deepseek", "name": "DeepSeek",
+     "api_base": "https://api.deepseek.com/v1", "model": "deepseek-chat"},
+    {"id": "qwen", "name": "通义千问",
+     "api_base": "https://dashscope.aliyuncs.com/compatible-mode/v1", "model": "qwen-plus"},
+    {"id": "moonshot", "name": "月之暗面",
+     "api_base": "https://api.moonshot.cn/v1", "model": "moonshot-v1-8k"},
+    {"id": "zhipu", "name": "智谱 GLM",
+     "api_base": "https://open.bigmodel.cn/api/paas/v4", "model": "glm-4-flash"},
+]
+
+_llm_client: httpx.Client | None = None
+_llm_lock = threading.Lock()
+
+
+def _llm_http() -> httpx.Client:
+    """独立客户端：连接 15s / 总超时 60s，不复用行情 6s 连接池。"""
+    global _llm_client
+    with _llm_lock:
+        if _llm_client is None:
+            _llm_client = httpx.Client(
+                timeout=httpx.Timeout(60.0, connect=15.0),
+                headers={"User-Agent": "daatool-ai/1.0", "Accept": "application/json"},
+                follow_redirects=True,
+            )
+        return _llm_client
+
+
+def normalize_api_base(raw: str) -> str:
+    """纠正常见粘贴错误：缺 /v1、多贴了 /chat/completions、通义未走 compatible-mode。"""
+    url = (raw or "").strip()
+    if not url:
+        return ""
+    url = url.rstrip("/")
+    for suffix in ("/chat/completions", "/completions"):
+        if url.lower().endswith(suffix):
+            url = url[: -len(suffix)].rstrip("/")
+    low = url.lower()
+    if "dashscope.aliyuncs.com" in low and "compatible-mode" not in low:
+        return "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    if "api.openai.com" in low and not low.endswith("/v1"):
+        url = url + "/v1"
+    elif "api.deepseek.com" in low and "/v1" not in low.split("api.deepseek.com", 1)[-1]:
+        url = url.rstrip("/") + "/v1"
+    elif "api.moonshot.cn" in low and not low.endswith("/v1"):
+        url = url + "/v1"
+    return url.rstrip("/")
+
+
+def _set_last_error(msg: str) -> None:
+    set_meta("ai_last_error", (msg or "")[:400])
+
+
+def _last_error() -> str:
+    return get_meta("ai_last_error", "") or ""
+
 
 def get_config(masked: bool = True) -> dict:
     cfg = get_meta_json("ai_config", {}) or {}
-    out = {"api_base": cfg.get("api_base", ""), "model": cfg.get("model", ""),
-           "configured": bool(cfg.get("api_key"))}
+    base = normalize_api_base(cfg.get("api_base", "") or "")
+    out = {
+        "api_base": base,
+        "model": cfg.get("model", ""),
+        "configured": bool(cfg.get("api_key") and base),
+        "last_error": _last_error(),
+        "presets": PRESETS,
+    }
     if masked:
         key = cfg.get("api_key", "")
         out["api_key"] = (key[:6] + "****" + key[-4:]) if len(key) > 12 else ("****" if key else "")
@@ -30,10 +96,11 @@ def save_config(api_base: str, api_key: str, model: str) -> dict:
     if api_key and "****" in api_key:  # 未修改脱敏值则保留原密钥
         api_key = old.get("api_key", "")
     set_meta_json("ai_config", {
-        "api_base": api_base.strip().rstrip("/"),
+        "api_base": normalize_api_base(api_base),
         "api_key": api_key.strip(),
         "model": model.strip(),
     })
+    _set_last_error("")
     return {"ok": True, **get_config()}
 
 
@@ -99,23 +166,51 @@ def analyze(mode: str = "market", code: str = "", question: str = "") -> dict:
         task = "请基于以上实时数据，输出今日大盘综述与明日展望：市场状态、资金主线、风险提示、策略建议（分点，300字内）。"
 
     cfg = get_meta_json("ai_config", {}) or {}
-    if cfg.get("api_key") and cfg.get("api_base"):
+    base = normalize_api_base(cfg.get("api_base", "") or "")
+    if cfg.get("api_key") and base:
         try:
             text = _call_llm(cfg, context, task)
-            return {"text": text + DISCLAIMER, "source": f"AI大模型（{cfg.get('model') or '默认'}）", "ai": True}
+            return {"text": text + DISCLAIMER, "source": f"AI大模型（{cfg.get('model') or '默认'}）",
+                    "ai": True, "error": ""}
         except Exception as exc:  # noqa: BLE001
             log.warning("LLM调用失败: %s", exc)
             fallback = _local_analysis(mode, code, question)
+            err = str(exc)[:240]
             return {"text": fallback + DISCLAIMER,
-                    "source": f"本地规则分析（大模型调用失败：{str(exc)[:80]}）", "ai": False}
+                    "source": f"本地规则分析（大模型调用失败：{err}）",
+                    "ai": False, "error": err}
     return {"text": _local_analysis(mode, code, question) + DISCLAIMER,
-            "source": "本地规则分析（未配置AI大模型，可在AI分析页配置）", "ai": False}
+            "source": "本地规则分析（未配置AI大模型，可在AI分析页配置）",
+            "ai": False, "error": ""}
+
+
+def _parse_llm_error(resp: httpx.Response) -> str:
+    try:
+        data = resp.json()
+    except Exception:  # noqa: BLE001
+        text = (resp.text or "").strip()
+        return text[:300] if text else f"HTTP {resp.status_code}"
+    err = data.get("error")
+    if isinstance(err, dict):
+        return str(err.get("message") or err.get("msg") or err.get("code") or err)[:300]
+    if isinstance(err, str) and err.strip():
+        return err[:300]
+    for key in ("message", "msg", "detail"):
+        if data.get(key):
+            return str(data[key])[:300]
+    return (resp.text or f"HTTP {resp.status_code}")[:300]
 
 
 def _call_llm(cfg: dict, context: str, task: str) -> str:
-    url = cfg["api_base"].rstrip("/") + "/chat/completions"
+    base = normalize_api_base(cfg.get("api_base", "") or "")
+    key = (cfg.get("api_key") or "").strip()
+    if not key:
+        raise RuntimeError("未配置 API 密钥")
+    if not base:
+        raise RuntimeError("未配置 API 地址")
+    url = base + "/chat/completions"
     payload = {
-        "model": cfg.get("model") or "gpt-4o-mini",
+        "model": (cfg.get("model") or "").strip() or "gpt-4o-mini",
         "messages": [
             {"role": "system",
              "content": "你是专业的A股量化分析助手。基于用户提供的实时数据回答，客观严谨，"
@@ -125,20 +220,63 @@ def _call_llm(cfg: dict, context: str, task: str) -> str:
         "temperature": 0.4,
         "max_tokens": 900,
     }
-    resp = http_client().post(url, json=payload, timeout=60,
-                              headers={"Authorization": f"Bearer {cfg['api_key']}"})
-    resp.raise_for_status()
-    data = resp.json()
-    return data["choices"][0]["message"]["content"].strip()
+    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    last_exc: Exception | None = None
+    for attempt in range(2):
+        try:
+            resp = _llm_http().post(url, json=payload, headers=headers)
+            if resp.status_code >= 400:
+                raise RuntimeError(f"HTTP {resp.status_code}：{_parse_llm_error(resp)}")
+            data = resp.json()
+            if data.get("error"):
+                raise RuntimeError(_parse_llm_error(resp))
+            choices = data.get("choices") or []
+            if not choices:
+                raise RuntimeError("模型返回空 choices，请检查模型名称是否正确")
+            content = ((choices[0] or {}).get("message") or {}).get("content") or ""
+            if isinstance(content, list):
+                content = "".join(
+                    (p.get("text") or "") if isinstance(p, dict) else str(p) for p in content)
+            text = str(content).strip()
+            if not text:
+                raise RuntimeError("模型返回空内容，请检查模型名称或额度")
+            _set_last_error("")
+            return text
+        except (httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError) as exc:
+            last_exc = RuntimeError(f"网络失败：{exc}"[:240])
+            log.warning("LLM 网络失败 attempt=%s: %s", attempt + 1, exc)
+            continue
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc if isinstance(exc, RuntimeError) else RuntimeError(str(exc)[:240])
+            break
+    msg = str(last_exc or "大模型调用失败")[:300]
+    _set_last_error(msg)
+    raise last_exc or RuntimeError(msg)
+
+
+def test_connection() -> dict:
+    """最小连通性探测：配置缺失时给出明确原因，成功则返回模型短回复。"""
+    cfg = get_meta_json("ai_config", {}) or {}
+    base = normalize_api_base(cfg.get("api_base", "") or "")
+    if not cfg.get("api_key"):
+        return {"ok": False, "error": "请先填写并保存 API 密钥", "api_base": base, "model": cfg.get("model", "")}
+    if not base:
+        return {"ok": False, "error": "请先填写并保存 API 地址", "api_base": base, "model": cfg.get("model", "")}
+    try:
+        text = _call_llm(cfg, "连通性测试", "请只回复两个字：成功")
+        return {"ok": True, "reply": text[:120], "api_base": base, "model": cfg.get("model") or "gpt-4o-mini"}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc)[:300], "api_base": base, "model": cfg.get("model", "")}
 
 
 def pick_stocks(description: str) -> dict:
     """AI 选股（FR8-05）：语义解析 → 本地筛选；已配置大模型时附 AI 点评。"""
     from . import screener
     result = screener.run_semantic(description, limit=50)
-    commentary, source = "", "语义规则解析"
+    commentary, source, llm_error = "", "语义规则解析", ""
     cfg = get_meta_json("ai_config", {}) or {}
-    if cfg.get("api_key") and cfg.get("api_base") and result["items"]:
+    base = normalize_api_base(cfg.get("api_base", "") or "")
+    if cfg.get("api_key") and base and result["items"]:
         try:
             top = "；".join(
                 f"{i['name']}({i['code']}) 涨跌{i['pct']}% 购买指数{i['buy_index']}"
@@ -150,8 +288,12 @@ def pick_stocks(description: str) -> dict:
             source = f"语义规则解析 + AI点评（{cfg.get('model')}）"
         except Exception as exc:  # noqa: BLE001
             log.warning("AI选股点评失败: %s", exc)
+            llm_error = str(exc)[:240]
+            source = f"语义规则解析（AI点评失败：{llm_error[:80]}）"
+    elif not (cfg.get("api_key") and base):
+        llm_error = ""
     return {**result, "commentary": (commentary + DISCLAIMER) if commentary else "",
-            "source": source}
+            "source": source, "error": llm_error, "ai": bool(commentary)}
 
 
 def classify_wuxing(code: str) -> dict:

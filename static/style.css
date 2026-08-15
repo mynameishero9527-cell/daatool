@@ -101,7 +101,10 @@ main { padding: 16px 18px; max-width: 1500px; margin: 0 auto; }
 .movers .mv-item:hover { background: var(--card-hover); }
 
 /* 表格 */
-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { white-space: nowrap; }
+#watchTable, #screenerResult, #recommendTable, #rankTable, #aiPickTable,
+#sectorDrillTable, #flowBarStocksTable, #etfHoldings, #ckRelatedTable { overflow-x: auto; }
 th, td { padding: 9px 11px; text-align: right; white-space: nowrap; }
 th { color: var(--muted); font-weight: 500; font-size: 13px; border-bottom: 1px solid var(--border); }
 td { border-bottom: 1px solid rgba(42,53,72,.5); }

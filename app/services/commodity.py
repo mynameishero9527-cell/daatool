@@ -178,6 +178,7 @@ def get_related_stocks(symbol: str, page: int = 1, page_size: int = 20) -> dict:
     rows = query(
         """SELECT s.code, s.name, s.price, s.pct, s.pct_d5, s.pct_d20, s.pct_d60,
                   s.main_net_in, s.volume_ratio, s.float_mv,
+                  s.main_in, s.main_out, s.amount,
                   l.industry, m.buy_index, m.sentiment, m.dark_power
            FROM stock_snapshot s
            JOIN stock_list l ON l.code = s.code
@@ -198,6 +199,7 @@ def get_related_stocks(symbol: str, page: int = 1, page_size: int = 20) -> dict:
     page_items = rows[(page - 1) * page_size: page * page_size]
     from . import finance as finance_svc
     finance_svc.attach_grades(page_items)
+    metrics_svc.attach_flow_list(page_items)
     return {"items": page_items,
             "total": total, "page": page, "pages": pages, "page_size": page_size,
             "sector": sector}

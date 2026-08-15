@@ -111,7 +111,8 @@ def get_sector_stocks(dim: str, name: str, limit: int = 30) -> list[dict]:
             "JOIN concept_map c ON c.code = s.code AND c.concept = ?")
     rows = query(
         f"""SELECT s.code, s.name, s.price, s.pct, s.main_net_in, s.volume_ratio,
-                   s.turnover_rate, m.buy_index, m.sentiment, m.dark_power
+                   s.turnover_rate, s.main_in, s.main_out, s.amount,
+                   m.buy_index, m.sentiment, m.dark_power
             FROM stock_snapshot s {join}
             LEFT JOIN stock_metrics m ON m.code = s.code
             WHERE s.price IS NOT NULL
@@ -121,6 +122,7 @@ def get_sector_stocks(dim: str, name: str, limit: int = 30) -> list[dict]:
             r["sent_level"] = metrics_svc.sentiment_level(r["sentiment"])[0]
     from . import finance as finance_svc
     finance_svc.attach_grades(rows)
+    metrics_svc.attach_flow_list(rows)
     return rows
 
 
@@ -147,6 +149,7 @@ def get_sector_recommend(top_n: int = 10, stocks_per: int = 5) -> list[dict]:
             stocks = query(
                 """SELECT s.code, s.name, s.price, s.pct, s.pct_d5, s.pct_d20, s.pct_d60,
                           s.main_net_in, s.volume_ratio, s.float_mv,
+                          s.main_in, s.main_out, s.amount,
                           m.buy_index, m.sentiment
                    FROM stock_snapshot s
                    JOIN stock_list l ON l.code = s.code AND l.industry = ?
@@ -162,9 +165,10 @@ def get_sector_recommend(top_n: int = 10, stocks_per: int = 5) -> list[dict]:
             from . import wuxing
             wuxing.tags_for_list(stocks)
             finance_svc.attach_grades(stocks)
+            metrics_svc.attach_flow_list(stocks)
             out.append({**sec, "stocks": stocks})
         return out
-    return cached("sector:recommend", 120, loader)
+    return cached("sector:recommend:v2", 120, loader)
 
 
 # ---------------- 板块周期阶段与季节性常识（FR7-05-3/4） ----------------
@@ -445,6 +449,7 @@ def get_flow_bar_stocks(dim: str, name: str, range_key: str = "1d",
         )
     rows = query(
         f"""SELECT s.code, s.name, s.price, s.pct, s.main_net_in, s.main_net_in_d5,
+                   s.volume_ratio, s.main_in, s.main_out, s.amount,
                    {flow_col} AS contrib, m.buy_index, m.sentiment, m.dark_power
             FROM stock_snapshot s {join}
             LEFT JOIN stock_metrics m ON m.code = s.code
@@ -459,5 +464,6 @@ def get_flow_bar_stocks(dim: str, name: str, range_key: str = "1d",
     from . import wuxing
     wuxing.tags_for_list(rows)
     finance_svc.attach_grades(rows)
+    metrics_svc.attach_flow_list(rows)
     return {"dim": dim, "name": name, "range": range_key, "items": rows,
             "note": stock_note, "total": len(rows)}

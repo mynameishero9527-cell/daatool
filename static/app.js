@@ -69,6 +69,31 @@ function finBadge(r) {
   const tip = r.finance_summary || `财报评级 ${g}`;
   return `<span class="fin-badge fin-${esc(g)}" title="${esc(tip)}">${esc(g)}</span>`;
 }
+function wanYi(v) {
+  if (v === null || v === undefined || v === "") return "-";
+  const n = Number(v);
+  if (!Number.isFinite(n)) return "-";
+  const abs = Math.abs(n);
+  if (abs >= 10000) return `${(n / 10000).toFixed(2)}亿`;
+  if (abs >= 100) return `${n.toFixed(0)}万`;
+  return `${n.toFixed(2)}万`;
+}
+function flowMetricHeaders() {
+  return `<th title="腾讯主力资金流入（万元）">主力买入</th>`
+    + `<th title="腾讯主力资金流出（万元）">主力卖出</th>`
+    + `<th title="成交额减主力买入的估算，非逐笔">散户买入</th>`
+    + `<th title="成交额减主力卖出的估算，非逐笔">散户卖出</th>`
+    + `<th title="主力买入/(主力买入+主力卖出)">主力买比</th>`;
+}
+function flowMetricCells(r) {
+  const ratio = r && r.main_buy_ratio;
+  return `<td class="num ${cls(r.main_buy)}">${wanYi(r.main_buy)}</td>`
+    + `<td class="num ${(r.main_sell || 0) > 0 ? "down" : "flat"}">${wanYi(r.main_sell)}</td>`
+    + `<td class="num ${cls(r.retail_buy)}">${wanYi(r.retail_buy)}</td>`
+    + `<td class="num ${(r.retail_sell || 0) > 0 ? "down" : "flat"}">${wanYi(r.retail_sell)}</td>`
+    + `<td class="num">${ratio === null || ratio === undefined ? "-" : fmt(ratio, 1) + "%"}</td>`;
+}
+const FLOW_NOTE = "散户买入/卖出为成交额与主力差额估算，非逐笔；主力买比=买入/(买入+卖出)。";
 let watchCodes = new Set();
 
 /* ---------------- 主选项卡 ---------------- */
@@ -311,7 +336,7 @@ function renderWatchlist(list) {
   if (!list.length) { $("#watchTable").innerHTML = '<div class="empty">暂无自选股</div>'; return; }
   $("#watchTable").innerHTML = `<table><thead><tr>
     <th>代码</th><th>名称</th><th>五行</th><th>财报</th><th>最新价</th><th>涨跌幅</th><th>涨跌额</th>
-    <th>成交量(手)</th><th>成交额(万)</th><th>量比</th><th>换手%</th><th>振幅%</th><th>操作</th>
+    <th>成交量(手)</th><th>成交额(万)</th><th>量比</th>${flowMetricHeaders()}<th>换手%</th><th>振幅%</th><th>操作</th>
   </tr></thead><tbody>${list.map((r) => `
     <tr data-code="${r.code}" data-name="${esc(r.name)}" onclick="openStock('${r.code}','${esc(r.name)}')">
       <td>${r.pinned ? "📌 " : ""}${r.code}</td><td>${esc(r.name)}</td>
@@ -321,13 +346,15 @@ function renderWatchlist(list) {
       <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
       <td class="num ${cls(r.pct)}">${sign(r.change)}${fmt(r.change)}</td>
       <td class="num">${fmt(r.volume, 0)}</td><td class="num">${fmt(r.amount, 0)}</td>
-      <td class="num">${fmt(r.volume_ratio)}</td><td class="num">${fmt(r.turnover_rate)}</td>
+      <td class="num">${fmt(r.volume_ratio)}</td>${flowMetricCells(r)}
+      <td class="num">${fmt(r.turnover_rate)}</td>
       <td class="num">${fmt(r.amplitude)}</td>
       <td onclick="event.stopPropagation()">
         <button class="btn small ghost" onclick="pinWatch('${r.code}')">置顶</button>
         <button class="btn small danger" onclick="removeWatch('${r.code}')">删除</button>
       </td>
-    </tr>`).join("")}</tbody></table>`;
+    </tr>`).join("")}</tbody></table>
+    <div class="muted" style="margin-top:6px;font-size:12px">${FLOW_NOTE}</div>`;
 }
 
 window.addWatch = async () => {
@@ -983,16 +1010,18 @@ function relatedTags(r, withFin = true) {
 function renderRelatedStockTable(stocks) {
   if (!stocks || !stocks.length) return '<div class="muted">未匹配到相关个股</div>';
   return `<table><thead><tr>
-    <th>名称</th><th>代码</th><th>涨跌幅</th><th>购买指数</th><th>标签</th>
+    <th>名称</th><th>代码</th><th>财报</th><th>涨跌幅</th><th>量比</th>${flowMetricHeaders()}<th>购买指数</th><th>标签</th>
   </tr></thead><tbody>${stocks.map((r) => `
     <tr data-code="${r.code}" data-name="${esc(r.name)}" onclick="openStock('${r.code}','${esc(r.name)}')">
       <td>${esc(r.name)}</td>
       <td class="muted">${esc(r.code)}</td>
+      <td>${finBadge(r)}</td>
       <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
+      <td class="num">${fmt(r.volume_ratio)}</td>${flowMetricCells(r)}
       <td class="num ${buyCls(r.buy_index)}">${r.buy_index !== null && r.buy_index !== undefined ? `<b>${fmt(r.buy_index, 0)}</b>` : "-"}</td>
-      <td>${relatedTags(r)}</td>
+      <td>${relatedTags(r, false)}</td>
     </tr>`).join("")}</tbody></table>
-    <div class="muted" style="margin-top:6px;font-size:12px">展示 ${stocks.length} 只（TOP20–50）。涨跌幅红涨绿跌；标签含五行、买点、操作与财报评级。点击行进入个股分析。</div>`;
+    <div class="muted" style="margin-top:6px;font-size:12px">展示 ${stocks.length} 只（TOP20–50）。${FLOW_NOTE} 点击行进入个股分析。</div>`;
 }
 
 window.showNewsStocks = (sectors, title) => showEventDetail(title, sectors);
@@ -1251,7 +1280,7 @@ async function runScreener() {
     $("#screenerCount").textContent = `命中 ${d.total} 只（最多显示100）`;
     $("#screenerResult").innerHTML = d.items.length ? `<table><thead><tr>
       <th>#</th><th>名称</th><th>财报</th><th>五行</th><th>行业</th><th>最新价</th><th>涨跌幅</th><th>购买指数</th>
-      <th>情绪</th><th>暗盘力量</th><th>主力净流入(万)</th><th>PE</th><th>量比</th><th>企稳</th>
+      <th>情绪</th><th>暗盘力量</th><th>量比</th>${flowMetricHeaders()}<th>PE</th><th>企稳</th>
     </tr></thead><tbody>${d.items.map((r, i) => `
       <tr data-code="${r.code}" data-name="${esc(r.name)}" onclick="openStock('${r.code}','${esc(r.name)}')">
         <td>${i + 1}</td><td>${esc(r.name)} <span class="muted">${r.code}</span></td>
@@ -1263,12 +1292,11 @@ async function runScreener() {
         <td class="num">${r.buy_index !== null ? `<b>${fmt(r.buy_index, 0)}</b> <span class="muted">${esc(r.buy_level || "")}</span>` : "-"}</td>
         <td>${r.sent_level ? esc(r.sent_level) : "-"}</td>
         <td class="num">${fmt(r.dark_power, 0)}${r.divergence && r.divergence !== "无" ? ` <span class="badge sector-tag" style="font-size:10px">${esc(r.divergence)}</span>` : ""}</td>
-        <td class="num ${cls(r.main_net_in)}">${fmt(r.main_net_in, 0)}</td>
+        <td class="num">${fmt(r.volume_ratio)}</td>${flowMetricCells(r)}
         <td class="num">${fmt(r.pe_ttm, 1)}</td>
-        <td class="num">${fmt(r.volume_ratio)}</td>
         <td>${r.stabilize_score !== null ? `<span class="badge level-4" style="font-size:11px">${fmt(r.stabilize_score, 0)}</span>` : "-"}</td>
       </tr>`).join("")}</tbody></table>
-      <div class="muted" style="margin-top:8px;font-size:12px">指标为量化参考，不构成投资建议。指标每日盘后重算，可在设置页手动重建。</div>`
+      <div class="muted" style="margin-top:8px;font-size:12px">指标为量化参考，不构成投资建议。${FLOW_NOTE}</div>`
       : '<div class="empty">无符合条件的个股，可放宽条件</div>';
   } catch (err) {
     $("#screenerCount").textContent = "筛选失败";
@@ -1380,7 +1408,7 @@ async function loadSectorRecommend() {
           </span>
         </div>
         <table><thead><tr>
-          <th>名称</th><th>财报</th><th>五行</th><th>现价</th><th>涨跌幅</th><th>购买指数</th><th>评分</th><th>提示</th>
+          <th>名称</th><th>财报</th><th>五行</th><th>现价</th><th>涨跌幅</th><th>量比</th>${flowMetricHeaders()}<th>购买指数</th><th>评分</th><th>提示</th>
         </tr></thead><tbody>${(sec.stocks || []).map((r) => `
           <tr data-code="${r.code}" data-name="${esc(r.name)}" onclick="openStock('${r.code}','${esc(r.name)}')">
             <td>${esc(r.name)} <span class="muted">${r.code}</span></td>
@@ -1388,6 +1416,7 @@ async function loadSectorRecommend() {
             <td>${wxBadges(r.wuxing)}</td>
             <td class="num ${cls(r.pct)}">${fmt(r.price)}</td>
             <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
+            <td class="num">${fmt(r.volume_ratio)}</td>${flowMetricCells(r)}
             <td class="num">${r.buy_index !== null ? `<b>${fmt(r.buy_index, 0)}</b>` : "-"}</td>
             <td class="num"><b>${fmt(r.score, 1)}</b></td>
             <td><span class="badge ${r.advice === "增持" ? "advice-buy" : r.advice === "减持" ? "advice-sell" : "advice-hold"}" style="font-size:11px;padding:2px 7px">${esc(r.advice || "-")}</span></td>
@@ -1467,19 +1496,19 @@ window.drillSector = async (name) => {
   try {
     const rows = await api(`/api/sector/stocks?dim=${sectorDim}&name=${encodeURIComponent(name)}`);
     $("#sectorDrillTable").innerHTML = rows.length ? `<table><thead><tr>
-      <th>名称</th><th>财报</th><th>最新价</th><th>涨跌幅</th><th>主力净流入(万)</th><th>量比</th><th>购买指数</th><th>情绪</th><th>暗盘力量</th>
+      <th>名称</th><th>财报</th><th>最新价</th><th>涨跌幅</th><th>量比</th>${flowMetricHeaders()}<th>购买指数</th><th>情绪</th><th>暗盘力量</th>
     </tr></thead><tbody>${rows.map((r) => `
       <tr onclick="openStock('${r.code}','${esc(r.name)}')">
         <td>${esc(r.name)} <span class="muted">${r.code}</span></td>
         <td>${finBadge(r)}</td>
         <td class="num ${cls(r.pct)}">${fmt(r.price)}</td>
         <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
-        <td class="num ${cls(r.main_net_in)}">${fmt(r.main_net_in, 0)}</td>
-        <td class="num">${fmt(r.volume_ratio)}</td>
+        <td class="num">${fmt(r.volume_ratio)}</td>${flowMetricCells(r)}
         <td class="num">${r.buy_index !== null ? `<b>${fmt(r.buy_index, 0)}</b>` : "-"}</td>
         <td>${r.sent_level ? esc(r.sent_level) : "-"}</td>
         <td class="num">${fmt(r.dark_power, 0)}</td>
-      </tr>`).join("")}</tbody></table>` : '<div class="empty">暂无成分股数据</div>';
+      </tr>`).join("")}</tbody></table>
+      <div class="muted" style="margin-top:6px;font-size:12px">${FLOW_NOTE}</div>` : '<div class="empty">暂无成分股数据</div>';
     box.scrollIntoView({ behavior: "smooth", block: "nearest" });
   } catch (err) { $("#sectorDrillTable").innerHTML = '<div class="empty">加载失败</div>'; }
 };
@@ -1636,18 +1665,19 @@ async function loadFlowBarStocks(name) {
     const rows = d.items || [];
     if (!table) return;
     table.innerHTML = rows.length ? `<table><thead><tr>
-      <th>名称</th><th>代码</th><th>涨跌幅</th><th>购买指数</th><th>财报</th><th>标签</th><th>区间贡献(万)</th>
+      <th>名称</th><th>代码</th><th>涨跌幅</th><th>量比</th>${flowMetricHeaders()}<th>购买指数</th><th>财报</th><th>标签</th><th>区间贡献(万)</th>
     </tr></thead><tbody>${rows.map((r) => `
       <tr data-code="${r.code}" data-name="${esc(r.name)}" onclick="openStock('${r.code}','${esc(r.name)}')">
         <td>${esc(r.name)}</td>
         <td class="muted">${esc(r.code)}</td>
         <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
+        <td class="num">${fmt(r.volume_ratio)}</td>${flowMetricCells(r)}
         <td class="num ${buyCls(r.buy_index)}">${r.buy_index !== null && r.buy_index !== undefined ? `<b>${fmt(r.buy_index, 0)}</b>` : "-"}</td>
         <td>${finBadge(r)}</td>
         <td>${relatedTags(r, false)}</td>
         <td class="num ${cls(r.contrib)}">${fmt(r.contrib, 0)}</td>
       </tr>`).join("")}</tbody></table>
-      <div class="muted" style="margin-top:6px;font-size:12px">${esc(d.note || "")}
+      <div class="muted" style="margin-top:6px;font-size:12px">${esc(d.note || "")} ${FLOW_NOTE}
         ${flowBarState.limit < 200 && rows.length >= flowBarState.limit
           ? ` <button class="btn small ghost" onclick="flowBarMore()">显示更多</button>` : ""}</div>`
       : '<div class="empty">该板块暂无个股</div>';
@@ -1716,7 +1746,7 @@ async function loadCommodityRelated() {
     const d = await api(`/api/commodities/related?symbol=${ckState.symbol}&page=${ckRelPage}&page_size=20`);
     $("#ckRelatedSector").textContent = d.sector ? `关联板块：${d.sector} · 共 ${d.total} 只` : "";
     box.innerHTML = d.items.length ? `<table><thead><tr>
-      <th>名称</th><th>财报</th><th>所属板块</th><th>现价</th><th>涨跌幅</th><th>主力净流入(万)</th><th>量能</th><th>购买指数</th><th>评分</th><th>情绪</th><th>暗盘力量</th><th>提示</th>
+      <th>名称</th><th>财报</th><th>所属板块</th><th>现价</th><th>涨跌幅</th><th>量比</th>${flowMetricHeaders()}<th>购买指数</th><th>评分</th><th>情绪</th><th>暗盘力量</th><th>提示</th>
     </tr></thead><tbody>${d.items.map((r) => `
       <tr class="${scoreRowClass(r.score)}" onclick="openStock('${r.code}','${esc(r.name)}')">
         <td>${esc(r.name)} <span class="muted">${r.code}</span></td>
@@ -1724,15 +1754,14 @@ async function loadCommodityRelated() {
         <td>${esc(r.industry || "-")}</td>
         <td class="num ${cls(r.pct)}">${fmt(r.price)}</td>
         <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
-        <td class="num ${cls(r.main_net_in)}">${fmt(r.main_net_in, 0)}</td>
-        <td>${esc(r.volume_desc || "-")}</td>
+        <td class="num">${fmt(r.volume_ratio)}</td>${flowMetricCells(r)}
         <td class="num">${r.buy_index !== null ? `<b>${fmt(r.buy_index, 0)}</b>` : "-"}</td>
         <td class="num"><b>${fmt(r.score, 1)}</b></td>
         <td>${r.sent_level ? esc(r.sent_level) : "-"}</td>
         <td class="num">${fmt(r.dark_power, 0)}</td>
         <td><span class="badge ${r.advice === "增持" ? "advice-buy" : r.advice === "减持" ? "advice-sell" : "advice-hold"}" style="font-size:11px;padding:2px 7px">${esc(r.advice || "-")}</span></td>
       </tr>`).join("")}</tbody></table>
-      <div class="muted" style="margin-top:6px;font-size:12px">行背景按评分五档着色。</div>` : '<div class="empty">暂无关联个股</div>';
+      <div class="muted" style="margin-top:6px;font-size:12px">行背景按评分五档着色。${FLOW_NOTE}</div>` : '<div class="empty">暂无关联个股</div>';
     $("#ckRelatedPager").innerHTML = d.pages > 1 ? `
       <button class="btn small ghost" ${d.page <= 1 ? "disabled" : ""} onclick="ckRelGo(${d.page - 1})">‹ 上一页</button>
       <span class="info">第 ${d.page} / ${d.pages} 页</span>
@@ -1868,7 +1897,7 @@ window.openEtfDetail = async (code, name) => {
     $("#etfDetailNote").textContent = d.note || "";
     $("#etfHoldings").innerHTML = d.holdings.length ? `<table><thead><tr>
       <th>#</th><th>持仓个股</th><th>财报</th><th>所属板块</th><th>近似权重</th><th>现价</th><th>涨跌幅</th>
-      <th>购买指数</th><th>评分</th><th>量能</th><th>情绪</th><th>暗盘力量</th><th>提示</th>
+      <th>量比</th>${flowMetricHeaders()}<th>购买指数</th><th>评分</th><th>情绪</th><th>暗盘力量</th><th>提示</th>
     </tr></thead><tbody>${d.holdings.map((r, i) => `
       <tr class="${scoreRowClass(r.score)}" onclick="openStock('${r.code}','${esc(r.name)}')">
         <td>${i + 1}</td>
@@ -1878,14 +1907,14 @@ window.openEtfDetail = async (code, name) => {
         <td class="num"><b>${fmt(r.weight)}%</b></td>
         <td class="num ${cls(r.pct)}">${fmt(r.price)}</td>
         <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
+        <td class="num">${fmt(r.volume_ratio)}</td>${flowMetricCells(r)}
         <td class="num">${r.buy_index !== null ? `<b>${fmt(r.buy_index, 0)}</b> <span class="muted">${esc(r.buy_level || "")}</span>` : "-"}</td>
         <td class="num"><b>${fmt(r.score, 1)}</b></td>
-        <td>${esc(r.volume_desc || "-")}</td>
         <td>${r.sent_level ? esc(r.sent_level) : "-"}</td>
         <td class="num">${fmt(r.dark_power, 0)}</td>
         <td><span class="badge ${r.advice === "增持" ? "advice-buy" : r.advice === "减持" ? "advice-sell" : "advice-hold"}" style="font-size:11px;padding:2px 7px">${esc(r.advice)}</span></td>
       </tr>`).join("")}</tbody></table>
-      <div class="muted" style="margin-top:6px;font-size:12px">行背景按评分五档着色（≥55 起）。</div>` : `<div class="empty">${esc(d.note || "暂无持仓数据")}</div>`;
+      <div class="muted" style="margin-top:6px;font-size:12px">行背景按评分五档着色（≥55 起）。${FLOW_NOTE}</div>` : `<div class="empty">${esc(d.note || "暂无持仓数据")}</div>`;
     box.scrollIntoView({ behavior: "smooth", block: "nearest" });
   } catch (err) { $("#etfHoldings").innerHTML = '<div class="empty">加载失败</div>'; }
 };
@@ -1947,10 +1976,12 @@ async function loadRecommend() {
     const demonBanner = recommendBoard === "demon"
       ? '<div class="offline-banner" style="border-color:rgba(255,82,82,.5);color:var(--up);background:rgba(255,82,82,.08)">⚠️ 妖股波动剧烈，随时可能天地板，本榜仅作市场现象研究，严禁跟风追高</div>'
       : "";
-    box.innerHTML = d.items.length ? demonBanner + statsHtml + `<table><thead><tr>
+    const finNote = d.finance_note
+      ? `<div class="muted" style="margin-bottom:8px;font-size:12px">${esc(d.finance_note)}</div>` : "";
+    box.innerHTML = d.items.length ? demonBanner + statsHtml + finNote + `<table><thead><tr>
       <th>#</th><th>名称</th><th>五行</th><th>财报</th><th>所属板块</th><th>现价</th><th>涨跌幅</th><th>${esc(d.items[0].metric_name)}</th>
       ${isStab ? "<th>闸门</th><th>星级</th>" : ""}<th>购买指数</th><th>情绪</th>
-      <th>量能</th><th>评分</th><th>提示</th><th>入选理由</th>
+      <th>量比</th>${flowMetricHeaders()}<th>评分</th><th>提示</th><th>入选理由</th>
     </tr></thead><tbody>${d.items.map((r, i) => `
       <tr class="${scoreRowClass(r.score)}" data-code="${r.code}" data-name="${esc(r.name)}" onclick="openStock('${r.code}','${esc(r.name)}')">
         <td>${(d.page - 1) * d.page_size + i + 1}</td><td>${esc(r.name)} <span class="muted">${r.code}</span></td>
@@ -1964,13 +1995,17 @@ async function loadRecommend() {
         <td class="up">${r.stars || ""}</td>` : ""}
         <td class="num">${r.buy_index !== null && r.buy_index !== undefined ? `<b>${fmt(r.buy_index, 0)}</b>` : "-"}</td>
         <td>${r.sent_level ? esc(r.sent_level) : "-"}</td>
-        <td>${esc(r.volume_desc)}</td>
+        <td class="num" title="${esc(r.volume_desc || "")}">${fmt(r.volume_ratio)}</td>${flowMetricCells(r)}
         <td class="num"><b>${fmt(r.score, 1)}</b></td>
         <td><span class="badge ${r.advice === "增持" ? "advice-buy" : r.advice === "减持" ? "advice-sell" : "advice-hold"}" style="font-size:12px;padding:2px 8px">${r.advice}</span></td>
         <td class="desc-hl" style="white-space:normal;min-width:220px;max-width:340px">${esc(r.reason || "")}</td>
       </tr>`).join("")}</tbody></table>
       <div class="muted" style="margin-top:8px;font-size:12px">评分行背景：≥55 淡橙 → ≥95 深红 递进。榜单为量化参考，不构成投资建议。</div>`
-      : '<div class="empty">该筛选条件下无个股（企稳/指标类榜单需先在设置页执行「重建指标」）</div>';
+      : finNote + `<div class="empty">该筛选条件下无个股${
+        recState.finance_grade && recState.finance_grade !== "none"
+          ? "（财报评级覆盖尚少，可改选「全部」或「无评级」，或在设置页重建财报评级）"
+          : "（企稳/指标类榜单需先在设置页执行「重建指标」）"
+      }</div>`;
     renderPager(d);
   } catch (err) { box.innerHTML = '<div class="empty">加载失败</div>'; console.warn(err); }
 }
@@ -2059,7 +2094,7 @@ async function loadRanks() {
     $("#rankNote").textContent = d.note || "";
     box.innerHTML = d.items.length ? `<table><thead><tr>
       <th>#</th><th>名称</th><th>五行</th><th>财报</th><th>所属板块</th><th>现价</th><th>涨跌幅</th>
-      <th>${esc(d.items[0].metric_name)}</th><th>购买指数</th><th>评分</th><th>提示</th>
+      <th>${esc(d.items[0].metric_name)}</th><th>量比</th>${flowMetricHeaders()}<th>购买指数</th><th>评分</th><th>提示</th>
     </tr></thead><tbody>${d.items.map((r, i) => `
       <tr class="${scoreRowClass(r.score)}" data-code="${r.code}" data-name="${esc(r.name)}" onclick="openStock('${r.code}','${esc(r.name)}')">
         <td>${i + 1}</td><td>${esc(r.name)} <span class="muted">${r.code}</span></td>
@@ -2069,11 +2104,12 @@ async function loadRanks() {
         <td class="num ${cls(r.pct)}">${fmt(r.price)}</td>
         <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
         <td class="num">${fmt(r.metric_value)}</td>
+        <td class="num">${fmt(r.volume_ratio)}</td>${flowMetricCells(r)}
         <td class="num">${r.buy_index !== null ? `<b>${fmt(r.buy_index, 0)}</b>` : "-"}</td>
         <td class="num"><b>${fmt(r.score, 1)}</b></td>
         <td><span class="badge ${r.advice === "增持" ? "advice-buy" : r.advice === "减持" ? "advice-sell" : "advice-hold"}" style="font-size:11px;padding:2px 7px">${esc(r.advice || "-")}</span></td>
       </tr>`).join("")}</tbody></table>
-      <div class="muted" style="margin-top:8px;font-size:12px">行背景按评分五档着色。榜单为本地异动口径，不构成投资建议。</div>`
+      <div class="muted" style="margin-top:8px;font-size:12px">行背景按评分五档着色。${FLOW_NOTE} 榜单为本地异动口径，不构成投资建议。</div>`
       : '<div class="empty">该榜暂无数据（需全量快照）</div>';
   } catch (err) { box.innerHTML = '<div class="empty">加载失败</div>'; console.warn(err); }
 }
@@ -2095,10 +2131,12 @@ window.runAiPick = async () => {
       <span class="muted"> · 来源 ${esc(d.source || "")} · 命中 ${d.total || 0} 只</span>`;
     if (d.commentary) {
       $("#aiPickComment").innerHTML = `<div class="outlook-summary" style="white-space:pre-wrap">${esc(d.commentary)}</div>`;
+    } else if (d.error) {
+      $("#aiPickComment").innerHTML = `<div class="offline-banner">AI点评失败：${esc(d.error)}。已展示本地语义筛选结果，可到「AI分析」页测试连通。</div>`;
     }
     $("#aiPickTable").innerHTML = d.items && d.items.length ? `<table><thead><tr>
       <th>#</th><th>名称</th><th>财报</th><th>五行</th><th>行业</th><th>现价</th><th>涨跌幅</th>
-      <th>购买指数</th><th>PE</th><th>量比</th><th>主力净流入(万)</th>
+      <th>购买指数</th><th>PE</th><th>量比</th>${flowMetricHeaders()}
     </tr></thead><tbody>${d.items.map((r, i) => `
       <tr data-code="${r.code}" data-name="${esc(r.name)}" onclick="openStock('${r.code}','${esc(r.name)}')">
         <td>${i + 1}</td><td>${esc(r.name)} <span class="muted">${r.code}</span></td>
@@ -2109,9 +2147,9 @@ window.runAiPick = async () => {
         <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
         <td class="num">${r.buy_index !== null ? `<b>${fmt(r.buy_index, 0)}</b>` : "-"}</td>
         <td class="num">${fmt(r.pe_ttm, 1)}</td>
-        <td class="num">${fmt(r.volume_ratio)}</td>
-        <td class="num ${cls(r.main_net_in)}">${fmt(r.main_net_in, 0)}</td>
-      </tr>`).join("")}</tbody></table>` : '<div class="empty">未命中个股，可换个描述或放宽条件</div>';
+        <td class="num">${fmt(r.volume_ratio)}</td>${flowMetricCells(r)}
+      </tr>`).join("")}</tbody></table>
+      <div class="muted" style="margin-top:6px;font-size:12px">${FLOW_NOTE}</div>` : '<div class="empty">未命中个股，可换个描述或放宽条件</div>';
   } catch (err) { $("#aiPickTable").innerHTML = '<div class="empty">选股失败</div>'; console.warn(err); }
 };
 async function loadAiPick() { /* 进入页不自动请求，等待用户输入 */ }
@@ -2135,6 +2173,31 @@ async function loadAiConfig() {
     $("#aiKey").value = c.api_key || "";
     $("#aiModel").value = c.model || "";
     $("#aiStatus").textContent = c.configured ? "✅ 已配置" : "未配置（使用本地规则分析）";
+    const presets = (c.presets && c.presets.length) ? c.presets : [
+      {name: "OpenAI", api_base: "https://api.openai.com/v1", model: "gpt-4o-mini"},
+      {name: "DeepSeek", api_base: "https://api.deepseek.com/v1", model: "deepseek-chat"},
+      {name: "通义千问", api_base: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-plus"},
+      {name: "月之暗面", api_base: "https://api.moonshot.cn/v1", model: "moonshot-v1-8k"},
+      {name: "智谱 GLM", api_base: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4-flash"},
+    ];
+    const box = $("#aiPresets");
+    if (box && !box.dataset.ready) {
+      box.dataset.ready = "1";
+      box.innerHTML = presets.map((p) =>
+        `<button class="opt" type="button" data-base="${esc(p.api_base)}" data-model="${esc(p.model)}">${esc(p.name)}</button>`
+      ).join("");
+      box.addEventListener("click", (e) => {
+        const btn = e.target.closest(".opt");
+        if (!btn) return;
+        $("#aiBase").value = btn.dataset.base || "";
+        $("#aiModel").value = btn.dataset.model || "";
+        $$("#aiPresets .opt").forEach((b) => b.classList.toggle("active", b === btn));
+      });
+    }
+    const testBox = $("#aiTestResult");
+    if (testBox && c.last_error) {
+      testBox.textContent = "上次调用失败：" + c.last_error;
+    }
   } catch (err) { console.warn(err); }
 }
 
@@ -2144,19 +2207,51 @@ window.saveAiConfig = async () => {
     body: JSON.stringify({ api_base: $("#aiBase").value, api_key: $("#aiKey").value, model: $("#aiModel").value }),
   });
   $("#aiStatus").textContent = res.configured ? "✅ 已配置" : "未配置（使用本地规则分析）";
+  if (res.api_base) $("#aiBase").value = res.api_base;
+  const testBox = $("#aiTestResult");
+  if (testBox) testBox.textContent = res.configured ? "已保存。建议点「测试连通」确认密钥与地址可用。" : "已保存，但尚未填写完整地址/密钥。";
+};
+
+window.testAiConfig = async () => {
+  const box = $("#aiTestResult");
+  if (box) box.textContent = "正在探测，最长约 1 分钟…";
+  try {
+    await api("/api/ai/config", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ api_base: $("#aiBase").value, api_key: $("#aiKey").value, model: $("#aiModel").value }),
+    });
+    const d = await api("/api/ai/test", { method: "POST" });
+    if (box) {
+      box.style.color = d.ok ? "var(--up)" : "var(--down)";
+      box.textContent = d.ok
+        ? `连通成功（${d.model || ""} @ ${d.api_base || ""}）回复：${d.reply || "ok"}`
+        : `连通失败：${d.error || "未知错误"}`;
+    }
+    $("#aiStatus").textContent = d.ok ? "✅ 已配置且连通" : "⚠️ 已配置但调用失败";
+  } catch (err) {
+    if (box) {
+      box.style.color = "var(--down)";
+      box.textContent = "测试请求失败：" + (err.message || err);
+    }
+  }
 };
 
 window.runAiAnalyze = async () => {
   const input = $("#aiInput").value.trim();
-  $("#aiOutput").innerHTML = '<div class="empty">分析中，请稍候…</div>';
+  $("#aiOutput").innerHTML = '<div class="empty">分析中，大模型最长约 1 分钟，请稍候…</div>';
   try {
     const d = await api("/api/ai/analyze", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mode: aiMode, code: aiMode === "stock" ? input : "", question: aiMode === "custom" ? input : "" }),
     });
-    $("#aiOutput").textContent = d.text;
-    $("#aiOutput").innerHTML = `<div class="muted" style="margin-bottom:8px">来源：${esc(d.source)}</div>` + esc(d.text).replace(/\n/g, "<br>");
-  } catch (err) { $("#aiOutput").innerHTML = '<div class="empty">分析失败，请检查配置</div>'; }
+    const errHtml = d.error
+      ? `<div class="offline-banner" style="margin-bottom:8px">大模型失败：${esc(d.error)}。以下为本地规则分析结果。</div>` : "";
+    $("#aiOutput").innerHTML = errHtml
+      + `<div class="muted" style="margin-bottom:8px">来源：${esc(d.source)}</div>`
+      + esc(d.text).replace(/\n/g, "<br>");
+  } catch (err) {
+    $("#aiOutput").innerHTML = `<div class="empty">分析失败：${esc(err.message || "请检查配置与网络")}。可在左侧点「测试连通」查看具体原因。</div>`;
+  }
 };
 
 /* AI 小窗 + 右键菜单（FR7-07-4 / FR8-07） */
@@ -2277,9 +2372,11 @@ $("#ctxNewsAi").addEventListener("click", async () => {
         question: `请解读以下财经消息的市场影响（利好/利空、可能受益或受损板块、风险提示，分点，200字内）。\n影响评估：${ctxNews.impact}\n消息：${ctxNews.text}`,
       }),
     });
-    $("#aiModalBody").innerHTML = `<div class="muted" style="margin-bottom:6px">来源：${esc(d.source)}</div>`
+    $("#aiModalBody").innerHTML = (d.error
+        ? `<div class="offline-banner" style="margin-bottom:6px">大模型失败：${esc(d.error)}</div>` : "")
+      + `<div class="muted" style="margin-bottom:6px">来源：${esc(d.source)}</div>`
       + esc(d.text).replace(/\n/g, "<br>");
-  } catch (err) { $("#aiModalBody").innerHTML = '<div class="empty">分析失败</div>'; }
+  } catch (err) { $("#aiModalBody").innerHTML = `<div class="empty">分析失败：${esc(err.message || err)}</div>`; }
 });
 
 window.openAiModal = async (code, name) => {
@@ -2292,8 +2389,10 @@ window.openAiModal = async (code, name) => {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mode: "stock", code }),
     });
-    $("#aiModalBody").innerHTML = `<div class="muted" style="margin-bottom:6px">来源：${esc(d.source)}</div>` + esc(d.text).replace(/\n/g, "<br>");
-  } catch (err) { $("#aiModalBody").innerHTML = '<div class="empty">分析失败</div>'; }
+    $("#aiModalBody").innerHTML = (d.error
+        ? `<div class="offline-banner" style="margin-bottom:6px">大模型失败：${esc(d.error)}</div>` : "")
+      + `<div class="muted" style="margin-bottom:6px">来源：${esc(d.source)}</div>` + esc(d.text).replace(/\n/g, "<br>");
+  } catch (err) { $("#aiModalBody").innerHTML = `<div class="empty">分析失败：${esc(err.message || err)}</div>`; }
 };
 window.closeAiModal = () => { $("#aiModal").style.display = "none"; };
 

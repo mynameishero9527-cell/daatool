@@ -21,9 +21,11 @@ BOARDS = {
 
 _BASE_FILTER = "s.price IS NOT NULL AND s.pct IS NOT NULL AND s.name NOT LIKE '%ST%' AND s.name NOT LIKE '%退%'"
 _SELECT = ("SELECT s.*, l.industry, m.buy_index, m.sentiment AS senti, m.dark_power, m.stabilize_score, "
-           "m.stab_g1, m.stab_g2, m.stab_g3, m.stab_g4, m.divergence "
+           "m.stab_g1, m.stab_g2, m.stab_g3, m.stab_g4, m.divergence, "
+           "g.grade AS finance_grade, g.summary AS finance_summary "
            "FROM stock_snapshot s LEFT JOIN stock_list l ON l.code = s.code "
-           "LEFT JOIN stock_metrics m ON m.code = s.code ")
+           "LEFT JOIN stock_metrics m ON m.code = s.code "
+           "LEFT JOIN stock_finance_grade g ON g.code = s.code ")
 
 
 def _rows(sql: str, params: tuple = (), limit: int = 50) -> list[dict]:
@@ -44,7 +46,7 @@ def get_board(board: str, limit: int = 50, page: int = 1, page_size: int = 20,
             payload["stats"] = metrics_svc.stabilize_stats()
         return payload
 
-    data = cached(f"recommend:{board}", 120, loader)
+    data = cached(f"recommend:v2:{board}", 120, loader)
     items = data["items"]
 
     # 二级维度筛选（FR4-04-2）
@@ -71,10 +73,14 @@ def get_board(board: str, limit: int = 50, page: int = 1, page_size: int = 20,
         items = [i for i in items if 3 <= (i.get("turnover_rate") or 0) < 10]
     elif turn_filter == "high":
         items = [i for i in items if (i.get("turnover_rate") or 0) >= 10]
-    if finance_grade in ("A", "B", "C", "D"):
-        from . import finance as finance_svc
-        finance_svc.attach_grades(items)
+    from . import finance as finance_svc
+    finance_svc.attach_grades(items)
+    if finance_grade == "AB":
+        items = [i for i in items if i.get("finance_grade") in ("A", "B")]
+    elif finance_grade in ("A", "B", "C", "D"):
         items = [i for i in items if i.get("finance_grade") == finance_grade]
+    elif finance_grade in ("none", "ungraded"):
+        items = [i for i in items if not i.get("finance_grade")]
 
     # 排序优化（FR4-04-3）
     keys = {"score": lambda i: i["score"] or 0,
@@ -95,10 +101,18 @@ def get_board(board: str, limit: int = 50, page: int = 1, page_size: int = 20,
     from . import wuxing
     wuxing.tags_for_list(page_items)
     finance_svc.attach_grades(page_items)
+    metrics_svc.attach_flow_list(page_items)
+    st = finance_svc.stats()
+    graded = st.get("graded", 0)
+    universe = st.get("universe", 0)
+    fin_note = (f"财报已评级 {graded}/{universe} 只；未评级显示为 —，不会冒充 A。"
+                "筛 A/B 为空时可改选「全部 / 无评级」，或在设置页重建财报评级。"
+                "散户买入/卖出为成交额与主力差额估算，非逐笔。")
     return {
         "board": board, "title": BOARDS[board],
         "items": page_items,
         "total": total, "page": page, "pages": pages, "page_size": page_size,
+        "finance_graded": graded, "finance_universe": universe, "finance_note": fin_note,
         **({"stats": data.get("stats")} if data.get("stats") else {}),
     }
 
@@ -219,8 +233,13 @@ def _build(board: str, limit: int) -> list[dict]:
             "dark_power": r.get("dark_power"),
             "industry": r.get("industry") or "",
             "float_mv": r.get("float_mv"),
+            "main_in": r.get("main_in"), "main_out": r.get("main_out"),
+            "main_net_in": r.get("main_net_in"), "amount": r.get("amount"),
+            "finance_grade": r.get("finance_grade"),
+            "finance_summary": r.get("finance_summary") or "",
             "reason": _rich_reason(reason(r), r),
         }
+        metrics_svc.attach_flow_fields(item)
         if r.get("senti") is not None:
             item["sent_level"] = metrics_svc.sentiment_level(r["senti"])[0]
         if board == "stabilize":
