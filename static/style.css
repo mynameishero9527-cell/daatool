@@ -712,13 +712,8 @@ tr.score-95 td { background: rgba(255, 60, 60, .30); }
 }
 .plan-picked-verb { font-size: calc(12px * var(--font-scale)); color: var(--muted); }
 .plan-card label input[type=checkbox] { width: 16px; height: 16px; }
-.alert-col-title.buy { color: #ff8a80; }
-.alert-col-title.sell { color: #7ee0b0; }
-.buy-flash.kind-sell .buy-flash-head {
-  background: linear-gradient(90deg, rgba(15,92,61,.6), rgba(10,50,30,.25));
-}
-.buy-flash.kind-sell .buy-flash-advice { color: #a9eccd; }
-.buy-flash.kind-buy .buy-flash-advice { color: #ffd0d0; }
+.alert-col-title.buy { color: var(--up); }
+.alert-col-title.sell { color: var(--down); }
 
 /* 购买指数 / 暗盘力量条 */
 .gauge { margin: 8px 0; }
@@ -793,84 +788,77 @@ tr.score-95 td { background: rgba(255, 60, 60, .30); }
 .alert-item .btn.small { flex-shrink: 0; margin-top: 2px; }
 
 .hl-name {
-  font-weight: 800; color: #ffd27a;
-  animation: hl-name 1.8s ease-in-out infinite;
+  font-weight: 700; color: var(--text);
 }
 .hl-code {
-  font-weight: 700; color: #7ecbff; font-variant-numeric: tabular-nums;
-  animation: hl-code 1.6s ease-in-out infinite;
-}
-@keyframes hl-name {
-  0%, 100% { color: #ffd27a; text-shadow: 0 0 6px #ff5252, 0 0 14px #ffa940; }
-  50% { color: #fff6d0; text-shadow: 0 0 12px #ff8080, 0 0 24px #ff5252; }
-}
-@keyframes hl-code {
-  0%, 100% { color: #7ecbff; text-shadow: 0 0 6px #4a9eff, 0 0 14px rgba(74,158,255,.6); }
-  50% { color: #d7efff; text-shadow: 0 0 12px #4a9eff, 0 0 22px #22d3ee; }
+  color: var(--muted); font-variant-numeric: tabular-nums;
 }
 
 .buy-flash {
   position: fixed; top: 72px; right: 18px; left: auto; bottom: auto; z-index: 400;
   width: 430px; min-height: 220px; max-height: min(72vh, 580px);
-  color: #f6e6d8;
-  background: rgba(48, 16, 22, .94);
-  border: 1px solid rgba(255, 180, 90, .55);
-  border-radius: 14px;
-  box-shadow: 0 0 0 1px rgba(255,82,82,.18), 0 12px 40px rgba(80,0,20,.55), 0 0 28px rgba(255,100,60,.28);
+  color: var(--text);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px var(--shadow);
   display: flex; flex-direction: column; overflow: hidden;
 }
-.buy-flash.dragging { box-shadow: 0 0 0 1px rgba(255,180,90,.5), 0 16px 48px rgba(0,0,0,.45); }
-.buy-flash-logo { z-index: 400; }
-@keyframes soul-float {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-4px); }
-}
+.buy-flash.kind-buy { border-color: var(--up-ring); }
+.buy-flash.kind-sell { border-color: var(--down-ring); }
+.buy-flash.dragging { box-shadow: 0 8px 32px var(--shadow), 0 0 0 1px var(--accent); }
 .buy-flash-head {
   flex: 0 0 auto;
   display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;
-  padding: 8px 12px; border-bottom: 1px solid rgba(255,180,90,.22);
-  background: linear-gradient(90deg, rgba(139,26,26,.55), rgba(90,30,10,.25));
-  font-weight: 700; cursor: grab; user-select: none;
+  padding: 10px 14px; border-bottom: 1px solid var(--border);
+  background: var(--bg2);
+  font-weight: 600; cursor: grab; user-select: none;
+  color: var(--text);
 }
+.buy-flash.kind-buy .buy-flash-head { border-bottom-color: var(--up-ring); }
+.buy-flash.kind-sell .buy-flash-head { border-bottom-color: var(--down-ring); }
 .buy-flash-head:active { cursor: grabbing; }
-.soul-title { letter-spacing: .04em; }
+.buy-flash-title { font-size: calc(16px * var(--font-scale)); font-weight: 600; color: var(--text); }
 .buy-flash-note {
-  flex: 0 0 auto; padding: 6px 12px 0; font-size: calc(11px * var(--font-scale)); color: var(--muted); line-height: 1.45;
+  flex: 0 0 auto; padding: 8px 14px 0; font-size: calc(12px * var(--font-scale)); color: var(--muted); line-height: 1.45;
 }
-.buy-flash-note.warn { color: #ffcc80; }
-.buy-flash-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 8px 10px 12px; }
-.buy-flash-body .empty { padding: 18px 8px; }
+.buy-flash-note.warn { color: var(--warn); }
+.buy-flash-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 10px 14px 14px; }
+.buy-flash-body .empty { padding: 24px 8px; }
 .buy-flash-row {
-  border: 1px solid var(--border); border-radius: 8px;
-  padding: 8px 10px; margin-bottom: 8px; background: rgba(20,12,16,.55);
+  border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 12px; margin-bottom: 8px; background: var(--bg2);
 }
-.buy-flash-main { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+.buy-flash-row:hover { background: var(--card-hover); cursor: pointer; }
+.buy-flash-main { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; flex-wrap: wrap; }
 .buy-flash-meta {
   display: flex; flex-wrap: wrap; gap: 8px 12px;
   font-size: calc(12px * var(--font-scale)); color: var(--muted); margin-bottom: 4px;
 }
-.buy-flash-advice { font-size: calc(12px * var(--font-scale)); color: var(--up); margin-bottom: 6px; line-height: 1.5; white-space: normal; }
+.buy-flash-advice { font-size: calc(12px * var(--font-scale)); margin-bottom: 6px; line-height: 1.5; white-space: normal; }
+.buy-flash.kind-buy .buy-flash-advice { color: var(--up); }
+.buy-flash.kind-sell .buy-flash-advice { color: var(--down); }
 .advice-summary { font-size: calc(12px * var(--font-scale)); color: var(--up); line-height: 1.5; margin-top: 4px; white-space: normal; }
 .signal-extra { display: flex; flex-wrap: wrap; gap: 6px 10px; font-size: calc(12px * var(--font-scale)); color: var(--muted); margin: 4px 0; }
 .buy-flash-logo {
   position: fixed; right: 18px; bottom: 18px; left: auto; top: auto; z-index: 400;
-  width: 56px; height: 56px; padding: 0; border: 0; border-radius: 50%;
-  background: transparent; cursor: grab;
-  filter: drop-shadow(0 0 10px rgba(255,90,50,.75));
-  animation: soul-logo 2.2s ease-in-out infinite;
+  width: 48px; height: 48px; padding: 0; border: 1px solid var(--border); border-radius: 12px;
+  background: var(--card); color: var(--accent); cursor: grab;
+  box-shadow: 0 8px 24px var(--shadow);
+  font-size: calc(15px * var(--font-scale)); font-weight: 700;
 }
+.buy-flash-logo.kind-buy { color: var(--up); border-color: var(--up-ring); }
+.buy-flash-logo.kind-sell { color: var(--down); border-color: var(--down-ring); }
+.buy-flash-logo:hover { background: var(--card-hover); }
 .buy-flash-logo:active { cursor: grabbing; }
-.buy-flash-logo svg { width: 56px; height: 56px; display: block; pointer-events: none; }
+.buy-flash-fab-label { pointer-events: none; }
 .buy-flash-badge {
-  position: absolute; top: -4px; right: -4px; min-width: 18px; height: 18px;
-  padding: 0 5px; border-radius: 9px; background: #ff4d4f; color: #fff;
+  position: absolute; top: -6px; right: -6px; min-width: 18px; height: 18px;
+  padding: 0 5px; border-radius: 9px; background: var(--accent); color: var(--on-accent);
   font-size: calc(11px * var(--font-scale)); line-height: 18px; text-align: center; pointer-events: none;
 }
-@keyframes soul-logo {
-  0%, 100% { transform: translateY(0) scale(1); filter: drop-shadow(0 0 8px rgba(255,90,50,.65)); }
-  50% { transform: translateY(-3px) scale(1.06); filter: drop-shadow(0 0 16px rgba(255,210,120,.9)); }
-}
-.buy-flash-logo.dragging { animation: none; }
+.buy-flash-logo.kind-buy .buy-flash-badge { background: var(--up); }
+.buy-flash-logo.kind-sell .buy-flash-badge { background: var(--down); }
 
 /* 11.0.21 热度词汇板块 */
 .hot-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(176px, 1fr)); gap: 10px; }

@@ -297,6 +297,7 @@ CREATE TABLE IF NOT EXISTS stock_ai_brief (
 -- 13.0.5：股票常识 / 选股票小技巧 AI 更新解释（失败不覆盖）；热门信息去掉来源 tab；公告须公司语境
 -- 13.0.6：原智能选股改名为策略选股；新建智能选股菜单（股价未来涨跌方向，本轮只建入口）
 -- 13.0.7：热门信息默认按热度倒序，支持关注度/更新时间/事件时间排序
+-- 13.0.8：最佳买点/卖点浮窗改用主界面卡片主题
 -- intel_item_ai / hot_term_ai 表结构不变，失败仍不覆盖已保存结果
 
 CREATE TABLE IF NOT EXISTS knowledge_ai (

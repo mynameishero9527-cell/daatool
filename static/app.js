@@ -5713,7 +5713,7 @@ window.runSmartpickAi = async () => {
   }
 };
 
-/* ---------------- 全局最佳买点灵魂窗 ---------------- */
+/* ---------------- 全局最佳买点/卖点浮窗 ---------------- */
 const BUY_FLASH_KEY = "daatool_buy_flash_v11";
 function readBuyFlashState() {
   try { return JSON.parse(localStorage.getItem(BUY_FLASH_KEY) || "") || {}; }
@@ -5747,7 +5747,7 @@ function applyBuyFlashPos() {
     buyFlashState.win = p;
   }
   if (fab && buyFlashState.logo) {
-    const p = clampSoulPos(buyFlashState.logo.left, buyFlashState.logo.top, 56, 56);
+    const p = clampSoulPos(buyFlashState.logo.left, buyFlashState.logo.top, 48, 48);
     fab.style.left = p.left + "px";
     fab.style.top = p.top + "px";
     fab.style.right = "auto";
@@ -5763,7 +5763,7 @@ function setBuyFlashCollapsed(v) {
   if (fab) fab.style.display = v ? "" : "none";
   if (v && panel && !buyFlashState.logo) {
     const r = panel.getBoundingClientRect();
-    buyFlashState.logo = { left: Math.max(0, r.right - 56), top: Math.max(0, r.top) };
+    buyFlashState.logo = { left: Math.max(0, r.right - 48), top: Math.max(0, r.top) };
   }
   applyBuyFlashPos();
   saveBuyFlashState();
@@ -5823,10 +5823,18 @@ async function loadBuyPoints() {
   const titleEl = $("#buyFlashKindLabel");
   if (titleEl) titleEl.textContent = kindLabel;
   const panel = $("#buyFlash");
+  const fab = $("#buyFlashFab");
+  const fabLabel = $("#buyFlashFabLabel");
   if (panel) {
     panel.classList.toggle("kind-buy", kind === "buy");
     panel.classList.toggle("kind-sell", kind === "sell");
   }
+  if (fab) {
+    fab.classList.toggle("kind-buy", kind === "buy");
+    fab.classList.toggle("kind-sell", kind === "sell");
+    fab.title = "打开" + kindLabel;
+  }
+  if (fabLabel) fabLabel.textContent = kind === "sell" ? "卖" : "买";
   const paintEmpty = (text, countText) => {
     if (countEl) countEl.textContent = countText;
     if (noteEl) { noteEl.textContent = text || ""; noteEl.classList.toggle("warn", true); }

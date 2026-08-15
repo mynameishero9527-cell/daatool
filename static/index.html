@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>A股量化工具</title>
-<link rel="stylesheet" href="/static/style.css?v=13.0.7">
+<link rel="stylesheet" href="/static/style.css?v=13.0.8">
 <script>
 (function () {
   try {
@@ -746,33 +746,23 @@
   </div>
   <div class="ai-modal-body" id="aiModalBody"></div>
 </div>
-<div id="buyFlash" class="buy-flash soul-win">
+<div id="buyFlash" class="buy-flash kind-buy">
   <div class="buy-flash-head" id="buyFlashHead">
-    <span class="soul-title">✦ <span id="buyFlashKindLabel">最佳买点</span> <span class="muted" id="buyFlashCount"></span></span>
+    <span class="buy-flash-title"><span id="buyFlashKindLabel">最佳买点</span> <span class="muted" id="buyFlashCount"></span></span>
     <span>
       <span class="btn-group" id="buyFlashKind">
         <button class="opt active" type="button" data-kind="buy">买点</button>
         <button class="opt" type="button" data-kind="sell">卖点</button>
       </span>
       <button class="btn small ghost" type="button" id="buyFlashReset" title="复位窗口">↺</button>
-      <button class="btn small ghost" type="button" id="buyFlashMin" title="缩小成 logo">—</button>
+      <button class="btn small ghost" type="button" id="buyFlashMin" title="缩小">—</button>
     </span>
   </div>
   <div id="buyFlashNote" class="buy-flash-note"></div>
   <div id="buyFlashBody" class="buy-flash-body"><div class="empty">加载中…</div></div>
 </div>
-<button type="button" id="buyFlashFab" class="buy-flash-logo" style="display:none" title="打开最佳买点">
-  <svg viewBox="0 0 48 48" aria-hidden="true">
-    <defs>
-      <radialGradient id="soulGlow" cx="50%" cy="42%" r="55%">
-        <stop offset="0%" stop-color="#fff3c4"/>
-        <stop offset="45%" stop-color="#ff6b4a"/>
-        <stop offset="100%" stop-color="#7a1028"/>
-      </radialGradient>
-    </defs>
-    <circle cx="24" cy="24" r="22" fill="url(#soulGlow)"/>
-    <path fill="#fff6d0" d="M24 8c3 7 1 10-1 14 6 0 10 4 10 10 0 7-6 12-13 12s-12-5-12-12c0-8 8-14 16-24z"/>
-  </svg>
+<button type="button" id="buyFlashFab" class="buy-flash-logo kind-buy" style="display:none" title="打开最佳买点">
+  <span class="buy-flash-fab-label" id="buyFlashFabLabel">买</span>
   <span id="buyFlashBadge" class="buy-flash-badge" style="display:none">0</span>
 </button>
 <div id="ctxMenu" class="ctx-menu" style="display:none">
@@ -799,6 +789,6 @@
   <div class="ctx-item" id="ctxKbRevert" style="display:none">↩ 还原内置解释</div>
 </div>
 
-<script src="/static/app.js?v=13.0.7"></script>
+<script src="/static/app.js?v=13.0.8"></script>
 </body>
 </html>
