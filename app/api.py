@@ -271,8 +271,8 @@ def macro_almanac():
 
 
 @router.get("/macro/sector-events")
-def macro_sector_events(months: int = Query(12, le=12)):
-    return macro.get_sector_intel(months)
+def macro_sector_events(months: int = Query(12, le=12), group: str = Query("day")):
+    return macro.get_sector_intel(months, group)
 
 
 @router.get("/macro/intel")

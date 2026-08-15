@@ -743,7 +743,96 @@ def list_intel(kind: str = "", sector: str = "", days: int = 0, limit: int = 80)
     return {"items": items, "count": len(items), "stats": intel_stats()}
 
 
-def get_sector_intel(months: int = 12) -> dict:
+_WEEKDAY_CN = "一二三四五六日"
+
+
+def event_ymd(value: str) -> str:
+    """只取日历日，避免带时分秒时按日无法合并。"""
+    s = (value or "").strip()
+    if len(s) >= 10 and s[4] == "-" and s[7] == "-":
+        return s[:10]
+    return ""
+
+
+def _week_bounds(ymd: str) -> tuple[str, str]:
+    d = date.fromisoformat(ymd)
+    start = d - timedelta(days=d.weekday())
+    end = start + timedelta(days=6)
+    return start.isoformat(), end.isoformat()
+
+
+def _split_sectors(raw) -> list[str]:
+    if isinstance(raw, list):
+        parts = raw
+    else:
+        text = str(raw or "")
+        for sep in ("，", "、", "/", "|"):
+            text = text.replace(sep, ",")
+        parts = text.split(",")
+    out: list[str] = []
+    seen: set[str] = set()
+    skip = {"", "未映射影响板块", "政策", "A股", "大盘"}
+    for p in parts:
+        n = str(p.get("name") or "").strip() if isinstance(p, dict) else str(p or "").strip()
+        if n in skip or n in seen:
+            continue
+        seen.add(n)
+        out.append(n)
+    return out
+
+
+def group_sector_events(items: list[dict], dim: str = "day") -> list[dict]:
+    """把事件合并进日/周/月时间桶，并汇总该桶内板块。"""
+    dim = dim if dim in ("day", "week", "month") else "day"
+    buckets: dict[str, dict] = {}
+    for ev in items or []:
+        ymd = event_ymd(str(ev.get("date") or ""))
+        if dim == "week" and ymd:
+            start, end = _week_bounds(ymd)
+            key = f"w:{start}"
+            label = f"{start} ~ {end[5:]} 当周"
+            span = f"{start} ~ {end}"
+        elif dim == "month" and ymd:
+            key = f"m:{ymd[:7]}"
+            label = f"{ymd[:4]}年{int(ymd[5:7])}月"
+            span = ymd[:7]
+        elif ymd:
+            key = f"d:{ymd}"
+            wd = _WEEKDAY_CN[date.fromisoformat(ymd).weekday()]
+            label = f"{ymd} 周{wd}"
+            span = ymd
+        else:
+            key = "none"
+            label = "日期未标注"
+            span = ""
+        g = buckets.get(key)
+        if g is None:
+            g = {
+                "key": key, "label": label, "range": span, "dim": dim,
+                "items": [], "sectors": [],
+            }
+            buckets[key] = g
+        g["items"].append(ev)
+        seen = set(g["sectors"])
+        for sec in _split_sectors(ev.get("sectors") or ev.get("affected_sectors") or ""):
+            if sec not in seen:
+                seen.add(sec)
+                g["sectors"].append(sec)
+    keys = [k for k in buckets if k != "none"]
+    keys.sort(reverse=True)
+    if "none" in buckets:
+        keys.append("none")
+    out = []
+    for k in keys:
+        g = buckets[k]
+        g["items"].sort(key=lambda e: (e.get("date") or "", e.get("title") or ""), reverse=True)
+        g["count"] = len(g["items"])
+        g["sectors_text"] = "、".join(g["sectors"])
+        out.append(g)
+    return out
+
+
+def get_sector_intel(months: int = 12, group: str = "day") -> dict:
     """板块事件 = 周期大事件 + 本地缓存里带板块标签的快讯/政策。"""
     from . import almanac
     events = almanac.get_sector_events(months)
@@ -754,7 +843,7 @@ def get_sector_intel(months: int = 12) -> dict:
             continue
         news_ev.append({
             "id": it.get("id") or "",
-            "date": it["date"] or "",
+            "date": event_ymd(it.get("date") or it.get("time") or ""),
             "title": it["title"],
             "city": it.get("region") or "",
             "sectors": it.get("sectors") or "",
@@ -766,10 +855,16 @@ def get_sector_intel(months: int = 12) -> dict:
     for ev in events:
         ev.setdefault("source", "板块周期")
         ev.setdefault("kind", "sector_event")
+        ev["date"] = event_ymd(ev.get("date") or "")
         if not ev.get("id"):
             key = hashlib.md5(f"{ev.get('date') or ''}{ev.get('title') or ''}".encode()).hexdigest()[:12]
             ev["id"] = key
     merged = events + news_ev
     merged.sort(key=lambda e: e.get("date") or "", reverse=True)
-    return {"items": merged, "count": len(merged), "stats": intel_stats(),
-            "note": "周期大事件与已缓存快讯均来自本地库，断网也可回看"}
+    dim = group if group in ("day", "week", "month") else "day"
+    groups = group_sector_events(merged, dim)
+    return {
+        "items": merged, "groups": groups, "group": dim,
+        "count": len(merged), "stats": intel_stats(),
+        "note": "已按日/周/月把同一时段事件与影响板块合并展示。周期大事件与已缓存快讯均来自本地库，断网也可回看",
+    }

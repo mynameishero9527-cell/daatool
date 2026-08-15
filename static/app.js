@@ -256,7 +256,9 @@ function addCalendarDays(ymd, n) {
   return dt.toISOString().slice(0, 10);
 }
 function weekStartYMD(ymd) {
-  const [y, m, d] = String(ymd).split("-").map(Number);
+  const s = String(ymd || "").slice(0, 10);
+  const [y, m, d] = s.split("-").map(Number);
+  if (!y || !m || !d) return "";
   const dt = new Date(Date.UTC(y, m - 1, d));
   const day = dt.getUTCDay() || 7;
   dt.setUTCDate(dt.getUTCDate() - day + 1);
@@ -1878,34 +1880,59 @@ async function loadMacro() {
       return;
     }
     if (macroSub === "sectorEvents") {
-      const d = await api("/api/macro/sector-events");
-      const rows = d.items || d || [];
+      const d = await api(`/api/macro/sector-events?group=${encodeURIComponent(sectorEvGroup)}`);
+      const rows = Array.isArray(d.items) ? d.items : [];
       const st = d.stats || {};
-      const groups = {};
-      for (const ev of rows) {
-        let key = ev.date;
-        if (sectorEvGroup === "week") {
-          key = weekStartYMD(ev.date) + " 当周";
-        } else if (sectorEvGroup === "month") {
-          key = ev.date.slice(0, 7);
-        }
-        (groups[key] ||= []).push(ev);
-      }
+      const groups = Array.isArray(d.groups) && d.groups.length
+        ? d.groups
+        : [];
+      const PREVIEW = 6;
       const evRow = (ev) => {
         const ident = ev.id || `${ev.date || ""}:${ev.title || ""}`;
         const key = intelKey("sector_event", ident);
         const secs = ev.sectors || "";
+        const ymd = String(ev.date || "").slice(0, 10);
+        const dshow = ymd.length === 10 ? ymd.slice(5) : (ymd || "—");
+        const desc = String(ev.cycle_desc || ev.source || "").replace(/\s+/g, " ").trim();
         return `
-        <div class="cal-item js-event-row js-intel-row" data-title="${esc(ev.title)}" data-sectors="${esc(secs)}"
-          data-intel-source="sector_event" data-intel-id="${esc(ident)}" data-intel-key="${esc(key)}"
-          data-intel-title="${esc(ev.title)}" data-intel-text="${esc((ev.cycle_desc || ev.title || "").slice(0, 400))}"
-          data-intel-time="${esc(ev.date || "")}" data-attention="${esc((ev.impact_level || 0) * 20)}"
-          style="cursor:pointer" title="点击查看利好/利空板块与相关个股">
-          <span class="cal-date" style="width:108px">${esc(ev.date)}</span>
-          ${stars(ev.impact_level)}
-          <span class="flag">${esc(ev.city)}</span>
-          <span style="flex:1">${esc(ev.title)} ${intelFlagHtml(key)} ${intelSectorBadges(key, secs, ev.title)}</span>
-          <span class="muted">${esc(ev.cycle_desc || ev.source || "")}</span>
+        <div class="se-event js-event-row js-intel-row" data-title="${esc(ev.title)}" data-sectors="${esc(secs)}"
+          data-intel-source="sector_event" data-intel-id="${escAttr(ident)}" data-intel-key="${escAttr(key)}"
+          data-intel-title="${escAttr(ev.title)}" data-intel-text="${escAttr((desc || ev.title || "").slice(0, 400))}"
+          data-intel-time="${escAttr(ev.date || "")}" data-attention="${escAttr((ev.impact_level || 0) * 20)}"
+          title="点击查看该条影响板块与相关个股">
+          <div class="se-event-date">${esc(dshow)}</div>
+          <div class="se-event-main">
+            <div class="se-event-title">${esc(ev.title)} ${intelFlagHtml(key)}</div>
+            <div class="se-event-meta">
+              ${stars(ev.impact_level)}
+              ${ev.city ? `<span class="flag">${esc(ev.city)}</span>` : ""}
+              <span class="muted">${esc(ev.source || "")}</span>
+              ${intelSectorBadges(key, secs, ev.title)}
+            </div>
+            ${desc ? `<div class="se-event-desc">${esc(desc)}</div>` : ""}
+          </div>
+        </div>`;
+      };
+      const groupCard = (g) => {
+        const label = g.label || g.key || "";
+        const secs = g.sectors_text || (Array.isArray(g.sectors) ? g.sectors.join("、") : "");
+        const items = Array.isArray(g.items) ? g.items : [];
+        const gkey = intelKey("sector_event", `group:${g.key || label}`);
+        const more = items.length > PREVIEW ? items.length - PREVIEW : 0;
+        return `
+        <div class="se-group">
+          <div class="se-group-head js-event-row js-intel-row" data-title="${esc(label)}" data-sectors="${esc(secs)}"
+            data-intel-source="sector_event" data-intel-id="${escAttr(g.key || label)}" data-intel-key="${escAttr(gkey)}"
+            data-intel-title="${escAttr(label)}" data-intel-text="${escAttr((label + " " + secs).slice(0, 400))}"
+            title="点击查看本${sectorEvGroup === "week" ? "周" : sectorEvGroup === "month" ? "月" : "日"}合并后的影响板块">
+            <div class="se-group-title">${esc(label)} <span class="muted">${items.length} 条</span></div>
+            <div class="se-group-secs">${intelSectorBadges(gkey, secs, label) || (secs ? sectorBadges(secs, label) : '<span class="muted">暂无映射板块</span>')}</div>
+          </div>
+          <div class="se-group-body">
+            ${items.slice(0, PREVIEW).map(evRow).join("")}
+            ${more ? `<div class="se-more" hidden>${items.slice(PREVIEW).map(evRow).join("")}</div>
+              <button type="button" class="btn small ghost se-more-btn" data-n="${more}">展开其余 ${more} 条</button>` : ""}
+          </div>
         </div>`;
       };
       box.innerHTML = (await almanacCard()) + '<div id="eventDetailBox"></div>' +
@@ -1913,15 +1940,25 @@ async function loadMacro() {
           ${[["day", "按日"], ["week", "按周"], ["month", "按月"]].map(([v, t]) =>
             `<button class="opt ${v === sectorEvGroup ? "active" : ""}" data-v="${v}">${t}</button>`).join("")}
         </div>
-        <div class="muted" style="margin-bottom:8px">板块情报已缓存本地 ${st.total || rows.length} 条 · 点击查看影响板块与相关个股 · ${esc(d.note || "")}</div>` +
-        (rows.length ? Object.entries(groups).map(([k, list]) =>
-          `<div class="outlook-group">${esc(k)}（${list.length}）</div>` + list.map(evRow).join("")).join("")
-          : '<div class="empty">暂无板块事件</div>');
+        <div class="muted" style="margin-bottom:10px">同一${sectorEvGroup === "week" ? "周" : sectorEvGroup === "month" ? "月" : "日"}的事件与影响板块已合并到该时间分组。板块情报已缓存本地 ${st.total || rows.length} 条 · ${esc(d.note || "")}</div>` +
+        (groups.length ? groups.map(groupCard).join("")
+          : (rows.length ? '<div class="empty">分组结果为空</div>' : '<div class="empty">暂无板块事件</div>'));
       $("#seGroupBtns")?.addEventListener("click", (e) => {
         const btn = e.target.closest(".opt");
         if (!btn) return;
         sectorEvGroup = btn.dataset.v;
         loadMacro();
+      });
+      box.querySelectorAll(".se-more-btn").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const more = btn.parentElement && btn.parentElement.querySelector(".se-more");
+          if (!more) return;
+          const open = !more.hidden;
+          more.hidden = open;
+          btn.textContent = open ? `展开其余 ${btn.dataset.n} 条` : "收起";
+        });
       });
       return;
     }
