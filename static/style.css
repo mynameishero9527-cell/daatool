@@ -447,6 +447,42 @@ tr.score-95 td { background: rgba(255, 60, 60, .30); }
 }
 .chip:hover { background: rgba(255,82,82,.15); color: var(--up); border-color: var(--up); }
 
+/* 选股策略方案 */
+.strategy-exec {
+  white-space: pre-wrap; font-size: 13px; line-height: 1.55;
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px 14px; color: var(--text);
+  max-height: 360px; overflow: auto;
+}
+.plan-card {
+  border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px 14px; margin: 10px 0; background: var(--bg2);
+}
+.plan-card.on { border-color: var(--down); box-shadow: inset 0 0 0 1px rgba(38,194,129,.25); }
+.plan-card .plan-head {
+  display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap;
+}
+.plan-card .plan-head label {
+  display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 600;
+}
+.plan-card .plan-id {
+  font-variant-numeric: tabular-nums; color: #ffd27a; margin-right: 4px;
+}
+.plan-card .plan-counts { margin-left: auto; color: var(--muted); font-size: 12px; }
+.plan-card .plan-summary { color: var(--muted); font-size: 13px; margin: 8px 0 6px 26px; }
+.plan-formula {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px; white-space: pre-wrap; line-height: 1.45;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 6px; padding: 8px 10px; margin: 6px 0 0 26px; color: #c9d6e8;
+}
+.plan-badge {
+  display: inline-block; font-size: 11px; line-height: 1.2;
+  padding: 1px 6px; margin-right: 4px; border-radius: 4px;
+  background: rgba(255,210,122,.16); color: #ffd27a; border: 1px solid rgba(255,210,122,.35);
+}
+.plan-badge.multi { background: rgba(38,194,129,.16); color: #8ef0c4; border-color: rgba(38,194,129,.4); }
+
 /* 购买指数 / 暗盘力量条 */
 .gauge { margin: 8px 0; }
 .gauge .g-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; }

@@ -146,7 +146,8 @@ CREATE TABLE IF NOT EXISTS alert_log (
     alert_type  TEXT NOT NULL,       -- buy_point/sell_point/index_move/fund_switch/rotation
     title       TEXT NOT NULL,
     detail      TEXT DEFAULT '',
-    created_at  TEXT NOT NULL
+    created_at  TEXT NOT NULL,
+    plan_id     TEXT DEFAULT ''      -- 命中的选股方案，如 A 或 A,B
 );
 CREATE INDEX IF NOT EXISTS idx_alert_time ON alert_log(created_at);
 
@@ -237,6 +238,7 @@ MIGRATIONS = [
     "ALTER TABLE custom_event ADD COLUMN sectors TEXT DEFAULT ''",
     "ALTER TABLE sector_flow_daily ADD COLUMN source TEXT DEFAULT ''",
     "ALTER TABLE sector_flow_daily ADD COLUMN board_code TEXT DEFAULT ''",
+    "ALTER TABLE alert_log ADD COLUMN plan_id TEXT DEFAULT ''",
 ]
 
 

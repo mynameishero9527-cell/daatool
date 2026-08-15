@@ -17,34 +17,44 @@ TYPE_NAMES = {
 }
 
 
-def _add(alert_type: str, title: str, detail: str = "") -> None:
-    execute("INSERT INTO alert_log(alert_type,title,detail,created_at) VALUES(?,?,?,?)",
-            (alert_type, title, detail, datetime.now().isoformat(timespec="seconds")))
+def _add(alert_type: str, title: str, detail: str = "", plan_id: str = "") -> None:
+    execute("INSERT INTO alert_log(alert_type,title,detail,created_at,plan_id) VALUES(?,?,?,?,?)",
+            (alert_type, title, detail, datetime.now().isoformat(timespec="seconds"), plan_id or ""))
+
+
+def _flow_yi(v) -> str:
+    n = abs(v or 0) / 10000
+    return f"{n:.2f} 亿"
 
 
 def _scan_buy_points() -> None:
-    rows = query(
-        """SELECT s.code, s.name, s.main_net_in, m.buy_index, m.pos60
-           FROM stock_metrics m JOIN stock_snapshot s ON s.code = m.code
-           WHERE m.buy_index >= 80 AND s.main_net_in > 0
-             AND s.name NOT LIKE '%ST%' ORDER BY m.buy_index DESC LIMIT 5""")
+    from . import strategy as strategy_svc
+    rows = strategy_svc.collect_hits("buy", limit=5)
     for r in rows:
+        tag = "、".join(r.get("plans") or []) or "A"
+        bi = r.get("buy_index")
+        bi_txt = f"{bi:.0f}" if bi is not None else "-"
+        pos = r.get("pos60")
+        pos_txt = f"{pos * 100:.0f}% 分位" if pos is not None else "—"
         _add("buy_point",
-             f"{r['name']}（{r['code']}）购买指数 {r['buy_index']:.0f}，极佳买点·可分批建仓",
-             f"主力净流入 {r['main_net_in'] / 10000:.2f} 亿，60日区间 {r['pos60'] * 100:.0f}% 分位")
+             f"{r['name']}（{r['code']}）【{tag}】购买指数 {bi_txt}，{r.get('hit_action') or '策略买点'}",
+             f"方案 {r.get('plan_names') or tag}；主力净流入 {_flow_yi(r.get('main_net_in'))}，60日区间 {pos_txt}",
+             r.get("plan_id") or "")
 
 
 def _scan_sell_points() -> None:
-    rows = query(
-        """SELECT s.code, s.name, s.main_net_in, m.buy_index, m.sentiment
-           FROM stock_metrics m JOIN stock_snapshot s ON s.code = m.code
-           WHERE (m.buy_index <= 30 OR (s.main_net_in < -8000 AND m.sentiment >= 80))
-             AND s.name NOT LIKE '%ST%' ORDER BY m.buy_index ASC LIMIT 5""")
+    from . import strategy as strategy_svc
+    rows = strategy_svc.collect_sell_points(limit=5)
     for r in rows:
-        extra = "，情绪过热注意兑现" if (r["sentiment"] or 0) >= 80 else ""
+        tag = "、".join(r.get("plans") or []) or "A"
+        bi = r.get("buy_index")
+        bi_txt = f"{bi:.0f}" if bi is not None else "-"
+        extra = "，情绪过热注意兑现" if (r.get("sentiment") or 0) >= 80 else ""
+        net = r.get("main_net_in") or 0
         _add("sell_point",
-             f"{r['name']}（{r['code']}）购买指数 {r['buy_index']:.0f}，高风险位置·建议回避{extra}",
-             f"主力净流{'入' if (r['main_net_in'] or 0) > 0 else '出'} {abs(r['main_net_in'] or 0) / 10000:.2f} 亿")
+             f"{r['name']}（{r['code']}）【{tag}】购买指数 {bi_txt}，{r.get('hit_action') or '策略卖点'}{extra}",
+             f"方案 {r.get('plan_names') or tag}；主力净流{'入' if net > 0 else '出'} {_flow_yi(net)}",
+             r.get("plan_id") or "")
 
 
 def _scan_index_move() -> None:
@@ -119,10 +129,12 @@ def scan_all() -> int:
 
 
 def get_alerts(limit: int = 50) -> dict:
-    rows = query("SELECT alert_type, title, detail, created_at FROM alert_log "
-                 "ORDER BY id DESC LIMIT ?", (limit,))
+    rows = query("SELECT alert_type, title, detail, created_at, COALESCE(plan_id,'') AS plan_id "
+                 "FROM alert_log ORDER BY id DESC LIMIT ?", (limit,))
     for r in rows:
         r["type_name"] = TYPE_NAMES.get(r["alert_type"], r["alert_type"])
+        pid = (r.get("plan_id") or "").strip()
+        r["plans"] = [p for p in pid.split(",") if p] if pid else []
         title = r.get("title") or ""
         m = None
         if "（" in title and "）" in title:
@@ -138,20 +150,6 @@ def get_alerts(limit: int = 50) -> dict:
     for r in rows:
         r["in_watchlist"] = bool(r.get("code") and r["code"] in watched)
     return {"items": rows}
-
-
-_BUY_NAME_OK = "s.name NOT LIKE '%ST%' AND s.name NOT LIKE '%退%'"
-_BUY_POINT_SELECT = """SELECT s.code, s.name, s.pct, s.volume_ratio, s.price, s.main_net_in,
-              COALESCE(l.industry, '') AS industry, m.buy_index, m.sentiment
-       FROM stock_metrics m
-       JOIN stock_snapshot s ON s.code = m.code
-       LEFT JOIN stock_list l ON l.code = s.code
-       WHERE {where}
-       ORDER BY m.buy_index DESC LIMIT ?"""
-
-
-def _fetch_buy_candidates(where: str, limit: int) -> list[dict]:
-    return query(_BUY_POINT_SELECT.format(where=where), (limit,))
 
 
 def _decorate_buy_rows(rows: list[dict]) -> None:
@@ -185,14 +183,21 @@ def _decorate_buy_rows(rows: list[dict]) -> None:
 def get_buy_points(limit: int = 8) -> dict:
     """实时最佳买点（供全局弹窗）。空结果必须带回原因，避免窗口空白。
 
-    优先「购买指数≥80 且主力净流入>0」。当日不够格时降到≥65 且净流入，
-    再不够则按购买指数从高到低给观察池——不把观察池伪装成极佳买点。
+    按设置中启用的选股方案并行取并集。方案 A 即原「购买指数≥80 且主力净流入」。
+    全部启用方案均无命中且 A 仍启用时，才回退到≥65 或观察池——不把观察池伪装成极佳买点。
     """
+    from . import strategy as strategy_svc
+
     limit = max(3, min(int(limit or 8), 20))
     metric_n = query("SELECT COUNT(*) AS n FROM stock_metrics")[0]["n"]
     snap_n = query("SELECT COUNT(*) AS n FROM stock_snapshot")[0]["n"]
     asof = (query("SELECT MAX(updated_at) AS t FROM stock_snapshot")[0]["t"] or "")[:19]
-    base = {"metrics_count": metric_n, "snapshot_count": snap_n, "asof": asof}
+    enabled = strategy_svc.get_enabled()
+    exe = strategy_svc.executing_text(enabled)
+    base = {
+        "metrics_count": metric_n, "snapshot_count": snap_n, "asof": asof,
+        "enabled": enabled, "executing": exe.get("title") or "",
+    }
 
     if metric_n == 0:
         return {**base, "items": [], "count": 0, "source": "empty",
@@ -203,28 +208,19 @@ def get_buy_points(limit: int = 8) -> dict:
                 "empty_reason": "no_snapshot",
                 "note": "暂无行情快照：请先全量同步后再看买点"}
 
-    rows = _fetch_buy_candidates(
-        f"m.buy_index >= 80 AND s.main_net_in > 0 AND {_BUY_NAME_OK}", limit)
-    source, note = "strict", "购买指数≥80 且主力净流入>0，每轮扫描轮动，不构成投资建议"
-
+    rows, source, note = strategy_svc.collect_buy_points(limit)
     if not rows:
-        rows = _fetch_buy_candidates(
-            f"m.buy_index >= 65 AND s.main_net_in > 0 AND {_BUY_NAME_OK}", limit)
-        if rows:
-            source = "relaxed_65"
-            note = "当日暂无购买指数≥80且净流入的标的，已放宽到≥65且主力净流入>0（较好买点观察池，非极佳买点）"
-
-    if not rows:
-        rows = _fetch_buy_candidates(
-            f"m.buy_index IS NOT NULL AND {_BUY_NAME_OK}", limit)
-        if rows:
-            source = "top_buy_index"
-            note = "当日暂无「购买指数高且主力净流入」组合，已按购买指数从高到低展示观察池（不构成买入建议）"
-
-    if not rows:
-        return {**base, "items": [], "count": 0, "source": "empty",
+        return {**base, "items": [], "count": 0, "source": source or "empty",
                 "empty_reason": "no_candidates",
-                "note": "指标已计算但暂无可用个股，请确认快照已同步"}
+                "note": note or "指标已计算但暂无可用个股，请确认快照已同步"}
 
     _decorate_buy_rows(rows)
+    if source == "top_buy_index":
+        for r in rows:
+            r["buy_level"] = "观察池"
+            r["advice"] = "观察池，非策略命中，不构成买入建议"
+    elif source == "relaxed_65":
+        for r in rows:
+            if (r.get("buy_index") or 0) < 80:
+                r["buy_level"] = "较好买点"
     return {**base, "items": rows, "count": len(rows), "source": source, "note": note}

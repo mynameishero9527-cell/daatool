@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>A股量化工具</title>
-<link rel="stylesheet" href="/static/style.css?v=11.0.16">
-<script src="/static/vendor/echarts.min.js?v=11.0.16"></script>
+<link rel="stylesheet" href="/static/style.css?v=11.0.17">
+<script src="/static/vendor/echarts.min.js?v=11.0.17"></script>
 </head>
 <body>
 <header class="topbar">
@@ -541,6 +541,12 @@
 
   <!-- 设置 -->
   <section class="page" id="page-settings">
+    <div class="btn-group sub-tabs" id="settingsTabs">
+      <button class="opt active" data-view="ops">系统维护</button>
+      <button class="opt" data-view="strategy">选股策略</button>
+    </div>
+
+    <div id="settingsPaneOps">
     <div class="grid-2">
       <div class="card">
         <div class="card-title">数据源健康</div>
@@ -582,6 +588,27 @@
     <div class="card">
       <div class="card-title">定时任务</div>
       <div id="jobTable"></div>
+    </div>
+    </div>
+
+    <div id="settingsPaneStrategy" style="display:none">
+      <div class="card">
+        <div class="card-title">当前执行的策略
+          <span class="muted" id="strategyExecTitle"></span>
+        </div>
+        <div id="strategyExecBody" class="strategy-exec">加载中…</div>
+      </div>
+      <div class="card">
+        <div class="card-title">策略方案
+          <span class="muted">可多选并行，买点/卖点取并集；方案 A 为现行线上逻辑</span>
+          <span>
+            <button class="btn ghost" type="button" id="btnStrategyReset">仅保留方案A</button>
+            <button class="btn" type="button" id="btnSaveStrategy">应用所选方案</button>
+          </span>
+        </div>
+        <div id="strategySaveMsg" class="muted" style="margin-bottom:8px"></div>
+        <div id="strategyPlans"></div>
+      </div>
     </div>
   </section>
 </main>
@@ -636,6 +663,6 @@
   <div class="ctx-item" id="ctxNewsAi" style="display:none">🤖 发送AI分析（消息）</div>
 </div>
 
-<script src="/static/app.js?v=11.0.16"></script>
+<script src="/static/app.js?v=11.0.17"></script>
 </body>
 </html>

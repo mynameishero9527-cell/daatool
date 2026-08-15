@@ -10,7 +10,7 @@ from . import scheduler as sched_mod
 from .services import (
     ai, alerts, announcement, attribution, commodity, cycle, darkpool, finance,
     forecast, global_index, holders, kline, knowledge, macro, market, ranks, rating,
-    recommend, screener, sector, smartpick, stocklist, wuxing,
+    recommend, screener, sector, smartpick, stocklist, strategy, wuxing,
 )
 from .services import metrics as metrics_svc
 from .database import query as db_query
@@ -89,6 +89,24 @@ def get_alerts(limit: int = Query(50, le=100)):
 @router.get("/alerts/buy-points")
 def alerts_buy_points(limit: int = Query(8, le=20)):
     return alerts.get_buy_points(limit)
+
+
+@router.get("/strategy/plans")
+def strategy_plans():
+    return strategy.get_config()
+
+
+@router.post("/strategy/enable")
+def strategy_enable(payload: dict):
+    ids = strategy.set_enabled((payload or {}).get("ids"))
+    try:
+        alerts.scan_all()
+    except Exception:  # noqa: BLE001
+        pass
+    cfg = strategy.get_config()
+    cfg["saved"] = ids
+    cfg["ok"] = True
+    return cfg
 
 
 @router.get("/market/minute")

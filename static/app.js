@@ -62,6 +62,12 @@ const cls = (v) => (v > 0 ? "up" : v < 0 ? "down" : "flat");
 const sign = (v) => (v > 0 ? "+" : "");
 const pct = (v) => (v === null || v === undefined) ? "-" : `${sign(v)}${fmt(v)}%`;
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+function planBadgesHtml(plans) {
+  const list = Array.isArray(plans) ? plans.filter(Boolean) : [];
+  if (!list.length) return "";
+  const multi = list.length > 1 ? " multi" : "";
+  return list.map((p) => `<span class="plan-badge${multi}">【${esc(p)}】</span>`).join("");
+}
 const wxBadges = (tags) => (tags && tags.length)
   ? tags.map((t) => `<span class="wx-badge wx-${esc(t)}">${esc(t)}</span>`).join("") : "";
 function beijingYMD(d) {
@@ -406,11 +412,12 @@ async function loadAlerts() {
       const canStock = !!(code && a.alert_type === "buy_point");
       const watchBtn = canStock ? watchBtnHtml(code, name, a.in_watchlist) : "";
       const attrs = canStock ? ` data-code="${esc(code)}" data-name="${esc(name)}"` : "";
+      const plans = planBadgesHtml(a.plans);
       return `
       <div class="alert-item"${attrs}>
         <span class="time">${esc((a.created_at || "").slice(5, 16).replace("T", " "))}</span>
         <div class="body">
-          <span class="badge at-${a.alert_type}">${esc(a.type_name)}</span> ${esc(a.title)}
+          <span class="badge at-${a.alert_type}">${esc(a.type_name)}</span> ${plans}${esc(a.title)}
           ${a.detail ? `<div class="detail">${esc(a.detail)}</div>` : ""}
         </div>
         ${watchBtn}
@@ -3251,6 +3258,125 @@ window.closeAiModal = () => { $("#aiModal").style.display = "none"; };
 })();
 
 /* ---------------- 设置 ---------------- */
+let settingsSub = "ops";
+let strategyDirty = false;
+let strategyLoaded = false;
+
+$("#settingsTabs")?.addEventListener("click", (e) => {
+  const btn = e.target.closest(".opt");
+  if (!btn) return;
+  settingsSub = btn.dataset.view || "ops";
+  $$("#settingsTabs .opt").forEach((b) => b.classList.toggle("active", b === btn));
+  const ops = $("#settingsPaneOps");
+  const st = $("#settingsPaneStrategy");
+  if (ops) ops.style.display = settingsSub === "ops" ? "" : "none";
+  if (st) st.style.display = settingsSub === "strategy" ? "" : "none";
+  if (settingsSub === "strategy") loadStrategyPage();
+  else loadSettings();
+});
+
+function selectedStrategyIds() {
+  return $$("#strategyPlans input[type=checkbox][data-plan-id]")
+    .filter((el) => el.checked)
+    .map((el) => el.dataset.planId);
+}
+
+function renderStrategyExec(d) {
+  const exe = (d && d.executing) || {};
+  const titleEl = $("#strategyExecTitle");
+  const body = $("#strategyExecBody");
+  if (titleEl) titleEl.textContent = exe.title || "";
+  if (body) body.textContent = exe.detail || d.note || "暂无说明";
+}
+
+function renderStrategyPlans(d, { keepChecks } = {}) {
+  const box = $("#strategyPlans");
+  if (!box) return;
+  const prev = keepChecks ? new Set(selectedStrategyIds()) : null;
+  const plans = (d && d.plans) || [];
+  box.innerHTML = plans.map((p) => {
+    const on = prev ? prev.has(p.id) : !!p.enabled;
+    const docs = [p.buy_formula && `买点\n${p.buy_formula}`, p.sell_formula && `卖点\n${p.sell_formula}`, p.extra_docs]
+      .filter(Boolean).join("\n\n");
+    return `
+      <div class="plan-card${on ? " on" : ""}" data-plan-id="${esc(p.id)}">
+        <div class="plan-head">
+          <label>
+            <input type="checkbox" data-plan-id="${esc(p.id)}" ${on ? "checked" : ""}>
+            <span class="plan-id">方案 ${esc(p.id)}</span>${esc(p.name)}
+            ${p.is_default ? '<span class="muted">现行默认</span>' : ""}
+          </label>
+          <span class="plan-counts" data-plan-counts="${esc(p.id)}">买点 ${p.buy_count ?? 0} · 卖点 ${p.sell_count ?? 0}</span>
+        </div>
+        <div class="plan-summary">${esc(p.summary || "")}</div>
+        <div class="plan-formula">${esc(docs)}</div>
+      </div>`;
+  }).join("") || '<div class="empty">暂无策略方案</div>';
+}
+
+function patchStrategyCounts(d) {
+  for (const p of (d.plans || [])) {
+    const el = document.querySelector(`[data-plan-counts="${p.id}"]`);
+    if (el) el.textContent = `买点 ${p.buy_count ?? 0} · 卖点 ${p.sell_count ?? 0}`;
+  }
+  $$("#strategyPlans .plan-card").forEach((card) => {
+    const cb = card.querySelector("input[type=checkbox]");
+    card.classList.toggle("on", !!(cb && cb.checked));
+  });
+}
+
+async function loadStrategyPage(force) {
+  const box = $("#strategyPlans");
+  if (!box) return;
+  try {
+    const d = await api("/api/strategy/plans");
+    renderStrategyExec(d);
+    if (!strategyLoaded || force || !strategyDirty) {
+      renderStrategyPlans(d);
+      strategyDirty = false;
+      strategyLoaded = true;
+    } else {
+      patchStrategyCounts(d);
+    }
+  } catch (err) {
+    if (!strategyLoaded && box) box.innerHTML = `<div class="empty">策略加载失败：${esc(err.message || err)}</div>`;
+  }
+}
+
+$("#strategyPlans")?.addEventListener("change", (e) => {
+  if (!e.target.closest("input[type=checkbox][data-plan-id]")) return;
+  strategyDirty = true;
+  $$("#strategyPlans .plan-card").forEach((card) => {
+    const cb = card.querySelector("input[type=checkbox]");
+    card.classList.toggle("on", !!(cb && cb.checked));
+  });
+});
+
+window.saveStrategyPlans = async (ids) => {
+  const msg = $("#strategySaveMsg");
+  const picked = ids || selectedStrategyIds();
+  if (msg) msg.textContent = "保存中…";
+  try {
+    const d = await api("/api/strategy/enable", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids: picked }),
+    });
+    strategyDirty = false;
+    strategyLoaded = true;
+    renderStrategyExec(d);
+    renderStrategyPlans(d);
+    if (msg) msg.textContent = `已应用：${(d.enabled || []).join("、") || "A"}（买点/卖点已按新方案重扫）`;
+    loadBuyPoints();
+    loadAlerts();
+  } catch (err) {
+    if (msg) msg.textContent = "保存失败：" + (err.message || err);
+  }
+};
+
+$("#btnSaveStrategy")?.addEventListener("click", () => saveStrategyPlans());
+$("#btnStrategyReset")?.addEventListener("click", () => saveStrategyPlans(["A"]));
+
 async function loadSettings() {
   try {
     const d = await api("/api/system/status");
@@ -3290,6 +3416,7 @@ async function loadSettings() {
     const anyCircuit = d.sources.some((s) => s.circuit_open);
     const anyFail = d.jobs.some((j) => j.ok === false);
     $("#healthDot").className = "dot " + (anyCircuit ? "bad" : anyFail ? "warn" : "ok");
+    if (settingsSub === "strategy") loadStrategyPage();
   } catch (err) { console.warn(err); }
 }
 async function loadMetricsState() {
@@ -3744,10 +3871,11 @@ async function loadBuyPoints() {
     const items = d.items || [];
     const source = d.source || "";
     const note = d.note || "";
-    const relaxed = source && source !== "strict";
+    const relaxed = source === "relaxed_65" || source === "top_buy_index" || source === "empty";
     if (countEl) countEl.textContent = `${items.length} 只`;
     if (noteEl) {
-      noteEl.textContent = note;
+      const exe = d.executing ? `当前策略：${d.executing}。` : "";
+      noteEl.textContent = exe + note;
       noteEl.classList.toggle("warn", !!relaxed || !items.length);
     }
     if (badge) {
@@ -3769,6 +3897,7 @@ async function loadBuyPoints() {
         <div class="buy-flash-main">
           <span class="hl-name">${esc(r.name)}</span>
           <span class="hl-code">${esc(r.code)}</span>
+          ${planBadgesHtml(r.plans)}
           <span class="num ${cls(r.pct)}">${pct(r.pct)}</span>
         </div>
         <div class="buy-flash-meta">
