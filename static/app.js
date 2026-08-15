@@ -223,6 +223,8 @@ function signalContextHtml(r) {
   const heat = r.heat == null ? "—" : `${fmt(r.heat, 0)} ${r.heat_level || ""}`.trim();
   const sec = r.sector_hot == null ? "—" : `${fmt(r.sector_hot, 1)} ${r.sector_hot_level || ""}`.trim();
   return `<div class="signal-extra">
+    <span>现价 ${pxHtml(r.price, r.pct)}</span>
+    <span class="${cls(r.pct)}">${pct(r.pct)}</span>
     <span>板块 ${esc(board)}</span>
     <span>五行 ${wx}</span>
     <span>个股热度 <b>${esc(heat)}</b></span>
@@ -594,6 +596,7 @@ async function loadAlerts() {
         <div class="body">
           <span class="badge at-${typeCls}">${typeName}</span>
           <b>${esc(name)}</b> <span class="muted">${esc(code)}</span>
+          ${pxHtml(r.price, r.pct)}
           <span class="num ${cls(r.pct)}">${pct(r.pct)}</span>
           ${planPickedHtml(r, kind)}
           ${signalContextHtml(r)}
@@ -4839,11 +4842,14 @@ async function loadBuyPoints() {
         <div class="buy-flash-main">
           <span class="hl-name">${esc(r.name)}</span>
           <span class="hl-code">${esc(r.code)}</span>
+          ${pxHtml(r.price, r.pct)}
           <span class="num ${cls(r.pct)}">${pct(r.pct)}</span>
         </div>
         ${planPickedHtml(r, kind)}
         ${signalContextHtml(r)}
         <div class="buy-flash-meta">
+          <span>现价 ${pxHtml(r.price, r.pct)}</span>
+          <span class="${cls(r.pct)}">${pct(r.pct)}</span>
           <span>购买指数 <b>${fmt(r.buy_index, 0)}</b> ${esc(r.buy_level || "")}</span>
           <span>量比 ${fmt(r.volume_ratio)}</span>
           <span>评级 ${esc(r.finance_grade || "—")}</span>
