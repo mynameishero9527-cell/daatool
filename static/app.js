@@ -1187,6 +1187,9 @@ let calRange = 0;      // 0=全部, 1=今天, 3, 7, 31 天
 let calMinLevel = 0;   // 0=全部, 4, 5
 const newsFilter = { level: 0, direction: "", region: "", days: 0 };  // FR5-01-1 + FR8-02-1
 let sectorEvGroup = "day";
+const policyFilter = { days: 180, scope: "", country: "", doc_type: "" };
+let hotKind = "";
+const hotFocus = { term: "", sector: "" };
 
 function newsFilterBar() {
   return `
@@ -1401,6 +1404,14 @@ async function loadMacro() {
       loadAnnouncements();
       return;
     }
+    if (macroSub === "official") {
+      await renderOfficialPolicy(box);
+      return;
+    }
+    if (macroSub === "hotwords") {
+      await renderHotWords(box);
+      return;
+    }
     const path = macroSub === "policy" ? "/api/macro/policies" : macroSub === "major" ? "/api/macro/major" : "/api/macro/news";
     const qs = (macroSub === "news" || macroSub === "policy") && newsFilter.days
       ? `?days=${newsFilter.days}` : "";
@@ -1436,6 +1447,153 @@ async function loadMacro() {
     bindNewsFilters();
   } catch (err) { box.innerHTML = '<div class="empty">加载失败，稍后自动重试</div>'; console.warn(err); }
 }
+
+async function renderOfficialPolicy(box) {
+  const qs = new URLSearchParams({
+    days: String(policyFilter.days), scope: policyFilter.scope,
+    country: policyFilter.country, doc_type: policyFilter.doc_type, limit: "80",
+  });
+  const d = await api(`/api/macro/official-policy?${qs}`);
+  const st = d.stats || {};
+  const rows = d.items || [];
+  const countries = ["", ...(st.countries || [])];
+  const optBar = (id, items, cur) =>
+    `<div class="btn-group" style="margin-bottom:6px" id="${id}">${items.map(([v, t]) =>
+      `<button class="opt ${String(v) === String(cur) ? "active" : ""}" data-v="${esc(String(v))}">${t}</button>`).join("")}</div>`;
+  const byScope = st.by_scope || {};
+  const byType = st.by_type || {};
+  box.innerHTML = `
+    <div class="muted" style="margin-bottom:8px">
+      近半年官方政策归档（本地存储）· 共 ${st.total || 0} 条
+      · 国内 ${byScope["国内"] || 0} / 国外 ${byScope["国外"] || 0}
+      · 文件 ${byType["政策文件"] || 0} · 大会 ${byType["大会会议"] || 0}
+      · 通知 ${byType["通知意见"] || 0} · 监管 ${byType["监管动态"] || 0}<br>
+      ${esc(st.update || "增量每4小时，每日回补历史页")}
+      · 上次同步 ${esc(st.last_sync || "从未")}
+      ${st.oldest ? ` · 最早 ${esc((st.oldest || "").slice(0, 10))}` : ""}
+      · 与「政策追踪」不同：本页只收录可识别的官方政策/大会会议，不编造文件。
+    </div>
+    ${optBar("pfDays", [[7, "近7天"], [30, "近30天"], [90, "近90天"], [180, "近半年"]], policyFilter.days)}
+    ${optBar("pfScope", [["", "全部范围"], ["国内", "国内"], ["国外", "国外"]], policyFilter.scope)}
+    ${optBar("pfCountry", countries.map((c) => [c, c || "全部国家"]), policyFilter.country)}
+    ${optBar("pfType", [["", "全部类型"], ["政策文件", "政策文件"], ["大会会议", "大会会议"], ["通知意见", "通知意见"], ["监管动态", "监管动态"]], policyFilter.doc_type)}
+    <div id="eventDetailBox"></div>
+    ${rows.length ? rows.map((n) => {
+      const secs = (n.affected_sectors || []).join(",");
+      const href = n.url ? `<a href="${esc(n.url)}" target="_blank" rel="noopener" style="color:var(--accent);font-size:12px;margin-left:6px">原文</a>` : "";
+      return `<div class="policy-item js-news-item" data-title="${esc(n.title)}" data-sectors="${esc(secs)}">
+        <div class="p-head">
+          <span class="cal-date" style="width:108px">${esc((n.time || "").slice(0, 16))}</span>
+          <span class="flag">${esc(n.scope || "")}</span>
+          <span class="flag">${esc(n.country || "")}</span>
+          <span class="badge level-${n.impact_level || 2}">${esc(n.doc_type || "")}</span>
+          ${n.impact_direction ? `<span class="badge dir-${n.impact_direction}">${esc(n.impact_direction)}</span>` : ""}
+          <span class="muted">${esc(n.source || "")}</span>${href}
+        </div>
+        <div class="p-title">${esc(n.title)}</div>
+        ${n.summary && n.summary !== n.title ? `<div class="p-sum">${esc((n.summary || "").slice(0, 220))}</div>` : ""}
+        <div class="meta" style="margin-top:4px">${sectorBadges(n.affected_sectors, n.title)}</div>
+      </div>`;
+    }).join("") : `<div class="empty">${esc(d.empty_reason || "暂无官方政策")}</div>`}`;
+  const bind = (id, key, isNum) => {
+    $(`#${id}`)?.addEventListener("click", (e) => {
+      const btn = e.target.closest(".opt");
+      if (!btn) return;
+      policyFilter[key] = isNum ? Number(btn.dataset.v) : btn.dataset.v;
+      loadMacro();
+    });
+  };
+  bind("pfDays", "days", true);
+  bind("pfScope", "scope", false);
+  bind("pfCountry", "country", false);
+  bind("pfType", "doc_type", false);
+}
+
+async function renderHotWords(box) {
+  const d = await api(`/api/macro/hot-terms?kind=${encodeURIComponent(hotKind)}`);
+  const rows = d.items || [];
+  box.innerHTML = `
+    <div class="muted" style="margin-bottom:8px">
+      近两周热门词汇（板块区域）· ${esc(d.update || "每小时重算")}
+      · 上次 ${esc(d.last_sync || "从未")} · 点击热词看关联热门板块，再点击板块看个股 TOP20
+    </div>
+    <div class="btn-group" style="margin-bottom:10px" id="hotKindBtns">
+      ${[["", "全部"], ["rise", "热度上升"], ["fall", "热度下降"]].map(([v, t]) =>
+        `<button class="opt ${v === hotKind ? "active" : ""}" data-v="${v}">${t}</button>`).join("")}
+    </div>
+    <div id="hotDetailBox"></div>
+    ${rows.length ? `<div class="hot-grid">${rows.map((t) => {
+      const clsName = t.trend === "上升" ? "rising" : t.trend === "下降" ? "falling" : "";
+      const on = t.term === hotFocus.term ? "active" : "";
+      return `<div class="hot-tile ${clsName} ${on} js-hot-term" data-term="${esc(t.term)}">
+        <div class="term">${esc(t.term)}</div>
+        <div class="metrics">
+          <span class="heat">热度 ${fmt(t.heat, 0)}</span>
+          <span class="rise">↑${fmt(t.rise, 0)}</span>
+          <span class="fall">↓${fmt(t.fall, 0)}</span>
+        </div>
+        <div class="muted" style="margin-top:6px;font-size:11px">${esc(t.trend)} · 近两周 ${t.count_now || 0} 次 / 前两周 ${t.count_prev || 0} 次</div>
+      </div>`;
+    }).join("")}</div>` : `<div class="empty">${esc(d.empty_reason || "暂无热词")}</div>`}`;
+  $("#hotKindBtns")?.addEventListener("click", (e) => {
+    const btn = e.target.closest(".opt");
+    if (!btn) return;
+    hotKind = btn.dataset.v || "";
+    loadMacro();
+  });
+  if (hotFocus.term) {
+    await openHotTerm(hotFocus.term, false);
+    if (hotFocus.sector) await openHotSector(hotFocus.sector, hotFocus.term);
+  }
+}
+
+window.openHotTerm = async (term, resetSector = true) => {
+  hotFocus.term = term || "";
+  if (resetSector) hotFocus.sector = "";
+  const box = $("#hotDetailBox");
+  if (!box || !term) return;
+  $$(".js-hot-term").forEach((el) => el.classList.toggle("active", el.dataset.term === term));
+  box.innerHTML = '<div class="empty">加载关联板块…</div>';
+  try {
+    const d = await api(`/api/macro/hot-term-sectors?term=${encodeURIComponent(term)}`);
+    const secs = d.sectors || [];
+    box.innerHTML = `
+      <div class="outlook-summary" style="border-color:rgba(255,169,64,.4)">
+        <b>🔥 热词「${esc(term)}」关联热门板块</b>
+        <button class="btn small ghost" style="float:right" onclick="hotFocus.term='';hotFocus.sector='';this.closest('#hotDetailBox').innerHTML=''">收起</button>
+        ${(d.samples || []).length ? `<div class="muted" style="margin:6px 0">样例：${d.samples.map((s) => esc(s)).join(" · ")}</div>` : ""}
+        ${secs.length ? `<div class="hot-sec-grid">${secs.map((s) => `
+          <div class="hot-sec js-hot-sector ${s.name === hotFocus.sector ? "active" : ""}" data-sector="${esc(s.name)}" data-term="${esc(term)}">
+            <div class="sn">${esc(s.name)}</div>
+            <div class="muted">热度 ${s.hot_score == null ? "—" : fmt(s.hot_score, 1)}
+              · ${pct(s.pct)} ${s.net_in_yi != null ? `· 净流入 ${fmt(s.net_in_yi, 1)}亿` : ""}</div>
+          </div>`).join("")}</div>` : `<div class="empty">${esc(d.empty_reason || "无关联板块")}</div>`}
+        <div class="muted" style="margin-top:6px;font-size:12px">${esc(d.note || "点击板块查看个股 TOP20")}</div>
+        <div id="hotStockBox"></div>
+      </div>`;
+    box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  } catch (err) {
+    box.innerHTML = '<div class="empty">板块加载失败</div>';
+  }
+};
+
+window.openHotSector = async (sector, term) => {
+  hotFocus.sector = sector || "";
+  hotFocus.term = term || hotFocus.term;
+  const box = $("#hotStockBox");
+  if (!box || !sector) return;
+  $$(".js-hot-sector").forEach((el) => el.classList.toggle("active", el.dataset.sector === sector));
+  box.innerHTML = '<div class="empty">加载个股 TOP20…</div>';
+  try {
+    const d = await api(`/api/macro/hot-sector-stocks?sector=${encodeURIComponent(sector)}&limit=20`);
+    box.innerHTML = `
+      <div class="muted" style="margin:10px 0 6px">板块「${esc(sector)}」个股 TOP20</div>
+      ${d.stocks && d.stocks.length ? renderRelatedStockTable(d.stocks) : `<div class="empty">${esc(d.empty_reason || "无个股")}</div>`}
+      <div class="muted" style="font-size:11px;margin-top:4px">${esc(d.disclaimer || "")}</div>`;
+  } catch (err) {
+    box.innerHTML = '<div class="empty">个股加载失败</div>';
+  }
+};
 
 function parseSectors(v) {
   if (!v) return [];
@@ -1524,6 +1682,20 @@ window.showEventDetail = async (title, sectors = "") => {
 };
 
 $("#page-macro")?.addEventListener("click", (e) => {
+  const hotT = e.target.closest(".js-hot-term");
+  if (hotT) {
+    e.preventDefault();
+    e.stopPropagation();
+    openHotTerm(hotT.dataset.term || "");
+    return;
+  }
+  const hotS = e.target.closest(".js-hot-sector");
+  if (hotS) {
+    e.preventDefault();
+    e.stopPropagation();
+    openHotSector(hotS.dataset.sector || "", hotS.dataset.term || "");
+    return;
+  }
   const tag = e.target.closest(".js-sector");
   if (tag) {
     e.preventDefault();
@@ -3536,6 +3708,8 @@ function loadFinanceState(fin, flow, intel) {
     ib.innerHTML = `
       <div class="kv"><span class="k">情报缓存</span><span class="num">${it.total || 0} 条</span></div>
       <div class="kv"><span class="k">分类</span><span>快讯 ${by.news || 0} · 政策 ${by.policy || 0} · 日历 ${by.calendar || 0} · 板块事件 ${by.sector_event || 0}</span></div>
+      <div class="kv"><span class="k">官方政策归档</span><span>${it.official_policy || 0} 条 · ${esc(it.policy_last_sync || "从未")}</span></div>
+      <div class="kv"><span class="k">热度词汇</span><span>${it.hot_terms || 0} 个 · ${esc(it.hot_last_sync || "从未")}</span></div>
       <div class="kv"><span class="k">涉及板块</span><span>${it.sectors || 0}</span></div>
       <div class="kv"><span class="k">上次缓存</span><span>${esc(it.last_sync || "从未")}</span></div>`;
   }
@@ -3556,13 +3730,28 @@ window.syncSectorFlow = async () => {
 
 window.syncIntel = async () => {
   const ib = $("#intelState");
-  if (ib) ib.innerHTML = '<div class="muted">正在缓存宏观情报…</div>';
+  if (ib) ib.innerHTML = '<div class="muted">正在缓存宏观情报、官方政策与热词…</div>';
   try {
     const d = await post("/api/macro/intel-sync");
-    if (ib) ib.innerHTML = `<div class="muted">已缓存快讯 ${d.news || 0} · 日历 ${d.calendar || 0} · 板块事件 ${d.sector_events || 0}</div>`;
+    const op = d.official_policy || {};
+    const ht = d.hot_terms || {};
+    if (ib) ib.innerHTML = `<div class="muted">已缓存快讯 ${d.news || 0} · 日历 ${d.calendar || 0} · 板块事件 ${d.sector_events || 0} · 官方政策写入 ${op.saved || 0} · 热词 ${ht.count || 0}</div>`;
     loadSettings();
   } catch (err) {
     if (ib) ib.innerHTML = `<div class="empty">缓存失败：${esc(err.message || err)}</div>`;
+  }
+};
+
+window.syncOfficialPolicy = async () => {
+  const ib = $("#intelState");
+  if (ib) ib.innerHTML = '<div class="muted">正在同步官方政策并重算热词…</div>';
+  try {
+    const op = await post("/api/macro/official-policy-sync?mode=incremental");
+    const ht = await post("/api/macro/hot-terms-rebuild");
+    if (ib) ib.innerHTML = `<div class="muted">官方政策抓取 ${op.fetched || 0}、写入 ${op.saved || 0} · 热词 ${ht.count || 0}（${esc(op.note || "")}）</div>`;
+    loadSettings();
+  } catch (err) {
+    if (ib) ib.innerHTML = `<div class="empty">同步失败：${esc(err.message || err)}</div>`;
   }
 };
 

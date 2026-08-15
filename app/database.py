@@ -229,6 +229,44 @@ CREATE TABLE IF NOT EXISTS stock_holders (
     payload     TEXT NOT NULL,          -- 规范化 JSON
     fetched_at  TEXT NOT NULL
 );
+
+-- 11.0.21：官方政策近半年归档（时间/国内外/国家/文件类型），供后续抽关键信息
+CREATE TABLE IF NOT EXISTS official_policy (
+    policy_id          TEXT PRIMARY KEY,
+    title              TEXT NOT NULL,
+    summary            TEXT,
+    event_time         TEXT,
+    scope              TEXT,                 -- 国内 / 国外
+    country            TEXT,
+    doc_type           TEXT,                 -- 政策文件 / 大会会议 / 通知意见 / 监管动态
+    source             TEXT,
+    url                TEXT,
+    affected_sectors   TEXT,                 -- JSON 数组
+    impact_level       INTEGER,
+    impact_direction   TEXT,
+    raw_json           TEXT,
+    fetched_at         TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_official_policy_time ON official_policy(event_time);
+CREATE INDEX IF NOT EXISTS idx_official_policy_scope ON official_policy(scope, country);
+CREATE INDEX IF NOT EXISTS idx_official_policy_type ON official_policy(doc_type);
+
+-- 11.0.21：近两周热度词汇快照（热度值 / 上升 / 下降）
+CREATE TABLE IF NOT EXISTS hot_term (
+    term          TEXT NOT NULL,
+    window_end    TEXT NOT NULL,            -- 快照日 YYYY-MM-DD
+    heat          REAL,
+    heat_prev     REAL,
+    rise          REAL,
+    fall          REAL,
+    count_now     INTEGER,
+    count_prev    INTEGER,
+    sectors       TEXT,                     -- JSON 相关板块
+    sample_titles TEXT,                     -- JSON 样例标题
+    updated_at    TEXT NOT NULL,
+    PRIMARY KEY (term, window_end)
+);
+CREATE INDEX IF NOT EXISTS idx_hot_term_heat ON hot_term(window_end, heat);
 """
 
 # 已有表的增量列迁移（幂等）

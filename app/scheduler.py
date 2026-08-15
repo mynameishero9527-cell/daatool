@@ -106,6 +106,26 @@ def _job_finance_rebuild():
     finance.rebuild_all(max_fetch=80)
 
 
+def _job_official_policy():
+    from .services import policy_archive
+    policy_archive.sync_official_policy("incremental")
+    try:
+        from .services import hot_terms
+        hot_terms.rebuild_hot_terms()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("热词重算失败: %s", exc)
+
+
+def _job_official_policy_backfill():
+    from .services import policy_archive
+    policy_archive.sync_official_policy("backfill")
+
+
+def _job_hot_terms():
+    from .services import hot_terms
+    hot_terms.rebuild_hot_terms()
+
+
 def _job_metrics_rebuild():
     """盘后：全市场K线同步 + 行业映射 + 指标重算（企稳/购买指数/情绪/暗盘力量）。"""
     stocklist.full_sync()
@@ -121,8 +141,8 @@ from .database import get_meta_json, set_meta_json
 
 # 间隔型任务（可调频率，分钟）
 INTERVAL_JOBS = {"medium": 1, "news": 1, "snapshot": 5, "metrics_recompute": 10, "alerts": 10,
-                 "sector_flow": 5}
-ALLOWED_MINUTES = [1, 5, 10, 15, 30, 60, 120, 180]
+                 "sector_flow": 5, "hot_terms": 60, "official_policy": 240}
+ALLOWED_MINUTES = [1, 5, 10, 15, 30, 60, 120, 180, 240]
 
 
 def _apply_overrides(sched) -> None:
@@ -163,7 +183,7 @@ def set_job_interval(job_id: str, minutes: int) -> dict:
     if job_id not in INTERVAL_JOBS:
         return {"ok": False, "error": "该任务不支持调整频率（定点任务）"}
     if minutes not in ALLOWED_MINUTES:
-        return {"ok": False, "error": "频率仅支持 1/5/10/15/30/60/120/180 分钟"}
+        return {"ok": False, "error": "频率仅支持 1/5/10/15/30/60/120/180/240 分钟"}
     job = _scheduler.get_job(job_id)
     if not job:
         return {"ok": False, "error": "未知任务"}
@@ -204,6 +224,12 @@ def start() -> None:
                   "interval", minutes=5, id="sector_flow")
     sched.add_job(_run("每日维护", _job_daily_maintain), "cron", hour=2, minute=0, id="maintain")
     sched.add_job(_run("财报评级重建", _job_finance_rebuild), "cron", hour=3, minute=0, id="finance_rebuild")
+    sched.add_job(_run("官方政策增量同步", _job_official_policy),
+                  "interval", minutes=240, id="official_policy")
+    sched.add_job(_run("官方政策半年回补", _job_official_policy_backfill),
+                  "cron", hour=3, minute=40, id="official_policy_backfill")
+    sched.add_job(_run("热度词汇重算", _job_hot_terms),
+                  "interval", minutes=60, id="hot_terms")
     sched.start()
     _scheduler = sched
     _apply_overrides(sched)
@@ -221,7 +247,10 @@ def status() -> list[dict]:
                     "metrics_recompute": "盘中指标轻量重算",
                     "alerts": "智能提醒扫描(10分钟)",
                     "sector_flow": "板块资金独立源",
-                    "finance_rebuild": "财报评级重建"}.get(job.id, job.id)
+                    "finance_rebuild": "财报评级重建",
+                    "official_policy": "官方政策增量同步",
+                    "official_policy_backfill": "官方政策半年回补",
+                    "hot_terms": "热度词汇重算"}.get(job.id, job.id)
             st = JOB_STATUS.get(name, {})
             overrides = get_meta_json("job_overrides", {}) or {}
             minutes = (overrides.get(job.id, {}) or {}).get("minutes") or INTERVAL_JOBS.get(job.id)

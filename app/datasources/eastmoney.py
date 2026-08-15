@@ -1,7 +1,8 @@
-"""东方财富：板块主力资金日K、全市场成交额。"""
+"""东方财富：板块主力资金日K、全市场成交额、财经专栏资讯。"""
 import json
 import logging
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutTimeout
 
 import httpx
@@ -390,3 +391,38 @@ def fetch_shareholders(code: str) -> dict:
         log.warning("股东数据均失败 %s: %s", em, " | ".join(errors))
         raise RuntimeError("；".join(errors))
     return {}
+
+
+_NEWS_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+    "Referer": "https://finance.eastmoney.com/",
+}
+_NEWS_COL = (
+    "https://np-listapi.eastmoney.com/comm/web/getNewsByColumns"
+    "?client=web&biz=web_news_col&column={column}&order=1&needInteractData=0"
+    "&page_index={page}&page_size={size}&req_trace={trace}"
+)
+
+
+def fetch_column_news(column: int, page: int = 1, size: int = 50) -> list[dict]:
+    """财经专栏滚动（需 req_trace）。失败抛错，由调用方决定是否跳过。"""
+    size = max(1, min(int(size or 50), 50))
+    page = max(1, int(page or 1))
+    url = _NEWS_COL.format(column=int(column), page=page, size=size, trace=uuid.uuid4())
+    resp = tracked_get(SOURCE, url, headers=_NEWS_HEADERS)
+    lst = ((resp.json() or {}).get("data") or {}).get("list") or []
+    out = []
+    for it in lst:
+        pid = str(it.get("code") or "").strip()
+        title = (it.get("title") or "").strip()
+        if not pid or not title:
+            continue
+        out.append({
+            "id": pid,
+            "title": title,
+            "summary": (it.get("summary") or "").strip(),
+            "time": (it.get("showTime") or "").strip(),
+            "url": (it.get("uniqueUrl") or it.get("url") or "").strip(),
+            "media": (it.get("mediaName") or "").strip(),
+        })
+    return out

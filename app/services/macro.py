@@ -685,9 +685,22 @@ def intel_stats() -> dict:
     except Exception:  # noqa: BLE001
         return {"total": 0, "by_kind": {}, "sectors": 0}
     from ..database import get_meta
+    extra = {}
+    try:
+        extra["official_policy"] = query(
+            "SELECT COUNT(*) AS n FROM official_policy")[0]["n"]
+        extra["hot_terms"] = query(
+            "SELECT COUNT(*) AS n FROM hot_term WHERE window_end=?",
+            (datetime.now().strftime("%Y-%m-%d"),))[0]["n"]
+        extra["policy_last_sync"] = get_meta("official_policy_last_sync", "从未")
+        extra["hot_last_sync"] = get_meta("hot_terms_last_sync", "从未")
+    except Exception:  # noqa: BLE001
+        extra.update({"official_policy": 0, "hot_terms": 0,
+                      "policy_last_sync": "从未", "hot_last_sync": "从未"})
     return {
         "total": total, "by_kind": {r["kind"]: r["n"] for r in rows},
         "sectors": sectors, "last_sync": get_meta("intel_last_sync", "从未"),
+        **extra,
     }
 
 

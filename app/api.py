@@ -9,10 +9,11 @@ from .datasources.base import HEALTH
 from . import scheduler as sched_mod
 from .services import (
     ai, alerts, announcement, attribution, commodity, cycle, darkpool, finance,
-    forecast, global_index, holders, kline, knowledge, macro, market, ranks, rating,
+    forecast, global_index, holders, hot_terms, kline, knowledge, macro, market, ranks, rating,
     recommend, screener, sector, smartpick, stocklist, strategy, wuxing,
 )
 from .services import metrics as metrics_svc
+from .services import policy_archive
 from .database import query as db_query
 
 router = APIRouter(prefix="/api")
@@ -280,7 +281,50 @@ def macro_intel(kind: str = "", sector: str = "", days: int = 0, limit: int = Qu
 
 @router.post("/macro/intel-sync")
 def macro_intel_sync():
-    return macro.sync_intel()
+    out = macro.sync_intel()
+    try:
+        out["official_policy"] = policy_archive.sync_official_policy("incremental")
+    except Exception as exc:  # noqa: BLE001
+        out["official_policy_error"] = str(exc)[:200]
+    try:
+        out["hot_terms"] = hot_terms.rebuild_hot_terms()
+    except Exception as exc:  # noqa: BLE001
+        out["hot_terms_error"] = str(exc)[:200]
+    return out
+
+
+@router.get("/macro/official-policy")
+def macro_official_policy(scope: str = "", country: str = "", doc_type: str = "",
+                          days: int = Query(180, ge=1, le=183),
+                          limit: int = Query(80, le=200)):
+    return policy_archive.list_official_policy(scope, country, doc_type, days, limit)
+
+
+@router.post("/macro/official-policy-sync")
+def macro_official_policy_sync(mode: str = "incremental"):
+    if mode not in ("incremental", "backfill"):
+        mode = "incremental"
+    return policy_archive.sync_official_policy(mode)
+
+
+@router.get("/macro/hot-terms")
+def macro_hot_terms(kind: str = ""):
+    return hot_terms.list_hot_terms(kind)
+
+
+@router.post("/macro/hot-terms-rebuild")
+def macro_hot_terms_rebuild():
+    return hot_terms.rebuild_hot_terms()
+
+
+@router.get("/macro/hot-term-sectors")
+def macro_hot_term_sectors(term: str):
+    return hot_terms.hot_term_sectors(term)
+
+
+@router.get("/macro/hot-sector-stocks")
+def macro_hot_sector_stocks(sector: str, limit: int = Query(20, ge=20, le=50)):
+    return hot_terms.hot_sector_stocks(sector, limit)
 
 
 @router.post("/commodities/watch")

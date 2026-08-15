@@ -242,3 +242,33 @@ def fetch_news(page: int = 1, size: int = 50) -> list[dict]:
             "tags": [t.get("name", "") for t in (it.get("tag") or [])],
         })
     return out
+
+
+_ROLL_URL = (
+    "https://feed.mix.sina.com.cn/api/roll/get?pageid=153&lid={lid}&k=&num={num}&page={page}"
+)
+
+
+def fetch_roll_news(lid: int = 2516, page: int = 1, num: int = 50) -> list[dict]:
+    """财经滚动列表。ctime 为 unix 秒，调用方负责转本地时间。"""
+    resp = tracked_get(
+        SOURCE,
+        _ROLL_URL.format(lid=int(lid), page=max(1, int(page or 1)), num=max(1, min(int(num or 50), 50))),
+        headers=_HQ_HEADERS,
+    )
+    items = ((resp.json() or {}).get("result") or {}).get("data") or []
+    out = []
+    for it in items:
+        title = (it.get("title") or "").strip()
+        pid = str(it.get("docid") or it.get("oid") or "").strip()
+        if not title:
+            continue
+        out.append({
+            "id": pid or title[:24],
+            "title": title,
+            "summary": (it.get("intro") or it.get("summary") or "").strip(),
+            "ctime": it.get("ctime") or "",
+            "url": (it.get("url") or "").strip(),
+            "media": (it.get("media_name") or "").strip(),
+        })
+    return out

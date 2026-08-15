@@ -40,7 +40,7 @@ h1{font-size:22px;margin:0 0 8px} p{margin:8px 0} .muted{color:#8b9bb4;font-size
 </body></html>
 """
 
-app = FastAPI(title="A股量化工具", version="11.0.20", docs_url="/docs", redoc_url="/redoc")
+app = FastAPI(title="A股量化工具", version="11.0.21", docs_url="/docs", redoc_url="/redoc")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -125,6 +125,12 @@ def startup() -> None:
             try:
                 from .services import macro as macro_svc
                 macro_svc.sync_intel()
+                try:
+                    from .services import policy_archive, hot_terms as hot_terms_svc
+                    policy_archive.sync_official_policy("incremental")
+                    hot_terms_svc.rebuild_hot_terms()
+                except Exception as exc4:  # noqa: BLE001
+                    log.warning("官方政策/热词首次同步失败: %s", exc4)
             except Exception as exc3:  # noqa: BLE001
                 log.warning("宏观情报缓存失败: %s", exc3)
         except Exception as exc:  # noqa: BLE001

@@ -667,6 +667,32 @@ tr.score-95 td { background: rgba(255, 60, 60, .30); }
 }
 .buy-flash-logo.dragging { animation: none; }
 
+/* 11.0.21 热度词汇板块 */
+.hot-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(176px, 1fr)); gap: 10px; }
+.hot-tile {
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px 14px; cursor: pointer; transition: border-color .15s, background .15s;
+}
+.hot-tile:hover, .hot-tile.active { border-color: var(--accent); background: var(--card-hover); }
+.hot-tile.rising { border-color: rgba(255,82,82,.5); }
+.hot-tile.falling { border-color: rgba(38,194,129,.45); }
+.hot-tile .term { font-weight: 700; font-size: 16px; margin-bottom: 8px; }
+.hot-tile .metrics { display: flex; justify-content: space-between; gap: 6px; font-size: 12px; }
+.hot-tile .heat { color: var(--warn); font-weight: 700; }
+.hot-tile .rise { color: var(--up); }
+.hot-tile .fall { color: var(--down); }
+.hot-sec-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-top: 10px; }
+.hot-sec {
+  background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 12px; cursor: pointer;
+}
+.hot-sec:hover, .hot-sec.active { border-color: var(--accent); }
+.hot-sec .sn { font-weight: 600; margin-bottom: 4px; }
+.policy-item { padding: 10px 4px; border-bottom: 1px solid rgba(42,53,72,.5); }
+.policy-item .p-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 4px; }
+.policy-item .p-title { font-weight: 600; line-height: 1.5; }
+.policy-item .p-sum { color: var(--muted); font-size: 13px; line-height: 1.55; margin-top: 4px; }
+
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
