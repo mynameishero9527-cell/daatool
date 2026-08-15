@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>A股量化工具</title>
-<link rel="stylesheet" href="/static/style.css?v=11.0.7">
-<script src="/static/vendor/echarts.min.js?v=11.0.7"></script>
+<link rel="stylesheet" href="/static/style.css?v=11.0.8">
+<script src="/static/vendor/echarts.min.js?v=11.0.8"></script>
 </head>
 <body>
 <header class="topbar">
@@ -250,9 +250,20 @@
       </div>
       <div class="card" id="flowTrendCard">
         <div class="card-title">板块资金日走势 <span class="muted" id="flowTrendNote"></span></div>
+        <div class="cond-inline" style="margin-bottom:8px;gap:16px">
+          <span><span class="g-label muted">横轴</span>
+            <span class="btn-group" id="flowTrendGrain">
+              <button class="opt active" data-grain="1d">日</button>
+              <button class="opt" data-grain="5d">5日</button>
+              <button class="opt" data-grain="1w">周</button>
+              <button class="opt" data-grain="12d">12日</button>
+              <button class="opt" data-grain="20d">20日</button>
+              <button class="opt" data-grain="1m">月</button>
+            </span></span>
+        </div>
         <div id="flowTrendKpis" class="flow-kpis"></div>
-        <div id="flowTrendChart" class="chart-lg" style="height:280px"></div>
-        <div class="muted" style="margin-top:6px;font-size:12px">折线=各板块当日主力净流入（亿），横轴按交易日。切换上方时间范围（当天/5日/10日/20日/月）会同步改直方图和折线。点击折线可选中该板块。</div>
+        <div id="flowTrendChart" class="chart-lg" style="height:440px"></div>
+        <div class="muted" style="margin-top:6px;font-size:12px">折线=每个板块一条，横轴按上方「日 / 5日 / 周 / 12日 / 20日 / 月」切换，纵轴=该周期主力净流入（亿）。与上方直方图的「当天/过去N天」合计范围互相独立。点折线可选中该板块。</div>
       </div>
       <div class="card" id="flowBarStocks" style="display:none">
         <div class="card-title" id="flowBarStocksTitle"><span id="flowBarStocksLabel">个股</span>
@@ -609,6 +620,6 @@
   <div class="ctx-item" id="ctxNewsAi" style="display:none">🤖 发送AI分析（消息）</div>
 </div>
 
-<script src="/static/app.js?v=11.0.7"></script>
+<script src="/static/app.js?v=11.0.8"></script>
 </body>
 </html>

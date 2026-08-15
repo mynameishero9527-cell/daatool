@@ -1636,7 +1636,7 @@ window.drillSector = async (name) => {
 
 /* ---------------- 板块资金分析（FR10-03） ---------------- */
 const flowBarState = { dim: "industry", range: "1d", sort: "inflow", selected: "", limit: 50,
-  view: "hbar", dir: "", q: "", minStocks: 0, fin: "", day: "" };
+  view: "hbar", dir: "", q: "", minStocks: 0, fin: "", day: "", trendGrain: "1d" };
 let flowBarChart = null;
 let flowTrendChart = null;
 let flowBarRawItems = [];
@@ -1693,6 +1693,15 @@ $("#flowBarSearch")?.addEventListener("input", debounce(() => {
   flowBarState.q = ($("#flowBarSearch").value || "").trim();
   loadFlowBar();
 }, 200));
+$("#flowTrendGrain")?.addEventListener("click", (e) => {
+  const btn = e.target.closest(".opt");
+  if (!btn) return;
+  const val = btn.dataset.grain || "";
+  if (!val) return;
+  flowBarState.trendGrain = val;
+  $$("#flowTrendGrain .opt").forEach((b) => b.classList.toggle("active", b === btn));
+  loadFlowTrend();
+});
 $("#flowBarFin")?.addEventListener("click", (e) => {
   const btn = e.target.closest(".opt");
   if (!btn) return;
@@ -1923,17 +1932,21 @@ async function loadFlowTrend() {
   if (!host) return;
   if (noteEl) noteEl.textContent = "加载中…";
   try {
-    let url = `/api/sector/flow-trend?${flowFilterQuery()}`;
+    let url = `/api/sector/flow-trend?dim=${encodeURIComponent(flowBarState.dim)}&grain=${encodeURIComponent(flowBarState.trendGrain || "1d")}`;
+    if (flowBarState.dir) url += `&dir=${encodeURIComponent(flowBarState.dir)}`;
+    if (flowBarState.minStocks) url += `&min_stocks=${encodeURIComponent(flowBarState.minStocks)}`;
+    if (flowBarState.q) url += `&q=${encodeURIComponent(flowBarState.q)}`;
     if (flowBarState.selected) url += `&name=${encodeURIComponent(flowBarState.selected)}`;
     const d = await api(url);
     if (noteEl) noteEl.textContent = d.title ? `· ${d.title}` : "";
     const k = d.kpis || {};
     if (kpisEl) {
       kpisEl.innerHTML = `
+        <div class="flow-kpi"><span>横轴</span><b>${esc(k.grain_label || d.grain_label || "日")}</b></div>
         <div class="flow-kpi"><span>折线条数</span><b>${k.line_count || (d.lines || []).length}</b></div>
-        <div class="flow-kpi"><span>最新账本日</span><b>${esc(k.last_date || d.asof || "-")}</b></div>
-        <div class="flow-kpi"><span>覆盖交易日</span><b>${k.days_have || 0}/${k.days_target || 0}</b></div>
-        <div class="flow-kpi"><span>当前筛选</span><b style="font-size:12px">${esc(flowFilterLabel())}</b></div>`;
+        <div class="flow-kpi"><span>横轴点数</span><b>${k.bucket_count || (d.dates || []).length}</b></div>
+        <div class="flow-kpi"><span>账本交易日</span><b>${k.days_have || 0}</b></div>
+        <div class="flow-kpi"><span>最新账本日</span><b>${esc(k.last_date || d.asof || "-")}</b></div>`;
     }
     paintFlowTrend(d);
   } catch (err) {
@@ -1949,6 +1962,7 @@ function paintFlowTrend(d) {
   host.innerHTML = "";
   const dates = d.dates || [];
   const lines = d.lines || [];
+  const yName = d.y_name || "净流入(亿)";
   if (!dates.length || !lines.length) {
     try { flowTrendChart?.dispose(); } catch { /* ignore */ }
     flowTrendChart = null;
@@ -1956,34 +1970,60 @@ function paintFlowTrend(d) {
     return;
   }
   try { flowTrendChart?.dispose(); } catch { /* ignore */ }
-  host.style.height = Math.max(320, 280 + Math.min(8, lines.length) * 8) + "px";
+  host.style.height = "440px";
   flowTrendChart = echarts.init(host, "dark");
-  const palette = ["#ff5252", "#4a9eff", "#26c281", "#ffa940", "#c084fc", "#22d3ee", "#f472b6", "#a3e635", "#fb7185", "#60a5fa", "#fbbf24", "#34d399"];
+  const palette = ["#ff5252", "#4a9eff", "#26c281", "#ffa940", "#c084fc", "#22d3ee", "#f472b6", "#a3e635", "#fb7185", "#60a5fa", "#fbbf24", "#34d399", "#e879f9", "#38bdf8", "#f97316", "#84cc16"];
+  const buckets = d.buckets || [];
   flowTrendChart.setOption({
     backgroundColor: "transparent",
+    color: palette,
     tooltip: {
       trigger: "axis",
       backgroundColor: "#1a2230", borderColor: "#2a3548",
       textStyle: { color: "#dbe4f0", fontSize: 12 },
+      formatter: (ps) => {
+        if (!ps || !ps.length) return "";
+        const idx = ps[0].dataIndex;
+        const b = buckets[idx] || {};
+        const head = b.start && b.end && b.start !== b.end
+          ? `${ps[0].axisValue}<br>${b.start}～${b.end} · ${b.days || ""}日`
+          : `${ps[0].axisValue}`;
+        const rows = ps
+          .filter((p) => p.value != null && p.value !== "-")
+          .sort((a, b2) => Math.abs(b2.value) - Math.abs(a.value))
+          .slice(0, 12)
+          .map((p) => {
+            const v = Number(p.value) || 0;
+            return `${p.marker}${p.seriesName} <b class="${v >= 0 ? "up" : "down"}">${v > 0 ? "+" : ""}${v.toFixed(2)} 亿</b>`;
+          });
+        return [head, ...rows].join("<br>");
+      },
     },
     legend: {
       type: "scroll", top: 0, textStyle: { color: "#9aa8bc", fontSize: 11 },
       data: lines.map((l) => l.name),
     },
-    grid: { left: 52, right: 24, top: 36, bottom: 28 },
+    grid: { left: 58, right: 24, top: 48, bottom: 72 },
+    dataZoom: [
+      { type: "inside", xAxisIndex: 0, filterMode: "none" },
+      { type: "slider", xAxisIndex: 0, height: 18, bottom: 8, borderColor: "#2a3548",
+        fillerColor: "rgba(74,158,255,.15)", textStyle: { color: "#7d8aa0" } },
+    ],
     xAxis: {
-      type: "category", data: dates,
-      axisLabel: { color: "#7d8aa0", fontSize: 11 },
+      type: "category", data: dates, boundaryGap: false, name: d.grain_label ? `${d.grain_label}` : "",
+      axisLabel: { color: "#7d8aa0", fontSize: 11, hideOverlap: true },
       axisLine: { lineStyle: { color: "#2a3548" } },
     },
     yAxis: {
-      type: "value", name: "净流入(亿)",
+      type: "value", name: yName,
       splitLine: { lineStyle: { color: "#202a3b" } },
-      axisLabel: { color: "#7d8aa0" },
+      axisLabel: { color: "#7d8aa0", formatter: (v) => `${v}` },
+      nameTextStyle: { color: "#7d8aa0", fontSize: 11 },
     },
     series: lines.map((l, i) => ({
-      name: l.name, type: "line", data: l.data, showSymbol: dates.length < 8,
-      smooth: true, symbol: "circle", symbolSize: l.selected ? 9 : 6,
+      name: l.name, type: "line", data: l.data,
+      showSymbol: dates.length <= 8, connectNulls: false,
+      smooth: dates.length >= 4, symbol: "circle", symbolSize: l.selected ? 9 : 6,
       lineStyle: { width: l.selected ? 3 : 1.6, color: palette[i % palette.length] },
       itemStyle: { color: palette[i % palette.length] },
       emphasis: { focus: "series" },

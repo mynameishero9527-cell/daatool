@@ -474,7 +474,7 @@ tr.score-95 td { background: rgba(255, 60, 60, .30); }
   background: rgba(74,158,255,.12); border: 1px solid rgba(74,158,255,.35);
   color: var(--accent); border-radius: 8px; padding: 6px 10px; font-size: 12px;
 }
-#flowTrendChart { height: 280px; }
+#flowTrendChart { height: 440px; min-height: 440px; }
 .sp-weights { display: flex; flex-wrap: wrap; gap: 10px 18px; }
 .sp-w { min-width: 200px; flex: 1; font-size: 12px; color: var(--muted); }
 .sp-w input[type=range] { width: 100%; accent-color: #4a9eff; }
@@ -563,7 +563,7 @@ tr.score-95 td { background: rgba(255, 60, 60, .30); }
   50% { transform: translateY(-3px) scale(1.06); filter: drop-shadow(0 0 16px rgba(255,210,120,.9)); }
 }
 .buy-flash-logo.dragging { animation: none; }
-#flowTrendChart { min-height: 320px; }
+#flowTrendChart { min-height: 440px; }
 
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; }

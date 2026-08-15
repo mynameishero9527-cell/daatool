@@ -302,12 +302,14 @@ def sector_flow_bar(dim: str = "industry",
 
 @router.get("/sector/flow-trend")
 def sector_flow_trend(dim: str = "industry", name: str = "",
+                      grain: str = Query("1d"),
                       span: str = Query("1d", alias="range"),
-                      top_n: int = Query(12, le=30),
+                      top_n: int = Query(0, le=80),
                       direction: str = Query("", alias="dir"),
                       min_stocks: int = 0,
                       q: str = ""):
-    return sector.get_flow_trend(dim, name, span, top_n, direction, min_stocks, q)
+    return sector.get_flow_trend(dim, name, grain, top_n, direction, min_stocks, q,
+                                 range_key=span)
 
 
 @router.get("/sector/flow-bar/stocks")

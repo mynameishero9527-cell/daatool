@@ -275,6 +275,15 @@ RANGE_LABELS = {
     "1d": "当天", "3d": "过去3天", "5d": "过去5天", "10d": "过去10天",
     "20d": "过去20天", "1m": "过去一月", "3m": "过去3个月",
 }
+# 日走势横轴粒度：与直方图「时间范围」独立。lookback 为最多取多少个交易日再重采样。
+TREND_GRAINS = {
+    "1d":  {"label": "日", "lookback": 60, "kind": "day", "n": 1},
+    "5d":  {"label": "5日", "lookback": 60, "kind": "ndays", "n": 5},
+    "1w":  {"label": "周", "lookback": 130, "kind": "week", "n": 5},
+    "12d": {"label": "12日", "lookback": 120, "kind": "ndays", "n": 12},
+    "20d": {"label": "20日", "lookback": 120, "kind": "ndays", "n": 20},
+    "1m":  {"label": "月", "lookback": 250, "kind": "month", "n": 20},
+}
 
 
 def beijing_trade_date() -> str:
@@ -507,7 +516,7 @@ def get_flow_bar(dim: str = "industry", range_key: str = "1d",
                 it["net_in_yi"] = it["snap_d5_yi"]
         value_source = "snapshot_d5"
         note = ("直方图柱高已切到「近5日」快照累计主力净流入，与「当天」账本不是同一口径。"
-                "日走势仍按交易日账本画折线。")
+                "下方日走势横轴独立，不跟直方图时间范围绑死。")
     elif not day and range_key == "1d":
         value_source = "ledger_1d"
     items = _sort_flow_items(items or [], sort)
@@ -535,23 +544,83 @@ def get_flow_bar(dim: str = "industry", range_key: str = "1d",
     }
 
 
+def _short_md(d: str) -> str:
+    return d[5:] if len(d) >= 10 else d
+
+
+def _bucket_trade_dates(dates: list[str], grain: str) -> list[dict]:
+    """把交易日列表收成横轴桶。缺日不补 0。"""
+    spec = TREND_GRAINS[grain]
+    kind, n = spec["kind"], spec["n"]
+    dates = sorted(d for d in dates if d)
+    if not dates:
+        return []
+    buckets: list[dict] = []
+
+    def add(chunk: list[str], label: str) -> None:
+        buckets.append({"label": label, "start": chunk[0], "end": chunk[-1], "days": chunk})
+
+    if kind == "day":
+        for d in dates:
+            add([d], _short_md(d))
+        return buckets
+    if kind == "ndays":
+        remainder = len(dates) % n
+        i = 0
+        if remainder:
+            chunk = dates[:remainder]
+            label = _short_md(chunk[-1]) if len(chunk) == 1 else f"{_short_md(chunk[0])}~{_short_md(chunk[-1])}"
+            add(chunk, label)
+            i = remainder
+        while i < len(dates):
+            chunk = dates[i:i + n]
+            label = f"{_short_md(chunk[0])}~{_short_md(chunk[-1])}" if len(chunk) > 1 else _short_md(chunk[-1])
+            add(chunk, label)
+            i += n
+        return buckets
+    groups: dict[str, list[str]] = {}
+    order: list[str] = []
+    for d in dates:
+        if kind == "week":
+            dt = datetime.strptime(d, "%Y-%m-%d")
+            iso = dt.isocalendar()
+            key = f"{iso[0]}-W{iso[1]:02d}"
+        else:
+            key = d[:7]
+        if key not in groups:
+            order.append(key)
+            groups[key] = []
+        groups[key].append(d)
+    for key in order:
+        add(groups[key], key)
+    return buckets
+
+
 def get_flow_trend(dim: str = "industry", name: str = "",
-                   range_key: str = "1d", top_n: int = 12,
-                   direction: str = "", min_stocks: int = 0, q: str = "") -> dict:
+                   grain: str = "1d", top_n: int = 0,
+                   direction: str = "", min_stocks: int = 0, q: str = "",
+                   range_key: str = "1d") -> dict:
+    """板块资金折线：横轴按 grain（日/5日/周/12日/20日/月），纵轴为该桶主力净流入合计（亿）。
+
+    不跟直方图的「当天/过去N天」绑死；缺日不填 0、不用涨跌幅冒充资金。
+    """
     dim = dim if dim in ("industry", "concept") else "industry"
-    range_key = range_key if range_key in RANGE_DAYS else "1d"
+    grain = grain if grain in TREND_GRAINS else "1d"
     name = (name or "").strip()
     direction = direction if direction in ("in", "out", "") else ""
     min_stocks = max(0, min(int(min_stocks or 0), 200))
     q = (q or "").strip().lower()
-    top_n = max(3, min(int(top_n or 12), 30))
-    target = RANGE_DAYS[range_key]
+    spec = TREND_GRAINS[grain]
+    default_n = 40 if dim == "industry" else 24
+    top_n = max(3, min(int(top_n or default_n), 80))
     asof = _ensure_ledger()
     dates = query(
         "SELECT DISTINCT trade_date FROM sector_flow_daily WHERE dim=? AND trade_date<=? "
-        "ORDER BY trade_date DESC LIMIT ?", (dim, asof, target))
+        "ORDER BY trade_date DESC LIMIT ?", (dim, asof, spec["lookback"]))
     date_list = [d["trade_date"] for d in dates]
     date_list.reverse()
+    buckets = _bucket_trade_dates(date_list, grain)
+    x_labels = [b["label"] for b in buckets]
     dim_label = "题材概念" if dim == "concept" else "行业板块"
     lines: list[dict] = []
     have = len(date_list)
@@ -587,30 +656,41 @@ def get_flow_trend(dim: str = "industry", name: str = "",
             picked = [name] + [n for n in picked if n != name]
         for nm in picked:
             pts = by_name.get(nm) or {}
-            data = [pts.get(d) for d in date_list]
+            data = []
+            for b in buckets:
+                vals = [pts[d] for d in b["days"] if d in pts]
+                data.append(round(sum(vals), 2) if vals else None)
             ssum = round(sum(v for v in data if v is not None), 2)
             lines.append({"name": nm, "data": data, "sum_yi": ssum, "selected": nm == name})
     kpis = {
         "sum_net_yi": round(sum(l["sum_yi"] for l in lines), 2) if lines else 0,
         "last_date": date_list[-1] if date_list else "",
         "days_have": have,
-        "days_target": target,
+        "days_target": spec["lookback"],
         "line_count": len(lines),
+        "bucket_count": len(buckets),
+        "grain": grain,
+        "grain_label": spec["label"],
     }
-    title = f"「{name}」及对照板块" if name else f"{dim_label} · {RANGE_LABELS[range_key]} · 按日折线"
+    y_desc = "当日主力净流入（亿）" if grain == "1d" else f"该{spec['label']}周期内主力净流入合计（亿）"
+    title = f"「{name}」及对照板块 · 横轴{spec['label']}" if name else f"{dim_label}资金走势 · 横轴{spec['label']}"
     notes = [
-        f"横轴为交易日，一条线一个{dim_label}，数值为当日主力净流入（亿）",
-        f"范围 {RANGE_LABELS[range_key]}，账本覆盖 {have}/{target} 日",
-        "缺日不填 0；点折线可选中该板块并联动直方图",
+        f"折线=每个{dim_label}一条，横轴={spec['label']}，纵轴={y_desc}",
+        f"账本覆盖 {have} 个交易日（最多取近 {spec['lookback']} 日再按{spec['label']}重采样）",
+        "缺日不填 0、不用涨跌幅冒充资金；点折线可选中该板块",
     ]
     if have < 2:
-        notes.append("目前只有 1 个交易日点，同步更多交易日后折线才会拉长")
+        notes.append("目前只有 1 个交易日点，同步更多交易日后日/5日/周/月折线才会拉长")
     return {
         "dim": dim, "name": name, "title": title,
-        "range": range_key, "range_label": RANGE_LABELS[range_key],
+        "grain": grain, "grain_label": spec["label"],
+        "grains": {k: v["label"] for k, v in TREND_GRAINS.items()},
+        "range": range_key, "range_label": RANGE_LABELS.get(range_key, range_key),
         "asof": asof, "calendar_today": beijing_trade_date(),
-        "coverage": {"have": have, "target": target, "dates": date_list},
-        "dates": date_list, "lines": lines, "kpis": kpis,
+        "coverage": {"have": have, "target": spec["lookback"], "dates": date_list},
+        "dates": x_labels, "buckets": [{"label": b["label"], "start": b["start"], "end": b["end"],
+                                       "days": len(b["days"])} for b in buckets],
+        "lines": lines, "kpis": kpis, "y_name": y_desc,
         "note": "。".join(notes) + "。",
         "source": "sector_flow_daily",
     }
