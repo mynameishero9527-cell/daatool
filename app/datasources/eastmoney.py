@@ -155,6 +155,112 @@ def _parse_fflow_klines(klines: list) -> list[dict]:
     return out
 
 
+_STOCK_FFLOW_DAY = (
+    "/api/qt/stock/fflow/daykline/get?lmt={lmt}&klt={klt}&secid={secid}"
+    "&fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65"
+    "&ut=b2884a393a59ad64002292a3e90d46a5"
+)
+_STOCK_FFLOW_MIN = (
+    "/api/qt/stock/fflow/kline/get?lmt=0&klt=1&secid={secid}"
+    "&fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56"
+    "&ut=b2884a393a59ad64002292a3e90d46a5"
+)
+_STOCK_FFLOW_HOSTS = (
+    "https://push2delay.eastmoney.com",
+    "https://push2his.eastmoney.com",
+    "https://94.push2his.eastmoney.com",
+    "https://88.push2his.eastmoney.com",
+    "https://push2.eastmoney.com",
+)
+
+
+def em_stock_secid(code: str) -> str | None:
+    """个股东方财富 secid。指数返回 None，避免把指数当成个股资金。"""
+    s = (code or "").strip().lower()
+    if not s:
+        return None
+    digits = s[-6:] if len(s) >= 6 else s
+    if not digits.isdigit() or len(digits) != 6:
+        return None
+    if s.startswith(("sh000", "sz399", "bj899", "sh880")):
+        return None
+    if s.startswith("sh") or digits.startswith(("6", "5", "9")):
+        return f"1.{digits}"
+    return f"0.{digits}"
+
+
+def _yuan_to_yi(v: float | None) -> float | None:
+    if v is None:
+        return None
+    return round(v / 1e8, 4)
+
+
+def _parse_stock_fflow_klines(klines: list, minute: bool = False) -> list[dict]:
+    """个股资金K：f52 主力净流入（元）。涨跌幅字段只保留，绝不当作资金。"""
+    out = []
+    for line in klines:
+        parts = str(line).split(",")
+        if len(parts) < 2:
+            continue
+        raw_t = parts[0].strip()
+        if minute:
+            if " " in raw_t:
+                label = raw_t.split(" ")[-1][:5]
+            elif len(raw_t) >= 16:
+                label = raw_t[11:16]
+            else:
+                label = raw_t[:5]
+            if len(label) < 4:
+                continue
+        else:
+            if len(raw_t) < 10:
+                continue
+            label = raw_t[:10]
+        main = _f(parts[1])
+        out.append({
+            "date": label,
+            "main_net_yi": _yuan_to_yi(main) if main is not None else 0.0,
+            "small_net_yi": _yuan_to_yi(_f(parts[2]) if len(parts) > 2 else None),
+            "mid_net_yi": _yuan_to_yi(_f(parts[3]) if len(parts) > 3 else None),
+            "large_net_yi": _yuan_to_yi(_f(parts[4]) if len(parts) > 4 else None),
+            "super_net_yi": _yuan_to_yi(_f(parts[5]) if len(parts) > 5 else None),
+        })
+    return out
+
+
+def fetch_stock_fflow(code: str, period: str = "day", lookback: int = 120) -> list[dict]:
+    """个股主力资金流向。minute 为分时累计序列；day/week/month 为对应周期净流入。"""
+    secid = em_stock_secid(code)
+    if not secid:
+        return []
+    minute = period == "minute"
+    if minute:
+        path = _STOCK_FFLOW_MIN.format(secid=secid)
+    else:
+        klt = {"day": 101, "5day": 101, "week": 102, "month": 103}.get(period, 101)
+        lmt = 5 if period == "5day" else max(5, min(int(lookback or 120), 240))
+        path = _STOCK_FFLOW_DAY.format(lmt=lmt, klt=klt, secid=secid)
+    seen: dict[str, dict] = {}
+    last_exc: Exception | None = None
+    for host in _STOCK_FFLOW_HOSTS:
+        try:
+            body = _his_get(host + path)
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            continue
+        parsed = _parse_stock_fflow_klines(
+            ((body.get("data") or {}).get("klines") or []), minute=minute)
+        for row in parsed:
+            seen[row["date"]] = row
+        if minute and len(seen) >= 20:
+            break
+        if (not minute) and len(seen) >= (4 if period == "5day" else 8):
+            break
+    if not seen and last_exc:
+        log.warning("个股资金K %s %s 失败: %s", code, period, last_exc)
+    return [seen[k] for k in sorted(seen.keys())]
+
+
 def fetch_market_amounts() -> dict:
     """全A/沪/深/北成交额（亿元）。优先中证全指作为全A量能总额。"""
     resp = tracked_get(SOURCE, _ULIST, headers=_HEADERS)

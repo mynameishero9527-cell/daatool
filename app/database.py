@@ -39,6 +39,17 @@ CREATE TABLE IF NOT EXISTS daily_kline (
     PRIMARY KEY (code, date)
 );
 
+-- 13.0.13：个股主力资金日K（亿元），仅落真实拉取结果，不用涨跌幅冒充
+CREATE TABLE IF NOT EXISTS stock_fund_daily (
+    code         TEXT NOT NULL,
+    trade_date   TEXT NOT NULL,
+    main_net_yi  REAL,
+    super_net_yi REAL,
+    large_net_yi REAL,
+    PRIMARY KEY (code, trade_date)
+);
+CREATE INDEX IF NOT EXISTS idx_stock_fund_date ON stock_fund_daily(trade_date);
+
 CREATE TABLE IF NOT EXISTS macro_event (
     event_id    TEXT PRIMARY KEY,
     title       TEXT NOT NULL,
@@ -302,6 +313,7 @@ CREATE TABLE IF NOT EXISTS stock_ai_brief (
 -- 13.0.10：板块事件按日/周/月合并到时间桶并汇总板块；条目多时折叠排版
 -- 13.0.11：买点窗紧凑；个股页复制代码/自选同步；机构评级与财务分析改持股 tab
 -- 13.0.12：机构评级高亮/目标价上涨空间/多空直方图；财报评级卡；公司公告 tab；买点窗非表格+操作建议
+-- 13.0.13：顶栏搜索；财报评级紧凑+综合评分突出；K线下方主力资金图
 -- intel_item_ai / hot_term_ai 表结构不变，失败仍不覆盖已保存结果
 
 CREATE TABLE IF NOT EXISTS knowledge_ai (

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>A股量化工具</title>
-<link rel="stylesheet" href="/static/style.css?v=13.0.12">
+<link rel="stylesheet" href="/static/style.css?v=13.0.13">
 <script>
 (function () {
   try {
@@ -41,6 +41,11 @@
     <button class="tab" data-tab="ai">AI分析</button>
     <button class="tab" data-tab="settings">设置</button>
   </nav>
+  <div class="top-search search-wrap" id="topSearchWrap">
+    <button type="button" class="top-search-ico" id="topSearchBtn" title="搜索股票">🔍</button>
+    <input id="stockSearch" placeholder="代码 / 名称" autocomplete="off" aria-label="搜索股票">
+    <div class="search-results" id="searchResults"></div>
+  </div>
   <div class="statusbar">
     <span id="topAlmanac" class="top-almanac" title="加载中…">📅</span>
     <span class="dot" id="healthDot"></span>
@@ -117,12 +122,6 @@
 
   <!-- 个股分析 -->
   <section class="page" id="page-stock">
-    <div class="card">
-      <div class="search-wrap">
-        <input id="stockSearch" placeholder="搜索股票代码 / 名称，如 300432 或 富临">
-        <div class="search-results" id="searchResults"></div>
-      </div>
-    </div>
     <div class="grid-stock">
       <div class="card">
         <div id="stockProfile"></div>
@@ -141,9 +140,14 @@
           </span>
         </div>
         <div id="klineChart" class="chart-lg"></div>
+        <div class="fund-kline-head">
+          <span>主力资金</span>
+          <span class="muted" id="fundKlineMeta"></span>
+        </div>
+        <div id="fundKlineChart" class="chart-fund"></div>
       </div>
       <div class="card score-card" id="scoreCard">
-        <div class="empty">搜索并选择一只股票查看财报评级</div>
+        <div class="empty">在顶部搜索股票查看财报评级与综合评分</div>
       </div>
     </div>
     <div class="card" id="holdersCard" style="display:none">
@@ -793,6 +797,6 @@
   <div class="ctx-item" id="ctxKbRevert" style="display:none">↩ 还原内置解释</div>
 </div>
 
-<script src="/static/app.js?v=13.0.12"></script>
+<script src="/static/app.js?v=13.0.13"></script>
 </body>
 </html>

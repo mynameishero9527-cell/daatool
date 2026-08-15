@@ -180,6 +180,12 @@ def get_kline(code: str, period: str = "day", count: int = Query(320, le=800)):
     return kline.get_kline(norm, period, count)
 
 
+@router.get("/kline/fund")
+def get_fund_kline(code: str, period: str = "day"):
+    """个股主力资金K。缺数返回 empty_reason，不用涨跌幅冒充。"""
+    return kline.get_fund_kline(code, period)
+
+
 @router.get("/analysis")
 def analysis(code: str):
     norm = market.normalize_code(code) or code

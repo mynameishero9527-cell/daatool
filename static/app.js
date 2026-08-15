@@ -187,6 +187,7 @@ function themeSwatch(id, i) {
 function reloadChartsForTheme() {
   miniChart = disposeChart(miniChart);
   klineChart = disposeChart(klineChart);
+  fundKlineChart = disposeChart(fundKlineChart);
   sectorChart = disposeChart(sectorChart);
   flowBarChart = disposeChart(flowBarChart);
   flowTrendChart = disposeChart(flowTrendChart);
@@ -846,21 +847,44 @@ window.pinWatch = async (code) => { await post(`/api/watchlist/pin?code=${code}`
 let currentStock = null;
 let currentPeriod = "minute";
 let klineChart = null;
+let fundKlineChart = null;
+let lastSearchRows = [];
 
-$("#stockSearch").addEventListener("input", debounce(async (e) => {
-  const q = e.target.value.trim();
+function paintSearchResults(rows) {
   const box = $("#searchResults");
-  if (!q) { box.classList.remove("show"); return; }
-  const rows = await api(`/api/search?q=${encodeURIComponent(q)}`);
-  box.innerHTML = rows.length ? rows.map((r) => `
+  if (!box) return;
+  lastSearchRows = Array.isArray(rows) ? rows : [];
+  box.innerHTML = lastSearchRows.length ? lastSearchRows.map((r) => `
     <div class="sr-item" onclick="openStock('${r.code}','${esc(r.name)}')">
       <span>${esc(r.name)} <span class="muted">${r.code} · ${esc(r.board || "")}</span></span>
       <span class="num">${pxHtml(r.price, r.pct)} ${pct(r.pct)}</span>
     </div>`).join("") : '<div class="sr-item muted">未找到，可先在设置页执行全量同步</div>';
   box.classList.add("show");
+}
+
+$("#stockSearch")?.addEventListener("input", debounce(async (e) => {
+  const q = e.target.value.trim();
+  const box = $("#searchResults");
+  if (!q) { box?.classList.remove("show"); lastSearchRows = []; return; }
+  const rows = await api(`/api/search?q=${encodeURIComponent(q)}`);
+  paintSearchResults(rows);
 }, 250));
+$("#stockSearch")?.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter") return;
+  const first = lastSearchRows[0];
+  if (first) {
+    e.preventDefault();
+    openStock(first.code, first.name);
+  }
+});
+$("#topSearchBtn")?.addEventListener("click", (e) => {
+  e.preventDefault();
+  const inp = $("#stockSearch");
+  inp?.focus();
+  inp?.select();
+});
 document.addEventListener("click", (e) => {
-  if (!e.target.closest(".search-wrap")) $("#searchResults").classList.remove("show");
+  if (!e.target.closest(".search-wrap")) $("#searchResults")?.classList.remove("show");
 });
 
 $("#periodBtns").addEventListener("click", (e) => {
@@ -977,6 +1001,7 @@ async function loadKline() {
           ...baseGrid(),
           title: { text: "暂无分时数据", left: "center", top: "middle", textStyle: { color: cp().muted, fontSize: fs(14) } },
         }, true);
+        loadFundKline(0);
         return;
       }
       renderMinute(d);
@@ -987,11 +1012,13 @@ async function loadKline() {
           ...baseGrid(),
           title: { text: "暂无K线数据", left: "center", top: "middle", textStyle: { color: cp().muted, fontSize: fs(14) } },
         }, true);
+        loadFundKline(0);
         return;
       }
       renderCandle(d);
     }
-  } catch (err) { klineChart.hideLoading(); console.warn(err); }
+    loadFundKline((d.dates || d.points || []).length);
+  } catch (err) { klineChart.hideLoading(); console.warn(err); loadFundKline(0); }
 }
 
 function baseGrid() {
@@ -1082,6 +1109,93 @@ function renderCandle(d) {
       { name: "DEA", type: "line", xAxisIndex: 2, yAxisIndex: 2, data: (d.macd && d.macd.dea) || [], showSymbol: false, lineStyle: { width: 1, color: "#4a9eff" } },
     ],
   }, true);
+}
+
+function syncStockCharts(nPrice, nFund) {
+  try { if (typeof echarts !== "undefined") echarts.disconnect("stock-k"); } catch { /* ignore */ }
+  if (!klineChart || !fundKlineChart || nPrice < 8 || nFund < 8) return;
+  if (Math.abs(nPrice - nFund) / Math.max(nPrice, nFund) > 0.35) return;
+  klineChart.group = "stock-k";
+  fundKlineChart.group = "stock-k";
+  echarts.connect("stock-k");
+}
+
+function renderFundKline(d) {
+  const host = $("#fundKlineChart");
+  const meta = $("#fundKlineMeta");
+  if (!host) return;
+  fundKlineChart ||= makeChart(host);
+  const dates = d.dates || [];
+  const bars = d.main_net_yi || [];
+  const cum = d.cumulative_yi || [];
+  const pal = cp();
+  if (meta) {
+    const src = [d.source, d.note].filter(Boolean).join(" · ");
+    meta.textContent = d.empty_reason || src || "";
+  }
+  if (!dates.length) {
+    fundKlineChart.clear();
+    fundKlineChart.setOption({
+      ...baseGrid(),
+      title: {
+        text: d.empty_reason || "暂无主力资金",
+        left: "center", top: "middle",
+        textStyle: { color: pal.muted, fontSize: fs(12), fontWeight: 400, width: 360, overflow: "break" },
+      },
+    }, true);
+    return;
+  }
+  const start = zoomStart(dates.length);
+  fundKlineChart.setOption({
+    ...baseGrid(),
+    legend: {
+      data: ["主力净流入", "累计"],
+      textStyle: { color: pal.muted, fontSize: fs(11) }, top: 0,
+    },
+    grid: [{ left: 55, right: 20, top: 22, bottom: 24 }],
+    xAxis: { type: "category", data: dates, axisLine: { lineStyle: { color: pal.border } },
+      axisLabel: { color: pal.muted, fontSize: fs(10) } },
+    yAxis: { scale: true, splitLine: { lineStyle: { color: pal.split } },
+      axisLabel: { color: pal.muted, fontSize: fs(10), formatter: (v) => `${Number(v).toFixed(2)}亿` } },
+    dataZoom: [{ type: "inside", start, end: 100 }],
+    series: [
+      {
+        name: "主力净流入", type: "bar", data: bars,
+        itemStyle: { color: (p) => (p.value >= 0 ? pal.up : pal.down) },
+      },
+      {
+        name: "累计", type: "line", data: cum, showSymbol: false, yAxisIndex: 0,
+        lineStyle: { width: 1.4, color: pal.accent },
+      },
+    ],
+  }, true);
+}
+
+async function loadFundKline(nPrice) {
+  const host = $("#fundKlineChart");
+  const meta = $("#fundKlineMeta");
+  if (!host || !currentStock) return;
+  fundKlineChart ||= makeChart(host);
+  if (isIndexCode(currentStock.code)) {
+    renderFundKline({ dates: [], empty_reason: "指数没有个股主力资金流向，不编造。" });
+    return;
+  }
+  const code = currentStock.code;
+  const period = currentPeriod;
+  fundKlineChart.showLoading({ maskColor: cssVar("--bg") + "99", textColor: cssVar("--text") });
+  try {
+    const d = await api(`/api/kline/fund?code=${encodeURIComponent(code)}&period=${encodeURIComponent(period)}`);
+    if (!currentStock || currentStock.code !== code || currentPeriod !== period) return;
+    fundKlineChart.hideLoading();
+    renderFundKline(d);
+    syncStockCharts(nPrice || 0, (d.dates || []).length);
+    requestAnimationFrame(() => fundKlineChart?.resize());
+  } catch (err) {
+    fundKlineChart.hideLoading();
+    if (meta) meta.textContent = "主力资金加载失败";
+    renderFundKline({ dates: [], empty_reason: "主力资金加载失败。未用涨跌幅代替资金。" });
+    console.warn(err);
+  }
 }
 
 function gaugeHtml(label, value, levelText, extra = "") {
@@ -1250,22 +1364,12 @@ function analysisMetricsHtml(d) {
   }
   const s = r.snapshot || {};
   return `
-      <hr style="border-color:var(--border);margin:10px 0">
-      <div class="muted" style="font-size:calc(12px * var(--font-scale));margin-bottom:6px">综合量能与操作参考（独立于财报评级）</div>
-      <div style="text-align:center;margin-bottom:8px">
-        <span class="badge ${r.grade_css}">${esc(r.grade || "")} · ${esc(r.volume_desc || "")}</span>
-        <span class="badge ${r.advice_css}" style="font-size:calc(12px * var(--font-scale));padding:3px 10px">${esc(r.advice || "")}</span>
-        <div class="desc-hl" style="margin-top:8px;text-align:left">${esc(r.advice_reason || "")}</div>
-      </div>
+      <div class="score-clamp">${esc(r.advice_reason || "")}</div>
       ${attributionHtml(d.attribution)}
       ${Object.entries(r.components || {}).map(([k, v]) => `
         <div class="comp-bar"><span class="label">${k}</span>
           <div class="track"><div class="fill" style="width:${v}%"></div></div>
-          <span class="num">${v}</span></div>
-        ${r.component_notes && r.component_notes[k]
-          ? `<div class="muted" style="font-size:calc(11px * var(--font-scale));margin:-2px 0 8px 52px">${esc(r.component_notes[k])}</div>` : ""}`).join("")}
-      ${r.algorithm ? `<div class="muted" style="font-size:calc(11px * var(--font-scale));margin:4px 0 8px">${esc(r.algorithm)}</div>` : ""}
-      <hr style="border-color:var(--border);margin:10px 0">
+          <span class="num">${v}</span></div>`).join("")}
       ${pullSmashHtml(d.pull_smash)}
       ${metrics2Html(d.metrics, d.dark)}
       <div class="kv"><span class="k">主力净流入</span><span class="num ${cls(s.main_net_in)}">${fmt((s.main_net_in || 0) / 10000)} 亿</span></div>
@@ -1285,32 +1389,49 @@ function paintScoreCard() {
   const br = r && r.broker_ratings;
   const price = q.price != null ? q.price : (br && br.current_price);
   const priceHead = price !== undefined && price !== null ? `
-      <div style="text-align:center;padding-bottom:6px;border-bottom:1px solid var(--border);margin-bottom:8px">
-        ${pxHtml(price, q.pct, 2, "lg")}
-        <span class="${cls(q.pct)}" style="font-size:calc(15px * var(--font-scale));font-weight:600;margin-left:8px">${q.change != null ? `${sign(q.change)}${fmt(q.change)} (${pct(q.pct)})` : ""}</span>
-        <div class="muted" style="font-size:calc(11px * var(--font-scale))">现价 · ${esc(String(q.time || "").replace(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})$/, "$2-$3 $4:$5:$6"))} · ${esc(q.source || "")}</div>
+      <div class="price-inline">
+        ${pxHtml(price, q.pct, 2)}
+        <span class="${cls(q.pct)}" style="font-weight:600;margin-left:6px">${q.change != null ? `${sign(q.change)}${fmt(q.change)} (${pct(q.pct)})` : pct(q.pct)}</span>
       </div>` : "";
-  let gradeBlock;
+  let finHero;
   if (!f) {
-    gradeBlock = '<div class="empty">财报评级加载中…</div>';
+    finHero = `<div class="score-hero"><div class="muted">财报加载中…</div></div>`;
   } else if (!f.grade) {
-    gradeBlock = `<div class="score-head">
-      <div class="score-num muted" style="font-size:calc(28px * var(--font-scale))">暂无</div>
-      <div class="muted">${esc(f.summary || f.grade_desc || "暂无财务分析披露")}</div>
+    finHero = `<div class="score-hero">
+      <div class="score-num muted">—</div>
+      <span class="badge level-2">财报评级</span>
+      <div class="score-clamp">${esc(f.summary || f.grade_desc || "暂无财务分析披露")}</div>
     </div>`;
   } else {
     const gcss = f.grade === "A" ? "level-4" : f.grade === "B" ? "level-3" : f.grade === "C" ? "level-2" : "level-1";
     const tone = (f.grade === "A" || f.grade === "B") ? "up" : f.grade === "D" ? "down" : "flat";
-    gradeBlock = `<div class="score-head">
+    finHero = `<div class="score-hero">
       <div class="score-num ${tone}">${esc(f.grade)}</div>
-      <span class="badge ${gcss}">财报评级 ${esc(f.grade)}</span>
-      <div class="desc-hl" style="margin-top:8px">${esc(f.grade_desc || "")}</div>
-      <div class="muted" style="margin-top:6px;font-size:calc(12px * var(--font-scale))">${esc(f.summary || "")}</div>
+      <span class="badge ${gcss}">财报评级</span>
+      <div class="score-clamp">${esc(f.grade_desc || f.summary || "")}</div>
     </div>`;
   }
-  card.innerHTML = `<div class="card-title">财报评级</div>
+  let scoreHero;
+  if (!r || r.score === null || r.score === undefined) {
+    scoreHero = `<div class="score-hero composite">
+      <div class="score-num muted">—</div>
+      <span class="badge level-2">综合评分</span>
+      <div class="score-clamp">${esc((r && r.message) || (d ? "暂无综合评分" : "评分加载中…"))}</div>
+    </div>`;
+  } else {
+    const tone = r.score >= 55 ? "up" : r.score < 45 ? "down" : "flat";
+    scoreHero = `<div class="score-hero composite">
+      <div class="score-num ${tone}">${esc(r.score)}</div>
+      <span class="badge ${r.grade_css || "level-2"}">综合评分</span>
+      <div style="margin-top:4px">
+        <span class="badge ${r.grade_css || ""}">${esc(r.grade || "")} · ${esc(r.volume_desc || "")}</span>
+        <span class="badge ${r.advice_css || "advice-hold"}" style="font-size:calc(11px * var(--font-scale));padding:2px 8px">${esc(r.advice || "")}</span>
+      </div>
+    </div>`;
+  }
+  card.innerHTML = `<div class="card-title">财报评级 · 综合评分</div>
       ${priceHead}
-      ${gradeBlock}
+      <div class="score-duo">${finHero}${scoreHero}</div>
       ${brokerTargetBlock(br, price)}
       ${d ? analysisMetricsHtml(d) : ""}`;
 }
@@ -6422,7 +6543,7 @@ async function loadSettingsHealthOnly() {
   } catch { $("#healthDot").className = "dot bad"; }
 }
 
-window.addEventListener("resize", () => { klineChart?.resize(); sectorChart?.resize(); ckChart?.resize(); miniChart?.resize(); flowBarChart?.resize(); flowTrendChart?.resize(); applyAlertDock(); applyBuyFlashPos(); });
+window.addEventListener("resize", () => { klineChart?.resize(); fundKlineChart?.resize(); sectorChart?.resize(); ckChart?.resize(); miniChart?.resize(); flowBarChart?.resize(); flowTrendChart?.resize(); applyAlertDock(); applyBuyFlashPos(); });
 
 function bindAppearance() {
   $("#themeQuickBtn")?.addEventListener("click", () => {
