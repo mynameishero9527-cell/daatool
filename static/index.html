@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>A股量化工具</title>
-<link rel="stylesheet" href="/static/style.css?v=11.0.3">
-<script src="/static/vendor/echarts.min.js?v=11.0.3"></script>
+<link rel="stylesheet" href="/static/style.css?v=11.0.4">
+<script src="/static/vendor/echarts.min.js?v=11.0.4"></script>
 </head>
 <body>
 <header class="topbar">
@@ -81,15 +81,9 @@
 
     <!-- 自选视图 -->
     <div id="dashWatch" style="display:none">
-      <div class="grid-2" style="grid-template-columns: 1.6fr 1fr">
-        <div class="card">
-          <div class="card-title">智能提醒 <span class="muted">每10分钟轮动刷新买卖点 · 量化参考不构成投资建议</span></div>
-          <div id="alertFeed" class="alert-feed"><div class="empty">暂无提醒</div></div>
-        </div>
-        <div class="card">
-          <div class="card-title">今日黄历 · 九宫方位 <span class="muted">民俗文化参考</span></div>
-          <div id="dashAlmanac"><div class="empty">加载中…</div></div>
-        </div>
+      <div class="card">
+        <div class="card-title">今日黄历 · 九宫方位 <span class="muted">民俗文化参考</span></div>
+        <div id="dashAlmanac"><div class="empty">加载中…</div></div>
       </div>
       <div class="card">
         <div class="card-title">自选股
@@ -452,6 +446,21 @@
       <div id="spAiBox"></div>
       <div id="spTable"><div class="empty">先选模板或条件，本地计算不消耗 AI</div></div>
     </div>
+    <div id="alertDock" class="alert-dock collapsed">
+      <div class="alert-dock-handle" id="alertDockHandle" title="拖拽调整信息栏高度"></div>
+      <div class="alert-dock-head">
+        <div class="alert-dock-title">智能提醒
+          <span class="muted" id="alertDockCount"></span>
+          <span class="muted alert-dock-hint">每10分钟轮动 · 量化参考不构成投资建议</span>
+        </div>
+        <div id="alertStrip" class="alert-dock-strip"></div>
+        <div class="alert-dock-actions">
+          <button class="btn small ghost" type="button" id="alertDockExpand">展开</button>
+          <button class="btn small ghost" type="button" id="alertDockFold" style="display:none">收藏</button>
+        </div>
+      </div>
+      <div id="alertFeed" class="alert-feed"><div class="empty">暂无提醒</div></div>
+    </div>
   </section>
 
   <!-- AI 选股 -->
@@ -578,6 +587,6 @@
   <div class="ctx-item" id="ctxNewsAi" style="display:none">🤖 发送AI分析（消息）</div>
 </div>
 
-<script src="/static/app.js?v=11.0.3"></script>
+<script src="/static/app.js?v=11.0.4"></script>
 </body>
 </html>

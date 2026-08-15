@@ -150,7 +150,6 @@ async function loadDashboard() {
   loadMarketCycle();
   loadMiniMinute();
   loadForecast();
-  loadAlerts();
   loadDashAlmanac();
   loadTopAlmanac();
 }
@@ -250,9 +249,93 @@ async function loadForecast() {
   } catch (err) { console.warn(err); }
 }
 
+const ALERT_DOCK_KEY = "daatool_alert_dock";
+const ALERT_COLLAPSED_H = 64;
+const ALERT_EXPAND_H = 500;
+const ALERT_MIN_H = 160;
+function alertDockMaxH() { return Math.max(ALERT_MIN_H, Math.min(800, window.innerHeight - 100)); }
+function readAlertDockState() {
+  try { return JSON.parse(localStorage.getItem(ALERT_DOCK_KEY) || "") || {}; }
+  catch { return {}; }
+}
+const alertDockState = (() => {
+  const s = readAlertDockState();
+  return {
+    collapsed: s.collapsed !== false,
+    height: Number(s.height) > 0 ? Number(s.height) : ALERT_EXPAND_H,
+  };
+})();
+
+function applyAlertDock() {
+  const dock = $("#alertDock");
+  if (!dock) return;
+  dock.classList.toggle("collapsed", !!alertDockState.collapsed);
+  const h = alertDockState.collapsed
+    ? ALERT_COLLAPSED_H
+    : Math.min(alertDockMaxH(), Math.max(ALERT_MIN_H, alertDockState.height || ALERT_EXPAND_H));
+  if (!alertDockState.collapsed) alertDockState.height = h;
+  dock.style.height = h + "px";
+  document.documentElement.style.setProperty("--alert-dock-h", h + "px");
+  const fold = $("#alertDockFold");
+  const expand = $("#alertDockExpand");
+  if (fold) fold.style.display = alertDockState.collapsed ? "none" : "";
+  if (expand) expand.style.display = alertDockState.collapsed ? "" : "none";
+  try { localStorage.setItem(ALERT_DOCK_KEY, JSON.stringify(alertDockState)); } catch { /* ignore */ }
+}
+
+function bindAlertDock() {
+  $("#alertDockFold")?.addEventListener("click", () => {
+    alertDockState.collapsed = true;
+    applyAlertDock();
+  });
+  $("#alertDockExpand")?.addEventListener("click", () => {
+    alertDockState.collapsed = false;
+    if (!alertDockState.height) alertDockState.height = ALERT_EXPAND_H;
+    applyAlertDock();
+  });
+  const handle = $("#alertDockHandle");
+  if (!handle) return;
+  handle.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    handle.setPointerCapture(e.pointerId);
+    const startY = e.clientY;
+    const startH = alertDockState.collapsed ? ALERT_COLLAPSED_H : (alertDockState.height || ALERT_EXPAND_H);
+    const onMove = (ev) => {
+      const next = startH + (startY - ev.clientY);
+      if (next < 90) {
+        alertDockState.collapsed = true;
+      } else {
+        alertDockState.collapsed = false;
+        alertDockState.height = Math.min(alertDockMaxH(), Math.max(ALERT_MIN_H, next));
+      }
+      applyAlertDock();
+    };
+    const onUp = () => {
+      handle.releasePointerCapture(e.pointerId);
+      handle.removeEventListener("pointermove", onMove);
+      handle.removeEventListener("pointerup", onUp);
+    };
+    handle.addEventListener("pointermove", onMove);
+    handle.addEventListener("pointerup", onUp);
+  });
+}
+
 async function loadAlerts() {
   try {
     const d = await api("/api/alerts");
+    const items = d.items || [];
+    const countEl = $("#alertDockCount");
+    if (countEl) countEl.textContent = items.length ? `${items.length} 条` : "暂无";
+    const strip = $("#alertStrip");
+    if (strip) {
+      strip.innerHTML = items.length
+        ? items.slice(0, 16).map((a) =>
+          `<span class="alert-chip"><span class="badge at-${a.alert_type}">${esc(a.type_name)}</span>`
+          + `<span>${esc(a.title)}</span><span class="t">${esc((a.created_at || "").slice(11, 16))}</span></span>`).join("")
+        : `<span class="muted">暂无提醒，交易时段每10分钟自动扫描</span>`;
+    }
+    const feed = $("#alertFeed");
+    if (!feed) return;
     const item = (a) => `
       <div class="alert-item">
         <span class="time">${esc((a.created_at || "").slice(5, 16).replace("T", " "))}</span>
@@ -261,14 +344,14 @@ async function loadAlerts() {
           ${a.detail ? `<div class="detail">${esc(a.detail)}</div>` : ""}
         </div>
       </div>`;
-    const buys = d.items.filter((a) => a.alert_type === "buy_point");
-    const sells = d.items.filter((a) => a.alert_type === "sell_point");
-    const others = d.items.filter((a) => a.alert_type !== "buy_point" && a.alert_type !== "sell_point");
-    if (!d.items.length) {
-      $("#alertFeed").innerHTML = '<div class="empty">暂无提醒，交易时段每10分钟自动扫描</div>';
+    const buys = items.filter((a) => a.alert_type === "buy_point");
+    const sells = items.filter((a) => a.alert_type === "sell_point");
+    const others = items.filter((a) => a.alert_type !== "buy_point" && a.alert_type !== "sell_point");
+    if (!items.length) {
+      feed.innerHTML = '<div class="empty">暂无提醒，交易时段每10分钟自动扫描</div>';
       return;
     }
-    $("#alertFeed").innerHTML = `
+    feed.innerHTML = `
       <div class="alert-cols">
         <div><div class="alert-col-title">最佳买点</div>${buys.map(item).join("") || '<div class="empty">暂无买点</div>'}</div>
         <div><div class="alert-col-title">最佳卖点</div>${sells.map(item).join("") || '<div class="empty">暂无卖点</div>'}</div>
@@ -2874,6 +2957,8 @@ function renderSpControls() {
 }
 
 async function loadSmartpick() {
+  applyAlertDock();
+  loadAlerts();
   try {
     spMeta = await api("/api/smartpick/meta");
     if (!Object.keys(spState.weights).length) spState.weights = { ...(spMeta.weights || {}) };
@@ -3055,6 +3140,7 @@ schedule("commodity", loadCommodities, 60000);
 schedule("global", loadGlobal, 60000);
 schedule("recommend", loadRecommend, 60000);
 schedule("ranks", loadRanks, 60000);
+schedule("smartpick", loadAlerts, 10000);
 schedule("settings", loadSettings, 10000);
 setInterval(loadSettingsHealthOnly, 30000);
 async function loadSettingsHealthOnly() {
@@ -3065,10 +3151,12 @@ async function loadSettingsHealthOnly() {
   } catch { $("#healthDot").className = "dot bad"; }
 }
 
-window.addEventListener("resize", () => { klineChart?.resize(); sectorChart?.resize(); ckChart?.resize(); miniChart?.resize(); flowBarChart?.resize(); flowTrendChart?.resize(); });
+window.addEventListener("resize", () => { klineChart?.resize(); sectorChart?.resize(); ckChart?.resize(); miniChart?.resize(); flowBarChart?.resize(); flowTrendChart?.resize(); applyAlertDock(); });
 
 /* 首屏 */
 loadDashboard();
 initCommodityCats();
 loadSettingsHealthOnly();
 loadTopAlmanac();
+bindAlertDock();
+applyAlertDock();

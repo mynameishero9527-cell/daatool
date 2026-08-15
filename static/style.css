@@ -308,6 +308,49 @@ input:focus { border-color: var(--accent); }
 @media (max-width: 900px) { .alert-cols { grid-template-columns: 1fr; } }
 .alert-col-title { color: var(--muted); font-size: 12px; margin-bottom: 6px; font-weight: 600; }
 .alert-other { margin-top: 10px; border-top: 1px dashed var(--border); padding-top: 8px; }
+
+#page-smartpick.active { padding-bottom: calc(var(--alert-dock-h, 64px) + 10px); }
+.alert-dock {
+  display: none;
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 90;
+  background: var(--card);
+  border-top: 1px solid var(--border);
+  box-shadow: 0 -10px 28px rgba(0,0,0,.38);
+  flex-direction: column;
+  overflow: hidden;
+}
+#page-smartpick.active .alert-dock { display: flex; }
+.alert-dock-handle {
+  height: 10px; flex-shrink: 0; cursor: ns-resize; position: relative;
+  background: linear-gradient(to bottom, rgba(74,158,255,.08), transparent);
+}
+.alert-dock-handle::after {
+  content: ""; position: absolute; left: 50%; top: 3px; width: 52px; height: 3px;
+  margin-left: -26px; border-radius: 2px; background: #4a6a8a;
+}
+.alert-dock-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 2px 16px 8px; flex-shrink: 0; min-height: 36px;
+}
+.alert-dock-title { white-space: nowrap; font-weight: 600; font-size: 14px; }
+.alert-dock-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.alert-dock-strip {
+  display: none; align-items: center; gap: 8px; flex: 1; min-width: 0;
+  overflow-x: auto; overflow-y: hidden; white-space: nowrap;
+}
+.alert-dock.collapsed .alert-dock-hint { display: none; }
+.alert-dock.collapsed .alert-dock-strip { display: flex; }
+.alert-dock.collapsed .alert-feed { display: none; }
+.alert-dock.collapsed .alert-dock-head { padding-bottom: 6px; }
+.alert-dock:not(.collapsed) .alert-feed {
+  flex: 1; max-height: none; overflow: auto; padding: 0 16px 12px;
+}
+.alert-chip {
+  display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0;
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 999px;
+  padding: 3px 10px; font-size: 12px; line-height: 1.4;
+}
+.alert-chip .t { color: var(--muted); }
 .at-buy_point { background: #8b1a1a; color: #ffb3b3; }
 .at-sell_point { background: #0f5c3d; color: #a9eccd; }
 .at-index_move { background: #7a4a12; color: #ffd9a8; }
