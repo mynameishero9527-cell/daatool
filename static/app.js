@@ -27,7 +27,19 @@ function showApiBanner(msg) {
   el.textContent = msg || "";
 }
 
+function polishAiError(d) {
+  if (!d || typeof d !== "object") return d;
+  const err = String(d.error || "");
+  const low = err.toLowerCase();
+  if (err && (low.includes("402") || low.includes("insufficient") || low.includes("payment required"))) {
+    d.error = "DeepSeek 账户余额不足（402）。请到 https://platform.deepseek.com 充值后再调用，不必改 API 地址或模型名。";
+    d.hint = d.hint || "到 DeepSeek 开放平台充值即可。密钥、地址 https://api.deepseek.com/v1、模型 deepseek-chat 都不用改。";
+  }
+  return d;
+}
+
 function aiErrBanner(d, extra) {
+  d = polishAiError(d);
   if (!d || !d.error) return "";
   const hint = d.hint ? `<br>建议：${esc(d.hint)}` : "";
   return `<div class="offline-banner" style="margin-bottom:8px">大模型失败：${esc(d.error)}${hint}${extra || ""}</div>`;
@@ -2449,7 +2461,8 @@ async function loadAiConfig() {
     }
     const testBox = $("#aiTestResult");
     if (testBox && c.last_error) {
-      testBox.textContent = "上次调用失败：" + c.last_error;
+      const polished = polishAiError({ error: c.last_error });
+      testBox.textContent = "上次调用失败：" + (polished.error || c.last_error);
     }
   } catch (err) { console.warn(err); }
 }
@@ -2473,7 +2486,7 @@ window.testAiConfig = async () => {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ api_base: $("#aiBase").value, api_key: $("#aiKey").value, model: $("#aiModel").value }),
     });
-    const d = await api("/api/ai/test", { method: "POST" });
+    const d = polishAiError(await api("/api/ai/test", { method: "POST" }));
     if (box) {
       box.style.color = d.ok ? "var(--up)" : "var(--down)";
       const lines = [];
@@ -2483,7 +2496,8 @@ window.testAiConfig = async () => {
         if (d.hint) lines.push("建议：" + d.hint);
       }
       (d.steps || []).forEach((s) => {
-        lines.push(`${s.ok ? "✓" : "✗"} ${s.label || s.id}：${s.detail || ""}`);
+        const detail = polishAiError({ error: s.detail || "" }).error || s.detail || "";
+        lines.push(`${s.ok ? "✓" : "✗"} ${s.label || s.id}：${detail}`);
       });
       box.textContent = lines.join("\n");
     }

@@ -235,14 +235,17 @@ def format_llm_error(exc: Exception | str, base: str = "") -> str:
     if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
         return _friendly_http_error(exc.response.status_code, _parse_llm_error(exc.response), base)
     msg = str(exc or "").strip()
+    low = msg.lower()
+    if "402" in msg or "insufficient" in low or "payment required" in low:
+        return _friendly_http_error(402, msg, base)
     m = re.search(r"\b([45]\d\d)\b", msg)
-    if m and ("client error" in msg.lower() or "payment required" in msg.lower()
-              or msg.startswith("HTTP ") or "for url" in msg.lower()):
+    if m and ("client error" in low or msg.startswith("HTTP ") or "for url" in low):
         return _friendly_http_error(int(m.group(1)), msg, base)
-    if msg.startswith("HTTP ") and "：" in msg:
+    if msg.startswith("HTTP ") and ("：" in msg or ":" in msg):
         try:
-            status = int(msg.split("：", 1)[0].split()[1])
-            body = msg.split("：", 1)[1]
+            head = msg.split("：", 1)[0] if "：" in msg else msg.split(":", 1)[0]
+            status = int(head.split()[1])
+            body = msg.split("：", 1)[1] if "：" in msg else msg.split(":", 1)[1]
             return _friendly_http_error(status, body, base)
         except Exception:  # noqa: BLE001
             pass
@@ -337,7 +340,7 @@ def _call_llm(cfg: dict, context: str, task: str) -> str:
         try:
             resp = _post_chat(url, payload, headers)
             if resp.status_code == 400 and idx < len(variants) - 1:
-                last_exc = RuntimeError(f"HTTP 400：{_parse_llm_error(resp)}")
+                last_exc = RuntimeError(_friendly_http_error(400, _parse_llm_error(resp), base))
                 log.warning("LLM 400，切换参数重试: %s", last_exc)
                 idx += 1
                 net_try = 0
@@ -372,9 +375,9 @@ def _call_llm(cfg: dict, context: str, task: str) -> str:
         except Exception as exc:  # noqa: BLE001
             last_exc = RuntimeError(format_llm_error(exc, base))
             break
-    msg = str(last_exc or "大模型调用失败")[:300]
+    msg = format_llm_error(last_exc or "大模型调用失败", base)
     _set_last_error(msg)
-    raise last_exc or RuntimeError(msg)
+    raise RuntimeError(msg)
 
 
 def diagnose() -> dict:
