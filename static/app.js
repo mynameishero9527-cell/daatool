@@ -1515,7 +1515,7 @@ async function renderHotWords(box) {
   box.innerHTML = `
     <div class="muted" style="margin-bottom:8px">
       近两周热门词汇（板块区域）· ${esc(d.update || "每小时重算")}
-      · 上次 ${esc(d.last_sync || "从未")} · 点击热词看关联热门板块，再点击板块看个股 TOP20
+      · 上次 ${esc(d.last_sync || "从未")} · 点击热词看利好/利空板块，再点板块看个股 TOP20
     </div>
     <div class="btn-group" style="margin-bottom:10px" id="hotKindBtns">
       ${[["", "全部"], ["rise", "热度上升"], ["fall", "热度下降"]].map(([v, t]) =>
@@ -1533,6 +1533,7 @@ async function renderHotWords(box) {
           <span class="fall">↓${fmt(t.fall, 0)}</span>
         </div>
         <div class="muted" style="margin-top:6px;font-size:11px">${esc(t.trend)} · 近两周 ${t.count_now || 0} 次 / 前两周 ${t.count_prev || 0} 次</div>
+        ${t.impact_summary ? `<div class="impact">${esc(t.impact_summary)}</div>` : ""}
       </div>`;
     }).join("")}</div>` : `<div class="empty">${esc(d.empty_reason || "暂无热词")}</div>`}`;
   $("#hotKindBtns")?.addEventListener("click", (e) => {
@@ -1556,19 +1557,36 @@ window.openHotTerm = async (term, resetSector = true) => {
   box.innerHTML = '<div class="empty">加载关联板块…</div>';
   try {
     const d = await api(`/api/macro/hot-term-sectors?term=${encodeURIComponent(term)}`);
-    const secs = d.sectors || [];
+    const bull = d.bull_sectors || [];
+    const bear = d.bear_sectors || [];
+    const mid = d.neutral_sectors || [];
+    const tile = (s, kind) => {
+      const dir = s.direction || kind || "";
+      const clsName = dir === "利好" ? "bull" : dir === "利空" ? "bear" : "";
+      const badge = dir === "利好" ? '<span class="badge dir-利好">利好</span>'
+        : dir === "利空" ? '<span class="badge dir-利空">利空</span>'
+          : '<span class="badge">中性</span>';
+      return `<div class="hot-sec ${clsName} js-hot-sector ${s.name === hotFocus.sector ? "active" : ""}" data-sector="${esc(s.name)}" data-term="${esc(term)}">
+        <div class="sn">${esc(s.name)} ${badge}</div>
+        <div class="muted">热度 ${s.hot_score == null ? "—" : fmt(s.hot_score, 1)}
+          · ${pct(s.pct)} ${s.net_in_yi != null ? `· 净流入 ${fmt(s.net_in_yi, 1)}亿` : ""}</div>
+        ${s.why ? `<div class="muted" style="margin-top:4px;font-size:11px">${esc(s.why)}</div>` : ""}
+      </div>`;
+    };
+    const group = (title, cls, list, kind) => list.length
+      ? `<div class="hot-group-title ${cls}">${title}（${list.length}）</div><div class="hot-sec-grid">${list.map((s) => tile(s, kind)).join("")}</div>`
+      : "";
     box.innerHTML = `
       <div class="outlook-summary" style="border-color:rgba(255,169,64,.4)">
-        <b>🔥 热词「${esc(term)}」关联热门板块</b>
+        <b>🔥 热词「${esc(term)}」关联板块</b>
         <button class="btn small ghost" style="float:right" onclick="hotFocus.term='';hotFocus.sector='';this.closest('#hotDetailBox').innerHTML=''">收起</button>
+        <div style="margin:8px 0 4px;font-size:14px"><b>${esc(d.impact_summary || "利好 / 利空板块待映射")}</b></div>
         ${(d.samples || []).length ? `<div class="muted" style="margin:6px 0">样例：${d.samples.map((s) => esc(s)).join(" · ")}</div>` : ""}
-        ${secs.length ? `<div class="hot-sec-grid">${secs.map((s) => `
-          <div class="hot-sec js-hot-sector ${s.name === hotFocus.sector ? "active" : ""}" data-sector="${esc(s.name)}" data-term="${esc(term)}">
-            <div class="sn">${esc(s.name)}</div>
-            <div class="muted">热度 ${s.hot_score == null ? "—" : fmt(s.hot_score, 1)}
-              · ${pct(s.pct)} ${s.net_in_yi != null ? `· 净流入 ${fmt(s.net_in_yi, 1)}亿` : ""}</div>
-          </div>`).join("")}</div>` : `<div class="empty">${esc(d.empty_reason || "无关联板块")}</div>`}
-        <div class="muted" style="margin-top:6px;font-size:12px">${esc(d.note || "点击板块查看个股 TOP20")}</div>
+        ${group("利好板块", "up", bull, "利好")}
+        ${group("利空板块", "down", bear, "利空")}
+        ${group("仅关联（方向不明）", "", mid, "中性")}
+        ${!bull.length && !bear.length && !mid.length ? `<div class="empty">${esc(d.empty_reason || "无关联板块")}</div>` : ""}
+        <div class="muted" style="margin-top:8px;font-size:12px">${esc(d.note || "")} ${esc(d.disclaimer || "")}</div>
         <div id="hotStockBox"></div>
       </div>`;
     box.scrollIntoView({ behavior: "smooth", block: "nearest" });

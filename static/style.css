@@ -688,7 +688,13 @@ tr.score-95 td { background: rgba(255, 60, 60, .30); }
 }
 .hot-sec:hover, .hot-sec.active { border-color: var(--accent); }
 .hot-sec .sn { font-weight: 600; margin-bottom: 4px; }
-.policy-item { padding: 10px 4px; border-bottom: 1px solid rgba(42,53,72,.5); }
+.hot-sec.bull { border-color: rgba(255,82,82,.45); }
+.hot-sec.bear { border-color: rgba(38,194,129,.45); }
+.hot-group-title { margin: 12px 0 6px; font-weight: 700; font-size: 14px; }
+.hot-group-title.up { color: var(--up); }
+.hot-group-title.down { color: var(--down); }
+.hot-tile .impact { margin-top: 6px; font-size: 11px; line-height: 1.45; color: var(--muted); }
+.policy-item .p-sum { color: var(--muted); font-size: 13px; line-height: 1.55; margin-top: 4px; }
 .policy-item .p-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 4px; }
 .policy-item .p-title { font-weight: 600; line-height: 1.5; }
 .engine-flow { display: flex; flex-wrap: wrap; gap: 8px; }

@@ -32,6 +32,42 @@ _EXTRA_TERMS = (
     "数据中心", "液冷", "CPO", "光模块", "华为链",
 )
 
+# 热词 → (利好板块, 利空板块)。只写常见政策/产业映射，不编造个股。
+_TERM_IMPACT: list[tuple[tuple[str, ...], list[str], list[str]]] = [
+    (("降准", "降息", "LPR", "MLF", "再贷款", "专项债"),
+     ["银行", "券商", "金融", "房地产", "地产"], []),
+    (("加息",),
+     ["银行"], ["半导体", "科技", "新能源", "消费"]),
+    (("关税", "制裁"),
+     ["军工"], ["汽车", "消费", "科技"]),
+    (("补贴", "以旧换新"),
+     ["汽车", "消费", "新能源"], []),
+    (("集采",),
+     [], ["医药"]),
+    (("国产替代",),
+     ["半导体", "科技", "军工"], []),
+    (("人工智能", "算力", "大模型", "AI", "数据中心", "液冷", "CPO", "光模块"),
+     ["科技", "半导体"], []),
+    (("芯片", "半导体", "光刻", "先进封装"),
+     ["半导体", "科技"], []),
+    (("新能源", "光伏", "储能", "锂电", "固态电池", "氢能", "核电", "风电"),
+     ["新能源", "能源"], []),
+    (("原油", "石油"),
+     ["能源"], ["汽车"]),
+    (("黄金", "稀土", "有色"),
+     ["有色"], []),
+    (("房地产", "化债", "城中村", "保障房", "楼市"),
+     ["地产", "房地产", "银行"], []),
+    (("两会", "政治局", "中央经济工作会议"),
+     ["消费", "券商", "科技", "新能源"], []),
+    (("军工", "国防", "航天"),
+     ["军工"], []),
+    (("创新药", "医药", "医疗器械", "中药"),
+     ["医药"], []),
+    (("机器人", "低空经济", "商业航天"),
+     ["军工", "科技"], []),
+]
+
 
 def _now() -> datetime:
     return datetime.now(_TZ).replace(tzinfo=None)
@@ -61,7 +97,8 @@ def _load_docs(start: str, end: str) -> list[dict]:
     docs = []
     try:
         rows = query(
-            "SELECT title, summary, event_time, affected_sectors, impact_level FROM intel_cache "
+            "SELECT title, summary, event_time, affected_sectors, impact_level, impact_direction "
+            "FROM intel_cache "
             "WHERE event_time>=? AND event_time<? ORDER BY event_time DESC LIMIT 2500",
             (start, end))
         docs.extend(rows)
@@ -69,7 +106,8 @@ def _load_docs(start: str, end: str) -> list[dict]:
         pass
     try:
         rows = query(
-            "SELECT title, summary, event_time, affected_sectors, impact_level FROM official_policy "
+            "SELECT title, summary, event_time, affected_sectors, impact_level, impact_direction "
+            "FROM official_policy "
             "WHERE event_time>=? AND event_time<? ORDER BY event_time DESC LIMIT 1500",
             (start, end))
         docs.extend(rows)
@@ -79,7 +117,7 @@ def _load_docs(start: str, end: str) -> list[dict]:
 
 
 def _count_terms(docs: list[dict], terms: list[str]) -> tuple[dict[str, dict], dict[str, int]]:
-    """term -> {count, impact_sum, samples[], sectors set}"""
+    """term -> {count, impact_sum, samples[], sectors set, sector_votes}"""
     stats: dict[str, dict] = {}
     for doc in docs:
         text = f"{doc.get('title') or ''} {doc.get('summary') or ''}"
@@ -90,31 +128,109 @@ def _count_terms(docs: list[dict], terms: list[str]) -> tuple[dict[str, dict], d
         except Exception:  # noqa: BLE001
             secs = []
         impact = int(doc.get("impact_level") or 1)
+        direction = doc.get("impact_direction") or ""
+        if direction not in ("利好", "利空", "中性"):
+            direction = (macro.assess_impact(text).get("impact_direction") or "中性")
         title = (doc.get("title") or "")[:80]
         hit = [t for t in terms if t in text]
         if not hit:
             continue
         for t in hit:
-            rec = stats.setdefault(t, {"count": 0, "impact": 0, "samples": [], "sectors": set()})
+            rec = stats.setdefault(t, {
+                "count": 0, "impact": 0, "samples": [], "sectors": set(),
+                "sector_votes": {},
+            })
             rec["count"] += 1
             rec["impact"] += impact
             if title and title not in rec["samples"] and len(rec["samples"]) < 4:
                 rec["samples"].append(title)
+            tagged = set()
             for s in secs:
                 if s:
-                    rec["sectors"].add(s)
+                    tagged.add(s)
             mapped = [k for k, kws in macro._SECTOR_KEYWORDS.items()  # noqa: SLF001
                       if t == k or t in kws]
-            rec["sectors"].update(mapped)
+            tagged.update(mapped)
+            rec["sectors"].update(tagged)
+            votes = rec["sector_votes"]
+            for s in tagged:
+                bucket = votes.setdefault(s, {"利好": 0, "利空": 0, "中性": 0})
+                bucket[direction if direction in bucket else "中性"] += 1
     counts = {k: v["count"] for k, v in stats.items()}
     return stats, counts
+
+
+def _lexicon_impact(term: str) -> tuple[list[str], list[str]]:
+    """规则词库：该热词通常利好/利空哪些板块。"""
+    bull: list[str] = []
+    bear: list[str] = []
+    for keywords, b1, b2, _prob in macro._EVENT_IMPACT_MAP:  # noqa: SLF001
+        if any(k == term or (len(k) >= 2 and k in term) for k in keywords):
+            bull = [s for s in b1 if s and s != "无明显利空"]
+            bear = [s for s in b2 if s and s != "无明显利空"]
+            break
+    for keywords, b1, b2 in _TERM_IMPACT:
+        if any(k == term or (len(k) >= 2 and k in term) for k in keywords):
+            for s in b1:
+                if s not in bull:
+                    bull.append(s)
+            for s in b2:
+                if s not in bear:
+                    bear.append(s)
+            break
+    return bull, bear
+
+
+def _direction_of(name: str, lexicon_bull: list[str], lexicon_bear: list[str],
+                  votes: dict) -> tuple[str, str, int, int]:
+    v = votes.get(name) or {}
+    bull_n = int(v.get("利好") or 0)
+    bear_n = int(v.get("利空") or 0)
+    in_bull = name in lexicon_bull
+    in_bear = name in lexicon_bear
+    if in_bull and not in_bear:
+        return "利好", "词库映射", bull_n, bear_n
+    if in_bear and not in_bull:
+        return "利空", "词库映射", bull_n, bear_n
+    if bull_n > bear_n:
+        return "利好", f"近两周情报利好 {bull_n} / 利空 {bear_n}", bull_n, bear_n
+    if bear_n > bull_n:
+        return "利空", f"近两周情报利好 {bull_n} / 利空 {bear_n}", bull_n, bear_n
+    return "中性", "仅共现，方向不明", bull_n, bear_n
+
+
+def _impact_summary(bull: list[str], bear: list[str]) -> str:
+    btxt = "、".join(bull[:6]) if bull else "暂无明确利好板块"
+    wtxt = "、".join(bear[:6]) if bear else "暂无明确利空板块"
+    return f"利好 {btxt}；利空 {wtxt}"
+
+
+def _parse_sector_payload(raw) -> list[dict]:
+    try:
+        data = json.loads(raw or "[]")
+    except Exception:  # noqa: BLE001
+        return []
+    out = []
+    for it in data or []:
+        if isinstance(it, str):
+            if it.strip():
+                out.append({"name": it.strip(), "direction": "中性", "why": "仅共现"})
+        elif isinstance(it, dict) and (it.get("name") or "").strip():
+            out.append({
+                "name": it["name"].strip(),
+                "direction": it.get("direction") or "中性",
+                "why": it.get("why") or "",
+                "bull_n": it.get("bull_n") or 0,
+                "bear_n": it.get("bear_n") or 0,
+            })
+    return out
 
 
 def _is_board(name: str) -> bool:
     n = (name or "").strip()
     if not n:
         return False
-    if n in macro._SECTOR_KEYWORDS:  # noqa: SLF001
+    if n in macro._SECTOR_KEYWORDS or n in getattr(macro, "_SECTOR_SPEC", {}):  # noqa: SLF001
         return True
     try:
         if query("SELECT 1 FROM stock_list WHERE industry=? LIMIT 1", (n,)):
@@ -126,6 +242,46 @@ def _is_board(name: str) -> bool:
     except Exception:  # noqa: BLE001
         return n in macro._SECTOR_KEYWORDS  # noqa: SLF001
     return False
+
+
+def _pack_sector_impacts(term: str, tagged: set[str], votes: dict | None = None) -> list[dict]:
+    lexicon_bull, lexicon_bear = _lexicon_impact(term)
+    votes = votes or {}
+    items = []
+    seen = set()
+
+    def add(name: str, direction: str, why: str, bull_n: int = 0, bear_n: int = 0):
+        name = (name or "").strip()
+        if not name or name in seen or name in ("政策", "未映射影响板块", "无明显利空"):
+            return
+        if not _is_board(name):
+            return
+        seen.add(name)
+        v = votes.get(name) or {}
+        items.append({
+            "name": name, "direction": direction, "why": why,
+            "bull_n": bull_n or int(v.get("利好") or 0),
+            "bear_n": bear_n or int(v.get("利空") or 0),
+        })
+
+    for name in lexicon_bull:
+        add(name, "利好", "词库映射：该热词通常利好此板块")
+    for name in lexicon_bear:
+        add(name, "利空", "词库映射：该热词通常利空此板块")
+    extras = set(tagged or ())
+    extras.update(_related_sectors(term, tagged or set()))
+    has_lexicon = bool(lexicon_bull or lexicon_bear)
+    for name in extras:
+        if name in seen:
+            continue
+        direction, why, bull_n, bear_n = _direction_of(name, [], [], votes)
+        if has_lexicon:
+            add(name, "中性", "与热词共现，未纳入利好/利空映射", bull_n, bear_n)
+        else:
+            add(name, direction, why, bull_n, bear_n)
+    order = {"利好": 0, "利空": 1, "中性": 2}
+    items.sort(key=lambda x: (order.get(x["direction"], 9), x["name"]))
+    return items[:24]
 
 
 def _related_sectors(term: str, tagged: set[str]) -> list[str]:
@@ -182,10 +338,10 @@ def rebuild_hot_terms() -> dict:
         heat_prev = round(prev * 10, 1)
         rise = round(max(0.0, heat - heat_prev), 1)
         fall = round(max(0.0, heat_prev - heat), 1)
-        sectors = _related_sectors(term, rec["sectors"])
+        packed = _pack_sector_impacts(term, rec["sectors"], rec.get("sector_votes") or {})
         rows.append((
             term, window_end, heat, heat_prev, rise, fall, cnt, prev,
-            json.dumps(sectors, ensure_ascii=False),
+            json.dumps(packed, ensure_ascii=False),
             json.dumps(rec["samples"], ensure_ascii=False),
             today.isoformat(timespec="seconds"),
         ))
@@ -223,10 +379,6 @@ def list_hot_terms(kind: str = "") -> dict:
     items = []
     for r in rows:
         try:
-            sectors = json.loads(r.get("sectors") or "[]")
-        except Exception:  # noqa: BLE001
-            sectors = []
-        try:
             samples = json.loads(r.get("sample_titles") or "[]")
         except Exception:  # noqa: BLE001
             samples = []
@@ -236,11 +388,18 @@ def list_hot_terms(kind: str = "") -> dict:
             continue
         if kind == "fall" and trend != "下降":
             continue
+        packed = _parse_sector_payload(r.get("sectors"))
+        bull = [x["name"] for x in packed if x.get("direction") == "利好"]
+        bear = [x["name"] for x in packed if x.get("direction") == "利空"]
         items.append({
             "term": r["term"], "heat": r["heat"], "heat_prev": r["heat_prev"],
             "rise": r["rise"], "fall": r["fall"],
             "count_now": r["count_now"], "count_prev": r["count_prev"],
-            "trend": trend, "sectors": sectors, "samples": samples,
+            "trend": trend, "sectors": [x["name"] for x in packed],
+            "sector_impacts": packed,
+            "bull_sectors": bull, "bear_sectors": bear,
+            "impact_summary": _impact_summary(bull, bear),
+            "samples": samples,
             "window_end": r["window_end"],
         })
     empty_reason = ""
@@ -297,36 +456,54 @@ def _sector_heat_map() -> dict[str, dict]:
 def hot_term_sectors(term: str) -> dict:
     term = (term or "").strip()
     if not term:
-        return {"term": "", "sectors": [], "empty_reason": "未指定热词"}
+        return {"term": "", "sectors": [], "bull_sectors": [], "bear_sectors": [],
+                "empty_reason": "未指定热词"}
     today = _now().strftime("%Y-%m-%d")
     rows = query("SELECT * FROM hot_term WHERE term=? AND window_end=? LIMIT 1", (term, today))
     if not rows:
         rows = query("SELECT * FROM hot_term WHERE term=? ORDER BY window_end DESC LIMIT 1", (term,))
-    tagged: set[str] = set()
     samples = []
+    tagged: set[str] = set()
+    votes: dict = {}
     if rows:
-        try:
-            tagged = set(json.loads(rows[0].get("sectors") or "[]"))
-        except Exception:  # noqa: BLE001
-            tagged = set()
+        packed_stored = _parse_sector_payload(rows[0].get("sectors"))
+        for it in packed_stored:
+            tagged.add(it["name"])
+            votes[it["name"]] = {
+                "利好": int(it.get("bull_n") or 0),
+                "利空": int(it.get("bear_n") or 0),
+                "中性": 0,
+            }
         try:
             samples = json.loads(rows[0].get("sample_titles") or "[]")
         except Exception:  # noqa: BLE001
             samples = []
-    names = _related_sectors(term, tagged)
+    packed = _pack_sector_impacts(term, tagged, votes)
     heat_map = _sector_heat_map()
-    sectors = []
-    for name in names:
-        info = heat_map.get(name) or {"name": name, "hot_score": None, "pct": None}
-        info = dict(info)
-        info["name"] = name
-        sectors.append(info)
-    sectors.sort(key=lambda x: -(x.get("hot_score") or x.get("pct") or 0))
-    empty_reason = "" if sectors else f"「{term}」暂未映射到可交易板块（本地行业/概念无匹配）。"
+    for it in packed:
+        info = heat_map.get(it["name"]) or {}
+        it["hot_score"] = info.get("hot_score")
+        it["pct"] = info.get("pct")
+        it["net_in_yi"] = info.get("net_in_yi")
+        it["n"] = info.get("n") or info.get("stocks")
+    order_hot = lambda x: -(x.get("hot_score") or x.get("pct") or 0)  # noqa: E731
+    bull = sorted([x for x in packed if x.get("direction") == "利好"], key=order_hot)
+    bear = sorted([x for x in packed if x.get("direction") == "利空"], key=order_hot)
+    mid = sorted([x for x in packed if x.get("direction") not in ("利好", "利空")], key=order_hot)
+    empty_reason = ""
+    if not packed:
+        empty_reason = f"「{term}」暂未映射到可交易板块（本地行业/概念无匹配）。"
     return {
-        "term": term, "sectors": sectors[:20], "samples": samples,
+        "term": term,
+        "impact_summary": _impact_summary([x["name"] for x in bull], [x["name"] for x in bear]),
+        "bull_sectors": bull,
+        "bear_sectors": bear,
+        "neutral_sectors": mid,
+        "sectors": bull + bear + mid,
+        "samples": samples,
         "empty_reason": empty_reason,
-        "note": "点击板块查看相关个股 TOP20（按主力净流入，非编造名单）。",
+        "note": "利好/利空来自规则词库与近两周快讯方向统计，不是预测。点击板块查看个股 TOP20。",
+        "disclaimer": "板块方向为规则化预估，仅供参考，不构成投资建议",
     }
 
 
