@@ -162,6 +162,18 @@ def huangdao_of(d: date) -> dict:
             "text": f"{shen}（{'黄道吉日' if is_huang else '黑道日'}）"}
 
 
+def resolve_almanac_date(raw: str | None):
+    """解析 YYYY-MM-DD；空则今天。格式非法返回 None，不猜日期。"""
+    s = (raw or "").strip()
+    if not s:
+        return date.today()
+    try:
+        y, m, d = (int(x) for x in s[:10].split("-"))
+        return date(y, m, d)
+    except (ValueError, TypeError):
+        return None
+
+
 def get_almanac(d: date | None = None) -> dict:
     d = d or date.today()
     ygz, zodiac = year_ganzhi(d)
@@ -171,8 +183,11 @@ def get_almanac(d: date | None = None) -> dict:
     term_today = next((n for n, m, dd in SOLAR_TERMS if m == d.month and dd == d.day), None)
     season = _season_of(d)
     wx = _WANGXIANG[season]
+    today = date.today()
     return {
+        "ok": True,
         "date": d.isoformat(),
+        "is_today": d == today,
         "weekday": "周" + "一二三四五六日"[d.weekday()],
         "year_ganzhi": f"{ygz}年", "zodiac": zodiac,
         "month_ganzhi": f"{mgz}月", "day_ganzhi": f"{dgz}日",

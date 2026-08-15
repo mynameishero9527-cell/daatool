@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>A股量化工具</title>
-<link rel="stylesheet" href="/static/style.css?v=13.0.18">
+<link rel="stylesheet" href="/static/style.css?v=13.0.19">
 <script>
 (function () {
   try {
@@ -540,7 +540,16 @@
       <button class="opt" data-side="down">下跌预测</button>
     </div>
     <div class="card">
-      <div class="card-title">今日黄历 · 九宫方位 <span class="muted">民俗文化参考</span></div>
+      <div class="card-title">
+        <span id="ipAlmanacTitle">今日黄历 · 九宫方位</span>
+        <span class="almanac-date-bar">
+          <button type="button" class="btn small ghost" id="almanacPrev" title="前一天">‹</button>
+          <input type="date" id="almanacDate" aria-label="选择黄历日期">
+          <button type="button" class="btn small ghost" id="almanacNext" title="后一天">›</button>
+          <button type="button" class="btn small ghost" id="almanacToday">今天</button>
+          <span class="muted">民俗文化参考</span>
+        </span>
+      </div>
       <div id="ipAlmanac"><div class="empty">加载中…</div></div>
     </div>
     <div class="card">
@@ -809,6 +818,6 @@
   <div class="ctx-item" id="ctxKbRevert" style="display:none">↩ 还原内置解释</div>
 </div>
 
-<script src="/static/app.js?v=13.0.18"></script>
+<script src="/static/app.js?v=13.0.19"></script>
 </body>
 </html>

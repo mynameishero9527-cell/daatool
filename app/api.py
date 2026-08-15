@@ -278,9 +278,12 @@ def macro_event_detail(title: str, bull: str = "", bear: str = "",
 
 
 @router.get("/macro/almanac")
-def macro_almanac():
+def macro_almanac(day: str = Query("", alias="date")):
     from .services import almanac
-    return almanac.get_almanac()
+    d = almanac.resolve_almanac_date(day)
+    if d is None:
+        return {"ok": False, "error": "日期格式无效，请用 YYYY-MM-DD"}
+    return almanac.get_almanac(d)
 
 
 @router.get("/macro/sector-events")

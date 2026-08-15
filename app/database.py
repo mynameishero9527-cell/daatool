@@ -321,6 +321,7 @@ CREATE TABLE IF NOT EXISTS stock_ai_brief (
 -- 13.0.16：行情看板市场统计/情绪周期/明日预测三卡紧凑布局
 -- 13.0.17：持股构成下十大股东与十大流通股东分 tab 显示
 -- 13.0.18：今日黄历·九宫方位从自选移到智能选股页
+-- 13.0.19：黄历九宫可按日期查询（干支按甲子日推算，不编造官方黄历）
 -- intel_item_ai / hot_term_ai 表结构不变，失败仍不覆盖已保存结果
 
 CREATE TABLE IF NOT EXISTS knowledge_ai (
