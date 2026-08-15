@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>A股量化工具</title>
-<link rel="stylesheet" href="/static/style.css?v=11.0.6">
-<script src="/static/vendor/echarts.min.js?v=11.0.6"></script>
+<link rel="stylesheet" href="/static/style.css?v=11.0.7">
+<script src="/static/vendor/echarts.min.js?v=11.0.7"></script>
 </head>
 <body>
 <header class="topbar">
@@ -575,6 +575,7 @@
     <span class="soul-title">✦ 最佳买点 <span class="muted" id="buyFlashCount"></span></span>
     <button class="btn small ghost" type="button" id="buyFlashMin" title="缩小成 logo">—</button>
   </div>
+  <div id="buyFlashNote" class="buy-flash-note"></div>
   <div id="buyFlashBody" class="buy-flash-body"><div class="empty">加载中…</div></div>
 </div>
 <button type="button" id="buyFlashFab" class="buy-flash-logo" style="display:none" title="打开最佳买点">
@@ -589,6 +590,7 @@
     <circle cx="24" cy="24" r="22" fill="url(#soulGlow)"/>
     <path fill="#fff6d0" d="M24 8c3 7 1 10-1 14 6 0 10 4 10 10 0 7-6 12-13 12s-12-5-12-12c0-8 8-14 16-24z"/>
   </svg>
+  <span id="buyFlashBadge" class="buy-flash-badge" style="display:none">0</span>
 </button>
 <div id="ctxMenu" class="ctx-menu" style="display:none">
   <div class="ctx-item" id="ctxAiItem">🤖 AI 分析该股</div>
@@ -607,6 +609,6 @@
   <div class="ctx-item" id="ctxNewsAi" style="display:none">🤖 发送AI分析（消息）</div>
 </div>
 
-<script src="/static/app.js?v=11.0.6"></script>
+<script src="/static/app.js?v=11.0.7"></script>
 </body>
 </html>

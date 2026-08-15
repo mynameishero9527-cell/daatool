@@ -505,7 +505,7 @@ tr.score-95 td { background: rgba(255, 60, 60, .30); }
 
 .buy-flash {
   position: fixed; top: 72px; right: 18px; left: auto; bottom: auto; z-index: 130;
-  width: 430px; max-height: min(70vh, 560px);
+  width: 430px; min-height: 180px; max-height: min(70vh, 560px);
   background: rgba(28, 12, 18, .78);
   border: 1px solid rgba(255, 180, 90, .45);
   border-radius: 14px;
@@ -520,6 +520,7 @@ tr.score-95 td { background: rgba(255, 60, 60, .30); }
   50% { transform: translateY(-4px); }
 }
 .buy-flash-head {
+  flex: 0 0 auto;
   display: flex; align-items: center; justify-content: space-between;
   padding: 8px 12px; border-bottom: 1px solid rgba(255,180,90,.22);
   background: linear-gradient(90deg, rgba(139,26,26,.55), rgba(90,30,10,.25));
@@ -527,7 +528,12 @@ tr.score-95 td { background: rgba(255, 60, 60, .30); }
 }
 .buy-flash-head:active { cursor: grabbing; }
 .soul-title { letter-spacing: .04em; }
-.buy-flash-body { overflow: auto; padding: 8px 10px 12px; }
+.buy-flash-note {
+  flex: 0 0 auto; padding: 6px 12px 0; font-size: 11px; color: var(--muted); line-height: 1.45;
+}
+.buy-flash-note.warn { color: #ffcc80; }
+.buy-flash-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 8px 10px 12px; }
+.buy-flash-body .empty { padding: 18px 8px; }
 .buy-flash-row {
   border: 1px solid var(--border); border-radius: 8px;
   padding: 8px 10px; margin-bottom: 8px; background: rgba(20,12,16,.55);
@@ -547,6 +553,11 @@ tr.score-95 td { background: rgba(255, 60, 60, .30); }
 }
 .buy-flash-logo:active { cursor: grabbing; }
 .buy-flash-logo svg { width: 56px; height: 56px; display: block; pointer-events: none; }
+.buy-flash-badge {
+  position: absolute; top: -4px; right: -4px; min-width: 18px; height: 18px;
+  padding: 0 5px; border-radius: 9px; background: #ff4d4f; color: #fff;
+  font-size: 11px; line-height: 18px; text-align: center; pointer-events: none;
+}
 @keyframes soul-logo {
   0%, 100% { transform: translateY(0) scale(1); filter: drop-shadow(0 0 8px rgba(255,90,50,.65)); }
   50% { transform: translateY(-3px) scale(1.06); filter: drop-shadow(0 0 16px rgba(255,210,120,.9)); }

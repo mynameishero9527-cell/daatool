@@ -3226,13 +3226,35 @@ function bindSoulDrag(el, kind) {
 async function loadBuyPoints() {
   const body = $("#buyFlashBody");
   const countEl = $("#buyFlashCount");
+  const noteEl = $("#buyFlashNote");
+  const badge = $("#buyFlashBadge");
+  const paintEmpty = (text, countText) => {
+    if (countEl) countEl.textContent = countText;
+    if (noteEl) { noteEl.textContent = text || ""; noteEl.classList.toggle("warn", true); }
+    if (badge) {
+      badge.textContent = "!";
+      badge.style.display = "";
+    }
+    if (body) body.innerHTML = `<div class="empty">${esc(text || "暂无最佳买点")}</div>`;
+  };
   try {
     const d = await api("/api/alerts/buy-points");
     const items = d.items || [];
-    if (countEl) countEl.textContent = items.length ? `${items.length} 只` : "";
+    const source = d.source || "";
+    const note = d.note || "";
+    const relaxed = source && source !== "strict";
+    if (countEl) countEl.textContent = `${items.length} 只`;
+    if (noteEl) {
+      noteEl.textContent = note;
+      noteEl.classList.toggle("warn", !!relaxed || !items.length);
+    }
+    if (badge) {
+      badge.textContent = String(items.length);
+      badge.style.display = "";
+    }
     if (!body) return;
     if (!items.length) {
-      body.innerHTML = `<div class="empty">${esc(d.note || "暂无最佳买点")}</div>`;
+      body.innerHTML = `<div class="empty">${esc(note || "暂无最佳买点")}</div>`;
       return;
     }
     body.innerHTML = items.map((r) => `
@@ -3253,7 +3275,7 @@ async function loadBuyPoints() {
         <button class="btn small" type="button" onclick="event.stopPropagation(); addWatchCode('${esc(r.code)}','${esc(r.name)}')">+自选</button>
       </div>`).join("");
   } catch (err) {
-    if (body) body.innerHTML = `<div class="empty">买点加载失败</div>`;
+    paintEmpty("买点加载失败，请检查服务是否在运行", "失败");
   }
 }
 function bindBuyFlash() {

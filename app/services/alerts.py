@@ -137,18 +137,21 @@ def get_alerts(limit: int = 50) -> dict:
     return {"items": rows}
 
 
-def get_buy_points(limit: int = 8) -> dict:
-    """实时最佳买点（供全局弹窗）。购买建议来自购买指数档位 + 综合评分操作提示。"""
-    limit = max(3, min(int(limit or 8), 20))
-    rows = query(
-        """SELECT s.code, s.name, s.pct, s.volume_ratio, s.price, s.main_net_in,
-                  l.industry, m.buy_index, m.sentiment
-           FROM stock_metrics m
-           JOIN stock_snapshot s ON s.code = m.code
-           JOIN stock_list l ON l.code = s.code
-           WHERE m.buy_index >= 80 AND s.main_net_in > 0
-             AND s.name NOT LIKE '%ST%' AND s.name NOT LIKE '%退%'
-           ORDER BY m.buy_index DESC LIMIT ?""", (limit,))
+_BUY_NAME_OK = "s.name NOT LIKE '%ST%' AND s.name NOT LIKE '%退%'"
+_BUY_POINT_SELECT = """SELECT s.code, s.name, s.pct, s.volume_ratio, s.price, s.main_net_in,
+              COALESCE(l.industry, '') AS industry, m.buy_index, m.sentiment
+       FROM stock_metrics m
+       JOIN stock_snapshot s ON s.code = m.code
+       LEFT JOIN stock_list l ON l.code = s.code
+       WHERE {where}
+       ORDER BY m.buy_index DESC LIMIT ?"""
+
+
+def _fetch_buy_candidates(where: str, limit: int) -> list[dict]:
+    return query(_BUY_POINT_SELECT.format(where=where), (limit,))
+
+
+def _decorate_buy_rows(rows: list[dict]) -> None:
     from . import finance as finance_svc
     from . import metrics as metrics_svc
     from . import rating as rating_svc
@@ -163,5 +166,51 @@ def get_buy_points(limit: int = 8) -> dict:
         r["score"] = _score
         r["advice"] = f"{buy_lv}，{buy_act}；操作参考：{op}"
         r["finance_grade"] = r.get("finance_grade") or ""
-    return {"items": rows, "count": len(rows),
-            "note": "购买指数≥80 且主力净流入>0，每轮扫描轮动，不构成投资建议"}
+
+
+def get_buy_points(limit: int = 8) -> dict:
+    """实时最佳买点（供全局弹窗）。空结果必须带回原因，避免窗口空白。
+
+    优先「购买指数≥80 且主力净流入>0」。当日不够格时降到≥65 且净流入，
+    再不够则按购买指数从高到低给观察池——不把观察池伪装成极佳买点。
+    """
+    limit = max(3, min(int(limit or 8), 20))
+    metric_n = query("SELECT COUNT(*) AS n FROM stock_metrics")[0]["n"]
+    snap_n = query("SELECT COUNT(*) AS n FROM stock_snapshot")[0]["n"]
+    asof = (query("SELECT MAX(updated_at) AS t FROM stock_snapshot")[0]["t"] or "")[:19]
+    base = {"metrics_count": metric_n, "snapshot_count": snap_n, "asof": asof}
+
+    if metric_n == 0:
+        return {**base, "items": [], "count": 0, "source": "empty",
+                "empty_reason": "no_metrics",
+                "note": "暂无购买指数：请先全量同步行情并重建指标"}
+    if snap_n == 0:
+        return {**base, "items": [], "count": 0, "source": "empty",
+                "empty_reason": "no_snapshot",
+                "note": "暂无行情快照：请先全量同步后再看买点"}
+
+    rows = _fetch_buy_candidates(
+        f"m.buy_index >= 80 AND s.main_net_in > 0 AND {_BUY_NAME_OK}", limit)
+    source, note = "strict", "购买指数≥80 且主力净流入>0，每轮扫描轮动，不构成投资建议"
+
+    if not rows:
+        rows = _fetch_buy_candidates(
+            f"m.buy_index >= 65 AND s.main_net_in > 0 AND {_BUY_NAME_OK}", limit)
+        if rows:
+            source = "relaxed_65"
+            note = "当日暂无购买指数≥80且净流入的标的，已放宽到≥65且主力净流入>0（较好买点观察池，非极佳买点）"
+
+    if not rows:
+        rows = _fetch_buy_candidates(
+            f"m.buy_index IS NOT NULL AND {_BUY_NAME_OK}", limit)
+        if rows:
+            source = "top_buy_index"
+            note = "当日暂无「购买指数高且主力净流入」组合，已按购买指数从高到低展示观察池（不构成买入建议）"
+
+    if not rows:
+        return {**base, "items": [], "count": 0, "source": "empty",
+                "empty_reason": "no_candidates",
+                "note": "指标已计算但暂无可用个股，请确认快照已同步"}
+
+    _decorate_buy_rows(rows)
+    return {**base, "items": rows, "count": len(rows), "source": source, "note": note}
