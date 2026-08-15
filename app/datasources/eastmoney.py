@@ -169,3 +169,42 @@ def fetch_market_amounts() -> dict:
         "amount_yi": total, "sh_amount_yi": sh, "sz_amount_yi": sz,
         "bj_amount_yi": bj, "csi_amount_yi": csi, "source": SOURCE,
     }
+
+
+_F10_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+    "Referer": "https://emweb.securities.eastmoney.com/",
+    "Accept": "application/json,text/plain,*/*",
+}
+_F10_SHAREHOLDER = (
+    "https://emweb.securities.eastmoney.com/PC_HSF10/ShareholderResearch/PageAjax?code={code}"
+)
+
+
+def f10_code(code: str) -> str | None:
+    """本地 sh600519 → 东方财富 F10 的 SH600519。"""
+    s = (code or "").strip().lower()
+    if len(s) == 8 and s[:2] in ("sh", "sz", "bj") and s[2:].isdigit():
+        return s[:2].upper() + s[2:]
+    return None
+
+
+def fetch_shareholders(code: str) -> dict:
+    """F10 股东研究一次性 JSON：户数、实控人、机构构成、十大股东等。缺数返回空 dict。"""
+    em = f10_code(code)
+    if not em:
+        return {}
+    url = _F10_SHAREHOLDER.format(code=em)
+    last: Exception | None = None
+    for attempt in range(3):
+        try:
+            resp = tracked_get(SOURCE, url, headers=_F10_HEADERS, timeout=12.0)
+            data = resp.json()
+            return data if isinstance(data, dict) else {}
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+            time.sleep(0.3 * (attempt + 1))
+    if last:
+        log.warning("F10 股东研究 %s 失败: %s", em, last)
+        raise last
+    return {}

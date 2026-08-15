@@ -221,6 +221,13 @@ CREATE TABLE IF NOT EXISTS market_volume_daily (
     pct           REAL,
     source        TEXT
 );
+
+-- 11.0.14：个股持股/股东结构本地缓存（季度披露，缺数不编）
+CREATE TABLE IF NOT EXISTS stock_holders (
+    code        TEXT PRIMARY KEY,
+    payload     TEXT NOT NULL,          -- 规范化 JSON
+    fetched_at  TEXT NOT NULL
+);
 """
 
 # 已有表的增量列迁移（幂等）

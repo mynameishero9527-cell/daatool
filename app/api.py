@@ -9,7 +9,7 @@ from .datasources.base import HEALTH
 from . import scheduler as sched_mod
 from .services import (
     ai, alerts, announcement, attribution, commodity, cycle, darkpool, finance,
-    forecast, global_index, kline, knowledge, macro, market, ranks, rating,
+    forecast, global_index, holders, kline, knowledge, macro, market, ranks, rating,
     recommend, screener, sector, smartpick, stocklist, wuxing,
 )
 from .services import metrics as metrics_svc
@@ -349,6 +349,12 @@ def profile(code: str):
 def finance_report(code: str):
     norm = market.normalize_code(code) or code
     return finance.get_finance(norm)
+
+
+@router.get("/holders")
+def holders_report(code: str):
+    norm = market.normalize_code(code) or code
+    return holders.get_holders(norm)
 
 
 @router.get("/market/cycle")

@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>A股量化工具</title>
-<link rel="stylesheet" href="/static/style.css?v=11.0.13">
-<script src="/static/vendor/echarts.min.js?v=11.0.13"></script>
+<link rel="stylesheet" href="/static/style.css?v=11.0.14">
+<script src="/static/vendor/echarts.min.js?v=11.0.14"></script>
 </head>
 <body>
 <header class="topbar">
@@ -122,6 +122,12 @@
       <div class="card score-card" id="scoreCard">
         <div class="empty">搜索并选择一只股票查看评分</div>
       </div>
+    </div>
+    <div class="card" id="holdersCard" style="display:none">
+      <div class="card-title">持股情况
+        <span class="muted" id="holdersMeta"></span>
+      </div>
+      <div id="holdersSec"><div class="empty">搜索股票后显示股东与机构持股</div></div>
     </div>
   </section>
 
@@ -629,6 +635,6 @@
   <div class="ctx-item" id="ctxNewsAi" style="display:none">🤖 发送AI分析（消息）</div>
 </div>
 
-<script src="/static/app.js?v=11.0.13"></script>
+<script src="/static/app.js?v=11.0.14"></script>
 </body>
 </html>

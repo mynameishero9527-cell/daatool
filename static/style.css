@@ -104,7 +104,8 @@ main { padding: 16px 18px; max-width: 1500px; margin: 0 auto; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { white-space: nowrap; }
 #watchTable, #screenerResult, #recommendTable, #rankTable, #aiPickTable, #spTable,
-#sectorDrillTable, #flowBarStocksTable, #etfHoldings, #ckRelatedTable, #flowTrendTable { overflow-x: auto; }
+#sectorDrillTable, #flowBarStocksTable, #etfHoldings, #ckRelatedTable, #flowTrendTable,
+#holdersSec { overflow-x: auto; }
 th, td { padding: 9px 11px; text-align: right; white-space: nowrap; }
 th { color: var(--muted); font-weight: 500; font-size: 13px; border-bottom: 1px solid var(--border); }
 td { border-bottom: 1px solid rgba(42,53,72,.5); }
@@ -157,6 +158,26 @@ input:focus { border-color: var(--accent); }
 .grid-stock { display: grid; grid-template-columns: 2fr 1fr; gap: 14px; }
 @media (max-width: 1100px) { .grid-stock { grid-template-columns: 1fr; } }
 .chart-lg { height: 460px; }
+
+.hold-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 10px; margin-bottom: 12px; }
+.hold-kpi { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+.hold-kpi .v { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.hold-kpi .k { color: var(--muted); font-size: 12px; margin-top: 3px; }
+.hold-split { display: flex; height: 10px; border-radius: 5px; overflow: hidden; margin: 8px 0 4px; background: var(--bg2); }
+.hold-split .org { background: var(--accent); }
+.hold-split .person { background: #8a5a1a; }
+.hold-legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-bottom: 10px; flex-wrap: wrap; }
+.hold-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.hold-legend .org { background: var(--accent); }
+.hold-legend .person { background: #8a5a1a; }
+.hold-tables { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 8px; }
+@media (max-width: 1100px) { .hold-tables { grid-template-columns: 1fr; } }
+.hold-sub { font-size: 13px; font-weight: 600; margin: 10px 0 6px; }
+.kind-org { background: rgba(74,158,255,.15); color: var(--accent); }
+.kind-person { background: rgba(138,90,26,.28); color: #ffe0b3; }
+.kind-na { background: #3a4556; color: #c6d2e2; }
+#holdersSec table { font-size: 12px; }
+#holdersSec tbody tr { cursor: default; }
 
 /* 评分卡 */
 .score-head { text-align: center; padding: 6px 0 12px; }

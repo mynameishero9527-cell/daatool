@@ -597,12 +597,20 @@ window.openStock = (code, name) => {
   activeTab = "stock";
   $("#klineTitle").textContent = `${name} (${code})`;
   loadKline();
+  const holdersCard = $("#holdersCard");
   if (isIndexCode(code)) {
     $("#stockProfile").innerHTML = "";
+    if (holdersCard) holdersCard.style.display = "none";
     loadIndexPanel();
   } else {
+    if (holdersCard) {
+      holdersCard.style.display = "";
+      $("#holdersMeta").textContent = "";
+      $("#holdersSec").innerHTML = '<div class="empty">持股数据加载中…</div>';
+    }
     loadProfile();
     loadAnalysis();
+    loadHolders();
   }
 };
 
@@ -900,6 +908,138 @@ async function loadFinance() {
         </tr>`).join("")}</tbody></table>
       <div class="muted" style="font-size:11px;margin-top:4px">数据来源：${esc(f.source || "")}</div>`;
   } catch (err) { box.innerHTML = ""; console.warn(err); }
+}
+
+const fmtInt = (v) => (v === null || v === undefined || Number.isNaN(Number(v)))
+  ? "-" : Math.round(Number(v)).toLocaleString("zh-CN");
+const kindBadge = (kind) => {
+  const k = kind || "未标注";
+  const css = k === "机构" ? "kind-org" : k === "个人" ? "kind-person" : "kind-na";
+  return `<span class="badge ${css}">${esc(k)}</span>`;
+};
+function holderTable(title, rows, floatHolder) {
+  if (!rows || !rows.length) {
+    return `<div><div class="hold-sub">${esc(title)}</div><div class="muted" style="font-size:12px">暂无披露</div></div>`;
+  }
+  const ratioHead = floatHolder ? "占流通比" : "占总股本";
+  return `<div>
+    <div class="hold-sub">${esc(title)}</div>
+    <table><thead><tr>
+      <th>名次</th><th>股东</th><th>类型</th><th>${ratioHead}</th><th>持股</th><th>变动</th>
+    </tr></thead><tbody>${rows.map((r) => `
+      <tr>
+        <td>${r.rank || "-"}</td>
+        <td>${esc(r.name)}${r.shares_type ? ` <span class="muted">${esc(r.shares_type)}</span>` : ""}</td>
+        <td>${kindBadge(r.kind)}${r.holder_type ? ` <span class="muted">${esc(r.holder_type)}</span>` : ""}</td>
+        <td class="num">${r.ratio !== null && r.ratio !== undefined ? fmt(r.ratio, 2) + "%" : "-"}</td>
+        <td class="num">${esc(r.shares_txt || "-")}</td>
+        <td class="num">${esc(r.change || "-")}</td>
+      </tr>`).join("")}</tbody></table>
+  </div>`;
+}
+
+async function loadHolders() {
+  const card = $("#holdersCard");
+  const box = $("#holdersSec");
+  const meta = $("#holdersMeta");
+  if (!card || !box || !currentStock) return;
+  card.style.display = "";
+  box.innerHTML = '<div class="empty">持股数据加载中…</div>';
+  if (meta) meta.textContent = "";
+  try {
+    const h = await api(`/api/holders?code=${currentStock.code}`);
+    if (h.empty) {
+      box.innerHTML = `<div class="empty">${esc(h.note || "暂无持股数据")}</div>`;
+      if (meta) meta.textContent = h.offline ? "本地缓存" : "";
+      return;
+    }
+    const L = h.latest || {};
+    const inst = h.institution_ratio;
+    const person = h.person_ratio;
+    const ctrl = (h.controller || []).map((c) => c.name + (c.ratio != null ? ` ${fmt(c.ratio, 2)}%` : "")).join("、");
+    if (meta) {
+      meta.textContent = `${h.asof || ""}${h.offline ? " · 本地缓存" : ""} · ${esc(h.source || "")}`.trim();
+    }
+    const kpis = [
+      ["股东户数", L.holders != null ? fmtInt(L.holders) + " 户" : "-"],
+      ["户数环比", L.holders_qoq != null ? `${sign(L.holders_qoq)}${fmt(L.holders_qoq, 1)}%` : "-"],
+      ["人均流通股", L.avg_free_shares != null ? fmtInt(L.avg_free_shares) : "-"],
+      ["筹码集中度", L.focus || "-"],
+      ["十大股东合计", L.top10_ratio != null ? fmt(L.top10_ratio, 1) + "%" : "-"],
+      ["实际控制人", ctrl || "-"],
+    ];
+    const split = (inst != null && person != null) ? `
+      <div class="hold-split" title="机构 ${fmt(inst, 2)}% / 个人及其他 ${fmt(person, 2)}%">
+        <div class="org" style="width:${Math.max(0, Math.min(100, inst))}%"></div>
+        <div class="person" style="width:${Math.max(0, Math.min(100, person))}%"></div>
+      </div>
+      <div class="hold-legend">
+        <span><i class="org"></i>机构 ${fmt(inst, 2)}%${h.institution_count != null ? ` · ${fmtInt(h.institution_count)} 家` : ""}</span>
+        <span><i class="person"></i>个人及其他 ${fmt(person, 2)}%</span>
+      </div>` : `<div class="muted" style="font-size:12px;margin:6px 0 10px">暂无机构/个人持股占比（本期未披露机构持仓构成）</div>`;
+    const orgHtml = (h.org_hold || []).length ? `
+      <div class="hold-sub">机构持仓构成</div>
+      <table><thead><tr><th>类型</th><th>家数</th><th>持股</th><th>占流通比</th></tr></thead>
+      <tbody>${h.org_hold.map((r) => `
+        <tr>
+          <td>${esc(r.name)}</td>
+          <td class="num">${r.count != null ? fmtInt(r.count) : "-"}</td>
+          <td class="num">${esc(r.shares_txt || "-")}</td>
+          <td class="num">${r.float_ratio != null ? fmt(r.float_ratio, 2) + "%" : "-"}</td>
+        </tr>`).join("")}</tbody></table>` : "";
+    const countHtml = (h.counts || []).length ? `
+      <div class="hold-sub">股东户数变化</div>
+      <table><thead><tr><th>报告期</th><th>股东户数</th><th>环比</th><th>人均流通股</th><th>集中度</th><th>十大股东合计</th></tr></thead>
+      <tbody>${h.counts.map((r) => `
+        <tr>
+          <td>${esc(r.date || "-")}</td>
+          <td class="num">${fmtInt(r.holders)}</td>
+          <td class="num ${cls(r.holders_qoq)}">${r.holders_qoq != null ? sign(r.holders_qoq) + fmt(r.holders_qoq, 1) + "%" : "-"}</td>
+          <td class="num">${fmtInt(r.avg_free_shares)}</td>
+          <td>${esc(r.focus || "-")}</td>
+          <td class="num">${r.top10_ratio != null ? fmt(r.top10_ratio, 1) + "%" : "-"}</td>
+        </tr>`).join("")}</tbody></table>` : "";
+    const fundHtml = (h.funds || []).length ? `
+      <div class="hold-sub">基金持股 <span class="muted">前 ${h.funds.length} 只</span></div>
+      <table><thead><tr><th>基金</th><th>代码</th><th>持股</th><th>占总股本</th><th>市值(亿)</th></tr></thead>
+      <tbody>${h.funds.map((r) => `
+        <tr>
+          <td>${esc(r.name)}</td>
+          <td>${esc(r.code || "-")}</td>
+          <td class="num">${esc(r.shares_txt || "-")}</td>
+          <td class="num">${r.ratio != null ? fmt(r.ratio, 3) + "%" : "-"}</td>
+          <td class="num">${r.value_yi != null ? fmt(r.value_yi, 2) : "-"}</td>
+        </tr>`).join("")}</tbody></table>` : "";
+    const unlockHtml = (h.unlocks || []).length ? `
+      <div class="hold-sub">限售解禁</div>
+      <table><thead><tr><th>解禁日</th><th>数量</th><th>占总股本</th><th>占流通</th><th>类型</th></tr></thead>
+      <tbody>${h.unlocks.map((r) => `
+        <tr>
+          <td>${esc(r.date || "-")}</td>
+          <td class="num">${esc(r.shares_txt || "-")}</td>
+          <td class="num">${r.total_ratio != null ? fmt(r.total_ratio, 2) + "%" : "-"}</td>
+          <td class="num">${r.float_ratio != null ? fmt(r.float_ratio, 2) + "%" : "-"}</td>
+          <td>${esc(r.lift_type || "-")}</td>
+        </tr>`).join("")}</tbody></table>` : "";
+    const qoqClass = L.holders_qoq > 0 ? "up" : L.holders_qoq < 0 ? "down" : "";
+    box.innerHTML = `
+      <div class="hold-kpis">${kpis.map(([k, v]) => `
+        <div class="hold-kpi"><div class="v ${k === "户数环比" ? qoqClass : ""}">${esc(String(v))}</div>
+        <div class="k">${esc(k)}</div></div>`).join("")}</div>
+      ${split}
+      ${orgHtml}
+      <div class="hold-tables">
+        ${holderTable("十大股东", h.top10, false)}
+        ${holderTable("十大流通股东", h.top10_float, true)}
+      </div>
+      ${countHtml}
+      ${fundHtml}
+      ${unlockHtml}
+      <div class="muted" style="font-size:11px;margin-top:8px">${esc(h.note || "")} 数据来源：${esc(h.source || "")}${h.fetched_at ? " · " + esc(h.fetched_at) : ""}</div>`;
+  } catch (err) {
+    box.innerHTML = '<div class="empty">持股数据加载失败</div>';
+    console.warn(err);
+  }
 }
 
 /* ---------------- 宏观情报 ---------------- */
