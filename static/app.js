@@ -71,6 +71,18 @@ function planPickedHtml(row) {
   const text = (row && (row.picked_text || row.picked_by)) || "";
   return text ? `<div class="plan-picked"><span class="plan-picked-verb">${esc(text)}</span></div>` : "";
 }
+function signalContextHtml(r) {
+  const board = r.board_text || r.industry || "—";
+  const wx = wxBadges(r.wuxing) || "—";
+  const heat = r.heat == null ? "—" : `${fmt(r.heat, 0)} ${r.heat_level || ""}`.trim();
+  const sec = r.sector_hot == null ? "—" : `${fmt(r.sector_hot, 1)} ${r.sector_hot_level || ""}`.trim();
+  return `<div class="signal-extra">
+    <span>板块 ${esc(board)}</span>
+    <span>五行 ${wx}</span>
+    <span>个股热度 <b>${esc(heat)}</b></span>
+    <span>板块热度 <b>${esc(sec)}</b></span>
+  </div>`;
+}
 const wxBadges = (tags) => (tags && tags.length)
   ? tags.map((t) => `<span class="wx-badge wx-${esc(t)}">${esc(t)}</span>`).join("") : "";
 function beijingYMD(d) {
@@ -436,7 +448,8 @@ async function loadAlerts() {
           <b>${esc(name)}</b> <span class="muted">${esc(code)}</span>
           <span class="num ${cls(r.pct)}">${pct(r.pct)}</span>
           ${planPickedHtml(r)}
-          <div class="detail">${esc(r.hit_action || r.advice || "")}${r.buy_index != null ? ` · 购买指数 ${fmt(r.buy_index, 0)}` : ""}</div>
+          ${signalContextHtml(r)}
+          <div class="advice-summary">${esc(r.advice_summary || r.advice || r.hit_action || "")}</div>
         </div>
         ${watchBtn}
       </div>`;
@@ -3950,14 +3963,13 @@ async function loadBuyPoints() {
           <span class="num ${cls(r.pct)}">${pct(r.pct)}</span>
         </div>
         ${planPickedHtml(r)}
+        ${signalContextHtml(r)}
         <div class="buy-flash-meta">
-          <span>板块 ${esc(r.industry || "—")}</span>
           <span>购买指数 <b>${fmt(r.buy_index, 0)}</b> ${esc(r.buy_level || "")}</span>
           <span>量比 ${fmt(r.volume_ratio)}</span>
           <span>评级 ${esc(r.finance_grade || "—")}</span>
-          <span>情绪 ${fmt(r.sentiment, 0)} ${esc(r.sent_level || "")}</span>
         </div>
-        <div class="buy-flash-advice">${esc(r.hit_action || r.advice || "")}</div>
+        <div class="buy-flash-advice">${esc(r.advice_summary || r.advice || r.hit_action || "")}</div>
         ${watchBtnHtml(r.code, r.name, r.in_watchlist)}
       </div>`).join("");
     syncWatchButtons();

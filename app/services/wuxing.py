@@ -86,4 +86,4 @@ def tags_for_list(items: list[dict], code_key: str = "code",
         if code in user:
             it["wuxing"] = user[code]
         else:
-            it["wuxing"] = auto_tags(it.get(industry_key) or "")
+            it["wuxing"] = auto_tags(it.get(industry_key) or "", it.get("concepts"))

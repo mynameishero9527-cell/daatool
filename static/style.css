@@ -628,7 +628,9 @@ tr.score-95 td { background: rgba(255, 60, 60, .30); }
   display: flex; flex-wrap: wrap; gap: 8px 12px;
   font-size: 12px; color: var(--muted); margin-bottom: 4px;
 }
-.buy-flash-advice { font-size: 12px; color: #ffd0d0; margin-bottom: 6px; }
+.buy-flash-advice { font-size: 12px; color: #ffd0d0; margin-bottom: 6px; line-height: 1.5; white-space: normal; }
+.advice-summary { font-size: 12px; color: #ffd0d0; line-height: 1.5; margin-top: 4px; white-space: normal; }
+.signal-extra { display: flex; flex-wrap: wrap; gap: 6px 10px; font-size: 12px; color: var(--muted); margin: 4px 0; }
 .buy-flash-logo {
   position: fixed; right: 18px; bottom: 18px; left: auto; top: auto; z-index: 400;
   width: 56px; height: 56px; padding: 0; border: 0; border-radius: 50%;

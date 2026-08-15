@@ -15,7 +15,8 @@ NAME_OK = "s.name NOT LIKE '%ST%' AND s.name NOT LIKE '%退%'"
 PER_PLAN_CAP = 80
 
 _SELECT = """SELECT s.code, s.name, s.pct, s.volume_ratio, s.price, s.main_net_in,
-       s.main_net_in_d5, s.pct_d5, COALESCE(l.industry, '') AS industry,
+       s.main_net_in_d5, s.pct_d5, s.pct_d20, s.float_mv, s.turnover_rate,
+       COALESCE(l.industry, '') AS industry,
        m.buy_index, m.sentiment, m.pos60, m.stabilize_score, m.dark_power,
        m.divergence, m.rsi14, m.macd_gold, m.ma_bull, m.above_ma20, m.macd_bar,
        m.bias20, m.pullback_shrink, m.drawdown60

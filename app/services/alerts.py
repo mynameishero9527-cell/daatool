@@ -164,10 +164,18 @@ def _decorate_buy_rows(rows: list[dict], kind: str = "buy") -> None:
     from . import finance as finance_svc
     from . import metrics as metrics_svc
     from . import rating as rating_svc
+    from . import wuxing as wuxing_svc
     try:
         finance_svc.attach_grades(rows)
     except Exception:  # noqa: BLE001
         pass
+    _attach_board_heat(rows)
+    try:
+        wuxing_svc.tags_for_list(rows)
+    except Exception:  # noqa: BLE001
+        for r in rows:
+            r["wuxing"] = r.get("wuxing") or []
+    heat_map = _sector_heat_map()
     for r in rows:
         try:
             buy_lv, buy_act = metrics_svc.buy_index_level(r.get("buy_index") or 0)
@@ -177,6 +185,13 @@ def _decorate_buy_rows(rows: list[dict], kind: str = "buy") -> None:
             r["sent_level"] = sent_lv
             r["sent_desc"] = sent_ds
             r["score"] = _score
+            r["op_advice"] = op
+            heat = r.get("sentiment")
+            r["heat"] = None if heat is None else round(float(heat), 1)
+            r["heat_level"] = sent_lv
+            industry = (r.get("industry") or "").strip()
+            r["sector_hot"] = heat_map.get(industry)
+            r["sector_hot_level"] = _sector_hot_level(r["sector_hot"])
             picked = (r.get("picked_text") or "").strip()
             hit = (r.get("hit_action") or "").strip()
             if kind == "sell":
@@ -184,14 +199,99 @@ def _decorate_buy_rows(rows: list[dict], kind: str = "buy") -> None:
             else:
                 bits = [x for x in (picked, hit, f"{buy_lv}，{buy_act}", f"操作参考：{op}") if x]
             r["advice"] = "；".join(bits)
+            r["advice_summary"] = _advice_summary(r, kind, buy_lv, buy_act, op)
             r["finance_grade"] = r.get("finance_grade") or ""
         except Exception:  # noqa: BLE001
             r["buy_level"] = r.get("buy_level") or ""
             r["advice"] = r.get("advice") or r.get("picked_text") or ""
+            r["advice_summary"] = r.get("advice_summary") or r.get("advice") or ""
             r["finance_grade"] = r.get("finance_grade") or ""
+            r["wuxing"] = r.get("wuxing") or []
     watched = {row["code"] for row in query("SELECT code FROM watchlist")}
     for r in rows:
         r["in_watchlist"] = bool(r.get("code") and r["code"] in watched)
+
+
+def _sector_hot_level(score) -> str:
+    if score is None:
+        return "—"
+    if score >= 15:
+        return "高热"
+    if score >= 5:
+        return "偏热"
+    if score >= -5:
+        return "平淡"
+    return "低迷"
+
+
+def _sector_heat_map() -> dict:
+    rows = query(
+        """SELECT l.industry AS name,
+                  ROUND(AVG(s.pct), 2) AS pct,
+                  ROUND(AVG(s.pct_d5), 2) AS d5,
+                  ROUND(SUM(s.main_net_in) / 10000.0, 1) AS net_in_yi
+           FROM stock_snapshot s JOIN stock_list l ON l.code = s.code
+           WHERE l.industry != '' AND s.pct IS NOT NULL
+           GROUP BY l.industry"""
+    )
+    out = {}
+    for r in rows:
+        out[r["name"]] = round(
+            (r["pct"] or 0) * 3 + (r["d5"] or 0) * 1.5
+            + min(max((r["net_in_yi"] or 0), -20), 20), 1)
+    return out
+
+
+def _attach_board_heat(rows: list[dict]) -> None:
+    codes = [r["code"] for r in rows if r.get("code")]
+    cmap: dict[str, list[str]] = {}
+    if codes:
+        marks = ",".join("?" * len(codes))
+        for row in query(
+            f"SELECT code, concept FROM concept_map WHERE code IN ({marks})",
+            tuple(codes),
+        ):
+            cmap.setdefault(row["code"], []).append(row["concept"])
+    for r in rows:
+        cons = (cmap.get(r.get("code") or "") or [])[:3]
+        r["concepts"] = cons
+        industry = (r.get("industry") or "").strip() or "未分类"
+        r["board_text"] = f"{industry}（{'、'.join(cons)}）" if cons else industry
+
+
+def _advice_summary(r: dict, kind: str, buy_lv: str, buy_act: str, op: str) -> str:
+    picked = (r.get("picked_text") or "").strip()
+    hit = (r.get("hit_action") or "").strip()
+    board = (r.get("board_text") or r.get("industry") or "未分类").strip()
+    wx = "、".join(r.get("wuxing") or []) or "未标注"
+    heat = r.get("heat")
+    heat_lv = r.get("heat_level") or ""
+    heat_txt = f"{heat:.0f}（{heat_lv}）" if heat is not None else "—"
+    sec_hot = r.get("sector_hot")
+    sec_lv = r.get("sector_hot_level") or ""
+    sec_txt = f"{sec_hot:.1f}（{sec_lv}）" if sec_hot is not None else "—"
+    pos = r.get("pos60")
+    pos_txt = f"60日位置 {pos * 100:.0f}% 分位" if pos is not None else ""
+    net = r.get("main_net_in")
+    if net is None:
+        flow_txt = ""
+    elif net > 0:
+        flow_txt = f"主力净流入 {_flow_yi(net)}"
+    else:
+        flow_txt = f"主力净流出 {_flow_yi(net)}"
+    from . import rating as rating_svc
+    vol = rating_svc.volume_desc(r.get("volume_ratio"))
+    if kind == "sell":
+        op_line = f"操作建议：以减仓/兑现为主。{hit or '高风险位置，建议回避'}。"
+    else:
+        extra = hit or f"{buy_lv}，{buy_act}"
+        op_line = f"操作建议：以「{op}」为主。{extra}。"
+    bits = [x for x in (picked + "。" if picked else "", op_line,
+                        f"所属板块「{board}」，五行属{wx}。",
+                        f"个股热度 {heat_txt}，板块热度 {sec_txt}。",
+                        "，".join(x for x in (pos_txt, flow_txt, vol) if x) + "。",
+                        "仅供量化参考，不构成投资建议。") if x]
+    return "".join(bits)
 
 
 def get_buy_points(limit: int = 8) -> dict:
@@ -233,6 +333,16 @@ def get_buy_points(limit: int = 8) -> dict:
         for r in rows:
             r["buy_level"] = "观察池"
             r["advice"] = "观察池，非策略命中，不构成买入建议"
+            wx = "、".join(r.get("wuxing") or []) or "未标注"
+            heat = r.get("heat")
+            heat_txt = f"{heat:.0f}（{r.get('heat_level') or ''}）" if heat is not None else "—"
+            sec = r.get("sector_hot")
+            sec_txt = f"{sec:.1f}（{r.get('sector_hot_level') or ''}）" if sec is not None else "—"
+            r["advice_summary"] = (
+                f"观察池展示，非策略命中，不构成买入建议。"
+                f"所属板块「{r.get('board_text') or r.get('industry') or '未分类'}」，五行属{wx}。"
+                f"个股热度 {heat_txt}，板块热度 {sec_txt}。"
+            )
     elif source == "relaxed_65":
         for r in rows:
             if (r.get("buy_index") or 0) < 80:
