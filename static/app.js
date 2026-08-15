@@ -3408,7 +3408,8 @@ window.saveStrategyPlans = async (ids) => {
     strategyLoaded = true;
     renderStrategyExec(d);
     renderStrategyPlans(d);
-    if (msg) msg.textContent = `已应用：${(d.enabled || []).join("、") || "A"}（买点/卖点已按新方案重扫）`;
+    const title = (d.executing && d.executing.title) || (d.enabled || []).join("、") || "A";
+    if (msg) msg.textContent = `已应用：${title}。买点/卖点每条会标明由哪套方案选出。`;
     loadBuyPoints();
     loadAlerts();
   } catch (err) {
