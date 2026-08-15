@@ -388,7 +388,14 @@ def list_hot_terms(kind: str = "") -> dict:
             continue
         if kind == "fall" and trend != "下降":
             continue
-        packed = _parse_sector_payload(r.get("sectors"))
+        stored = _parse_sector_payload(r.get("sectors"))
+        tagged = {it["name"] for it in stored if it.get("name")}
+        votes = {
+            it["name"]: {"利好": int(it.get("bull_n") or 0), "利空": int(it.get("bear_n") or 0)}
+            for it in stored if it.get("name")
+        }
+        packed = _pack_sector_impacts(r["term"], tagged, votes)
+        packed, meta = _with_ai_overlay(r["term"], packed)
         bull = [x["name"] for x in packed if x.get("direction") == "利好"]
         bear = [x["name"] for x in packed if x.get("direction") == "利空"]
         items.append({
@@ -401,6 +408,7 @@ def list_hot_terms(kind: str = "") -> dict:
             "impact_summary": _impact_summary(bull, bear),
             "samples": samples,
             "window_end": r["window_end"],
+            **meta,
         })
     empty_reason = ""
     if not items:
@@ -412,7 +420,7 @@ def list_hot_terms(kind: str = "") -> dict:
         "items": items, "count": len(items),
         "window_days": WINDOW_DAYS,
         "last_sync": get_meta("hot_terms_last_sync", "从未"),
-        "update": "每小时根据近14天本地快讯/官方政策重算，对比前14天。",
+        "update": "每小时根据近14天本地快讯/官方政策重算；右键可让 AI 分析利好/利空并回填。",
         "empty_reason": empty_reason,
     }
 
@@ -453,6 +461,232 @@ def _sector_heat_map() -> dict[str, dict]:
     return out
 
 
+def _ai_overlay(term: str) -> dict | None:
+    try:
+        rows = query("SELECT payload, updated_at FROM hot_term_ai WHERE term=?", (term,))
+    except Exception:  # noqa: BLE001
+        return None
+    if not rows:
+        return None
+    try:
+        data = json.loads(rows[0].get("payload") or "{}")
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(data, dict):
+        return None
+    data["updated_at"] = rows[0].get("updated_at") or data.get("updated_at") or ""
+    return data
+
+
+def _board_vocab() -> list[str]:
+    names = set(macro._SECTOR_KEYWORDS) | set(getattr(macro, "_SECTOR_SPEC", {}))  # noqa: SLF001
+    for kw, b1, b2 in _TERM_IMPACT:
+        names.update(b1)
+        names.update(b2)
+    return sorted(n for n in names if n and n not in ("无明显利空", "未映射影响板块"))
+
+
+def _resolve_ai_name(name: str) -> str | None:
+    n = (name or "").strip().replace("板块", "")
+    if not n or n in ("无明显利空", "未映射影响板块", "A股", "大盘"):
+        return None
+    vocab = set(_board_vocab())
+    aliases = {"房产": "地产", "房地产": "地产", "券商股": "金融", "银行股": "金融",
+               "黄金股": "有色", "芯片": "半导体", "AI": "科技", "人工智能": "科技"}
+    if n not in vocab:
+        n = aliases.get(n, n)
+    if n in vocab:
+        return n
+    if _is_board(n):
+        return n
+    for key in vocab:
+        if n != key and (n in key or key in n):
+            return key
+    try:
+        rows = query("SELECT DISTINCT industry AS n FROM stock_list WHERE industry=? LIMIT 1", (n,))
+        if rows and rows[0].get("n"):
+            return rows[0]["n"]
+        rows = query("SELECT DISTINCT concept AS n FROM concept_map WHERE concept=? LIMIT 1", (n,))
+        if rows and rows[0].get("n"):
+            return rows[0]["n"]
+        rows = query("SELECT DISTINCT concept AS n FROM concept_board WHERE concept=? LIMIT 1", (n,))
+        if rows and rows[0].get("n"):
+            return rows[0]["n"]
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def _norm_ai_side(items) -> list[dict]:
+    out, seen = [], set()
+    if not isinstance(items, list):
+        return out
+    for it in items:
+        if isinstance(it, str):
+            name, why = it, "AI回填"
+        elif isinstance(it, dict):
+            name, why = it.get("name") or it.get("sector") or "", it.get("why") or it.get("reason") or "AI回填"
+        else:
+            continue
+        resolved = _resolve_ai_name(str(name))
+        if not resolved or resolved in seen:
+            continue
+        seen.add(resolved)
+        out.append({"name": resolved, "why": str(why)[:80]})
+    return out[:12]
+
+
+def _apply_ai_overlay(term: str, packed: list[dict]) -> list[dict]:
+    ov = _ai_overlay(term)
+    if not ov:
+        return packed
+    bull = _norm_ai_side(ov.get("bull") or ov.get("bull_sectors") or [])
+    bear = _norm_ai_side(ov.get("bear") or ov.get("bear_sectors") or [])
+    if not bull and not bear:
+        return packed
+    heat = {p["name"]: p for p in packed}
+    seen = set()
+    out = []
+    for it in bull:
+        prev = heat.get(it["name"]) or {}
+        out.append({**prev, "name": it["name"], "direction": "利好",
+                    "why": it["why"] or "AI回填", "ai": True})
+        seen.add(it["name"])
+    for it in bear:
+        if it["name"] in seen:
+            continue
+        prev = heat.get(it["name"]) or {}
+        out.append({**prev, "name": it["name"], "direction": "利空",
+                    "why": it["why"] or "AI回填", "ai": True})
+        seen.add(it["name"])
+    for p in packed:
+        if p["name"] in seen:
+            continue
+        q = dict(p)
+        q["direction"] = "中性"
+        q["why"] = "词库/共现，AI未纳入利好利空"
+        q["ai"] = False
+        out.append(q)
+        seen.add(p["name"])
+    return out
+
+
+def _with_ai_overlay(term: str, packed: list[dict]) -> tuple[list[dict], dict]:
+    packed = _apply_ai_overlay(term, packed)
+    ov = _ai_overlay(term)
+    applied = bool(ov) and any(x.get("ai") for x in packed)
+    return packed, {
+        "ai_applied": applied,
+        "ai_reason": (ov or {}).get("reason") or "",
+        "ai_updated_at": (ov or {}).get("updated_at") or "",
+        "ai_source": (ov or {}).get("source") or "",
+    }
+
+
+def save_hot_term_ai(term: str, payload: dict) -> None:
+    now = _now().isoformat(timespec="seconds")
+    body = dict(payload)
+    body["updated_at"] = now
+    execute(
+        "INSERT OR REPLACE INTO hot_term_ai(term, payload, updated_at) VALUES(?,?,?)",
+        (term, json.dumps(body, ensure_ascii=False), now))
+
+
+def revert_hot_term_ai(term: str) -> dict:
+    term = (term or "").strip()
+    if not term:
+        return {"ok": False, "error": "未指定热词"}
+    execute("DELETE FROM hot_term_ai WHERE term=?", (term,))
+    detail = hot_term_sectors(term)
+    return {**detail, "ok": True, "applied": False, "reverted": True}
+
+
+def analyze_hot_term_ai(term: str) -> dict:
+    """右键 AI：分析利好/利空板块并回填。失败回退词库，不假装成功、不编造板块。"""
+    from . import ai as ai_svc
+    term = (term or "").strip()
+    if not term:
+        return {"ok": False, "error": "未指定热词", "applied": False}
+    base = hot_term_sectors(term)
+    rule_summary = base.get("impact_summary") or ""
+    samples = base.get("samples") or []
+    vocab = "、".join(_board_vocab()[:36])
+    local_text = (
+        f"【本地规则】热词「{term}」：{rule_summary}。"
+        "未改写映射。可在 AI 分析页配置大模型后右键回填。"
+    )
+    cfg = ai_svc.get_config(masked=False)
+    base_url = ai_svc.normalize_api_base(cfg.get("api_base", "") or "")
+    if not (cfg.get("api_key") and base_url):
+        return {
+            **base,
+            "ok": True, "applied": False, "ai": False,
+            "source": "本地规则（未配置AI大模型）",
+            "text": local_text + ai_svc.DISCLAIMER,
+            "error": "", "hint": "到 AI 分析页填写地址、密钥、模型并测试连通后再右键回填。",
+        }
+    context = (
+        f"热词：{term}\n当前词库映射：{rule_summary}\n"
+        f"近两周样例：{'；'.join(samples[:4]) or '无'}\n"
+        f"可选板块名（请尽量从中选择）：{vocab}"
+    )
+    task = (
+        "请判断该热词对A股哪些板块偏利好、哪些偏利空。"
+        "严格只输出一行JSON："
+        '{"bull":[{"name":"银行","why":"一句话"}],'
+        '"bear":[{"name":"半导体","why":"一句话"}],'
+        '"reason":"不超过40字总述"}。'
+        "name 必须是常见行业/概念简称。不确定的板块不要写。禁止收益承诺。"
+    )
+    try:
+        raw = ai_svc._call_llm(cfg, context, task)  # noqa: SLF001
+    except Exception as exc:  # noqa: BLE001
+        err = ai_svc.format_llm_error(exc, base_url)
+        return {
+            **base,
+            "ok": True, "applied": False, "ai": False,
+            "source": "本地规则分析（大模型未调用）",
+            "text": local_text + f"\n（大模型未调用：{err}）" + ai_svc.DISCLAIMER,
+            "error": err, "hint": ai_svc._hint_for_error(err),  # noqa: SLF001
+        }
+    import re
+    parsed = None
+    m = re.search(r"\{.*\}", raw, re.S)
+    if m:
+        try:
+            parsed = json.loads(m.group())
+        except Exception:  # noqa: BLE001
+            parsed = None
+    bull = _norm_ai_side((parsed or {}).get("bull") or [])
+    bear = _norm_ai_side((parsed or {}).get("bear") or [])
+    # 同一板块不可同时利好利空：保留先出现的利好
+    bull_names = {x["name"] for x in bull}
+    bear = [x for x in bear if x["name"] not in bull_names]
+    if not bull and not bear:
+        return {
+            **base,
+            "ok": True, "applied": False, "ai": True,
+            "source": f"AI大模型（{cfg.get('model') or '默认'}）",
+            "text": (raw or "") + "\n\n未能解析出有效板块名，未覆盖词库映射。" + ai_svc.DISCLAIMER,
+            "error": "模型返回无法对应到本地行业/概念，已保留词库利好/利空",
+            "hint": "可再试一次，或换更明确的热词。",
+        }
+    reason = str((parsed or {}).get("reason") or "")[:80]
+    save_hot_term_ai(term, {
+        "bull": bull, "bear": bear, "reason": reason, "text": raw,
+        "source": f"AI大模型（{cfg.get('model') or '默认'}）",
+    })
+    detail = hot_term_sectors(term)
+    return {
+        **detail,
+        "ok": True, "applied": True, "ai": True,
+        "source": f"AI大模型（{cfg.get('model') or '默认'}）",
+        "text": (raw or "") + ai_svc.DISCLAIMER,
+        "error": "", "hint": "",
+        "reason": reason,
+    }
+
+
 def hot_term_sectors(term: str) -> dict:
     term = (term or "").strip()
     if not term:
@@ -479,6 +713,7 @@ def hot_term_sectors(term: str) -> dict:
         except Exception:  # noqa: BLE001
             samples = []
     packed = _pack_sector_impacts(term, tagged, votes)
+    packed, meta = _with_ai_overlay(term, packed)
     heat_map = _sector_heat_map()
     for it in packed:
         info = heat_map.get(it["name"]) or {}
@@ -493,6 +728,9 @@ def hot_term_sectors(term: str) -> dict:
     empty_reason = ""
     if not packed:
         empty_reason = f"「{term}」暂未映射到可交易板块（本地行业/概念无匹配）。"
+    note = ("利好/利空来自 AI 回填（右键可还原词库），不是预测。点击板块查看个股 TOP20。"
+            if meta.get("ai_applied")
+            else "利好/利空来自规则词库与近两周快讯方向统计，不是预测。右键热词可让 AI 分析并回填。点击板块查看个股 TOP20。")
     return {
         "term": term,
         "impact_summary": _impact_summary([x["name"] for x in bull], [x["name"] for x in bear]),
@@ -502,8 +740,9 @@ def hot_term_sectors(term: str) -> dict:
         "sectors": bull + bear + mid,
         "samples": samples,
         "empty_reason": empty_reason,
-        "note": "利好/利空来自规则词库与近两周快讯方向统计，不是预测。点击板块查看个股 TOP20。",
+        "note": note,
         "disclaimer": "板块方向为规则化预估，仅供参考，不构成投资建议",
+        **meta,
     }
 
 

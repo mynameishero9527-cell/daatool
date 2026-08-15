@@ -694,6 +694,12 @@ tr.score-95 td { background: rgba(255, 60, 60, .30); }
 .hot-group-title.up { color: var(--up); }
 .hot-group-title.down { color: var(--down); }
 .hot-tile .impact { margin-top: 6px; font-size: 11px; line-height: 1.45; color: var(--muted); }
+.hot-tile .ai-flag, .hot-ai-flag {
+  display: inline-block; margin-left: 6px; font-size: 10px; padding: 1px 6px;
+  border-radius: 8px; background: rgba(74,158,255,.18); color: var(--accent); vertical-align: middle;
+}
+.hot-sec.ai-mark { box-shadow: inset 0 0 0 1px rgba(74,158,255,.35); }
+.policy-item { padding: 10px 4px; border-bottom: 1px solid rgba(42,53,72,.5); }
 .policy-item .p-sum { color: var(--muted); font-size: 13px; line-height: 1.55; margin-top: 4px; }
 .policy-item .p-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 4px; }
 .policy-item .p-title { font-weight: 600; line-height: 1.5; }

@@ -1516,6 +1516,7 @@ async function renderHotWords(box) {
     <div class="muted" style="margin-bottom:8px">
       近两周热门词汇（板块区域）· ${esc(d.update || "每小时重算")}
       · 上次 ${esc(d.last_sync || "从未")} · 点击热词看利好/利空板块，再点板块看个股 TOP20
+      · <b>右键热词</b>可让 AI 分析利好/利空并回填（未配置大模型时保留词库，不假装成功）
     </div>
     <div class="btn-group" style="margin-bottom:10px" id="hotKindBtns">
       ${[["", "全部"], ["rise", "热度上升"], ["fall", "热度下降"]].map(([v, t]) =>
@@ -1525,8 +1526,8 @@ async function renderHotWords(box) {
     ${rows.length ? `<div class="hot-grid">${rows.map((t) => {
       const clsName = t.trend === "上升" ? "rising" : t.trend === "下降" ? "falling" : "";
       const on = t.term === hotFocus.term ? "active" : "";
-      return `<div class="hot-tile ${clsName} ${on} js-hot-term" data-term="${esc(t.term)}">
-        <div class="term">${esc(t.term)}</div>
+      return `<div class="hot-tile ${clsName} ${on} js-hot-term" data-term="${esc(t.term)}" data-ai="${t.ai_applied ? "1" : ""}">
+        <div class="term">${esc(t.term)}${t.ai_applied ? '<span class="ai-flag">AI已回填</span>' : ""}</div>
         <div class="metrics">
           <span class="heat">热度 ${fmt(t.heat, 0)}</span>
           <span class="rise">↑${fmt(t.rise, 0)}</span>
@@ -1553,6 +1554,7 @@ window.openHotTerm = async (term, resetSector = true) => {
   if (resetSector) hotFocus.sector = "";
   const box = $("#hotDetailBox");
   if (!box || !term) return;
+  box.dataset.term = term;
   $$(".js-hot-term").forEach((el) => el.classList.toggle("active", el.dataset.term === term));
   box.innerHTML = '<div class="empty">加载关联板块…</div>';
   try {
@@ -1566,8 +1568,10 @@ window.openHotTerm = async (term, resetSector = true) => {
       const badge = dir === "利好" ? '<span class="badge dir-利好">利好</span>'
         : dir === "利空" ? '<span class="badge dir-利空">利空</span>'
           : '<span class="badge">中性</span>';
-      return `<div class="hot-sec ${clsName} js-hot-sector ${s.name === hotFocus.sector ? "active" : ""}" data-sector="${esc(s.name)}" data-term="${esc(term)}">
-        <div class="sn">${esc(s.name)} ${badge}</div>
+      const aiMark = s.ai ? "ai-mark" : "";
+      const aiTag = s.ai ? '<span class="ai-flag">AI</span>' : "";
+      return `<div class="hot-sec ${clsName} ${aiMark} js-hot-sector ${s.name === hotFocus.sector ? "active" : ""}" data-sector="${esc(s.name)}" data-term="${esc(term)}">
+        <div class="sn">${esc(s.name)} ${badge}${aiTag}</div>
         <div class="muted">热度 ${s.hot_score == null ? "—" : fmt(s.hot_score, 1)}
           · ${pct(s.pct)} ${s.net_in_yi != null ? `· 净流入 ${fmt(s.net_in_yi, 1)}亿` : ""}</div>
         ${s.why ? `<div class="muted" style="margin-top:4px;font-size:11px">${esc(s.why)}</div>` : ""}
@@ -1577,10 +1581,11 @@ window.openHotTerm = async (term, resetSector = true) => {
       ? `<div class="hot-group-title ${cls}">${title}（${list.length}）</div><div class="hot-sec-grid">${list.map((s) => tile(s, kind)).join("")}</div>`
       : "";
     box.innerHTML = `
-      <div class="outlook-summary" style="border-color:rgba(255,169,64,.4)">
-        <b>🔥 热词「${esc(term)}」关联板块</b>
+      <div class="outlook-summary" style="border-color:rgba(255,169,64,.4)" data-term="${esc(term)}">
+        <b>🔥 热词「${esc(term)}」关联板块${d.ai_applied ? '<span class="hot-ai-flag">AI已回填</span>' : ""}</b>
         <button class="btn small ghost" style="float:right" onclick="hotFocus.term='';hotFocus.sector='';this.closest('#hotDetailBox').innerHTML=''">收起</button>
         <div style="margin:8px 0 4px;font-size:14px"><b>${esc(d.impact_summary || "利好 / 利空板块待映射")}</b></div>
+        ${d.ai_applied && d.ai_reason ? `<div class="muted" style="margin:4px 0">AI总述：${esc(d.ai_reason)} · ${esc(d.ai_updated_at || "")}</div>` : ""}
         ${(d.samples || []).length ? `<div class="muted" style="margin:6px 0">样例：${d.samples.map((s) => esc(s)).join(" · ")}</div>` : ""}
         ${group("利好板块", "up", bull, "利好")}
         ${group("利空板块", "down", bear, "利空")}
@@ -3329,9 +3334,10 @@ window.runAiAnalyze = async () => {
   }
 };
 
-/* AI 小窗 + 右键菜单（FR7-07-4 / FR8-07） */
+/* AI 小窗 + 右键菜单（FR7-07-4 / FR8-07 / 12.0.2 热词利好利空回填） */
 let ctxStock = null;
 let ctxNews = null;
+let ctxHot = null;
 function hideCtxMenu() { $("#ctxMenu").style.display = "none"; }
 function showStockCtxItems(show) {
   ["ctxAiItem", "ctxOpenItem", "ctxWatchItem", "ctxWxAi"].forEach((id) => {
@@ -3339,25 +3345,45 @@ function showStockCtxItems(show) {
   });
   const wx = $("#ctxWx"); if (wx) wx.style.display = show ? "" : "none";
   const sub = document.querySelector(".ctx-sub"); if (sub) sub.style.display = show ? "" : "none";
-  $("#ctxNewsAi").style.display = show ? "none" : "";
+  const sep = $("#ctxSep"); if (sep) sep.style.display = show ? "" : "none";
+}
+function showHotCtxItems(show) {
+  ["ctxHotAi", "ctxHotRevert"].forEach((id) => {
+    const el = $(`#${id}`); if (el) el.style.display = show ? "" : "none";
+  });
 }
 
 document.addEventListener("contextmenu", async (e) => {
+  const hotEl = e.target.closest(".js-hot-term, .js-hot-sector, #hotDetailBox");
   const newsEl = e.target.closest(".news-item[data-news]");
   const el = e.target.closest("[data-code], [onclick]");
   const m = el && ((el.dataset && el.dataset.code && { code: el.dataset.code, name: el.dataset.name })
     || (() => { const g = /openStock\('([^']+)','([^']*)'\)/.exec(el.getAttribute("onclick") || "");
       return g ? { code: g[1], name: g[2] } : null; })());
-  if (!m && !newsEl) { hideCtxMenu(); return; }
+  if (!m && !newsEl && !hotEl) { hideCtxMenu(); return; }
   e.preventDefault();
   const menu = $("#ctxMenu");
   menu.style.display = "";
   menu.style.left = Math.min(e.clientX, window.innerWidth - 220) + "px";
   menu.style.top = Math.min(e.clientY, window.innerHeight - 280) + "px";
+  showHotCtxItems(false);
+  $("#ctxNewsAi").style.display = "none";
+  if (hotEl && !m) {
+    const term = (hotEl.dataset && hotEl.dataset.term) || (typeof hotFocus !== "undefined" && hotFocus.term) || "";
+    if (!term) { hideCtxMenu(); return; }
+    ctxStock = null;
+    ctxNews = null;
+    ctxHot = { term };
+    showStockCtxItems(false);
+    showHotCtxItems(true);
+    return;
+  }
+  ctxHot = null;
   if (newsEl && !m) {
     ctxStock = null;
     ctxNews = { text: newsEl.dataset.news, impact: newsEl.dataset.impact || "" };
     showStockCtxItems(false);
+    $("#ctxNewsAi").style.display = "";
     return;
   }
   ctxNews = newsEl ? { text: newsEl.dataset.news, impact: newsEl.dataset.impact || "" } : null;
@@ -3454,6 +3480,47 @@ $("#ctxNewsAi").addEventListener("click", async () => {
       + `<div class="muted" style="margin-bottom:6px">来源：${esc(d.source)}</div>`
       + esc(d.text).replace(/\n/g, "<br>");
   } catch (err) { $("#aiModalBody").innerHTML = `<div class="empty">分析失败：${esc(err.message || err)}</div>`; }
+});
+$("#ctxHotAi")?.addEventListener("click", async () => {
+  if (!ctxHot) return;
+  const term = ctxHot.term;
+  hideCtxMenu();
+  const modal = $("#aiModal");
+  modal.style.display = "";
+  $("#aiModalTitle").textContent = `🤖 AI 分析热词「${term}」利好/利空`;
+  $("#aiModalBody").innerHTML = '<div class="empty">分析中，大模型最长约 1 分钟，请稍候…</div>';
+  try {
+    const d = await api("/api/macro/hot-term-ai", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ term }),
+    });
+    const applied = d.applied ? " · 已回填利好/利空板块" : " · 未覆盖词库映射";
+    $("#aiModalBody").innerHTML = aiErrBanner(d, "。已保留词库利好/利空。")
+      + `<div class="muted" style="margin-bottom:6px">来源：${esc(d.source || "")}${applied}</div>`
+      + (d.impact_summary ? `<div style="margin-bottom:8px"><b>${esc(d.impact_summary)}</b></div>` : "")
+      + esc(d.text || "").replace(/\n/g, "<br>");
+    if (d.applied) {
+      hotFocus.term = term;
+      loadMacro();
+    }
+  } catch (err) {
+    $("#aiModalBody").innerHTML = `<div class="empty">分析失败：${esc(err.message || err)}</div>`;
+  }
+});
+$("#ctxHotRevert")?.addEventListener("click", async () => {
+  if (!ctxHot) return;
+  const term = ctxHot.term;
+  hideCtxMenu();
+  try {
+    await api("/api/macro/hot-term-ai", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ term, revert: true }),
+    });
+    hotFocus.term = term;
+    loadMacro();
+  } catch (err) {
+    alert("还原失败：" + (err.message || err));
+  }
 });
 
 window.openAiModal = async (code, name) => {

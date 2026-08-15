@@ -267,6 +267,13 @@ CREATE TABLE IF NOT EXISTS hot_term (
     PRIMARY KEY (term, window_end)
 );
 CREATE INDEX IF NOT EXISTS idx_hot_term_heat ON hot_term(window_end, heat);
+
+-- 12.0.2：热词利好/利空的 AI 回填（与词库快照分离，重建热词不覆盖）
+CREATE TABLE IF NOT EXISTS hot_term_ai (
+    term       TEXT PRIMARY KEY,
+    payload    TEXT NOT NULL,            -- JSON：bull/bear/reason/text/source
+    updated_at TEXT NOT NULL
+);
 """
 
 # 已有表的增量列迁移（幂等）

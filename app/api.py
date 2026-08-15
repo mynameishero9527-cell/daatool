@@ -328,6 +328,16 @@ def macro_hot_sector_stocks(sector: str, limit: int = Query(20, ge=20, le=50)):
     return hot_terms.hot_sector_stocks(sector, limit)
 
 
+@router.post("/macro/hot-term-ai")
+def macro_hot_term_ai(payload: dict = Body(default={})):
+    """右键 AI：分析热词利好/利空并回填；revert=true 还原词库。失败不覆盖。"""
+    body = payload or {}
+    term = (body.get("term") or "").strip()
+    if body.get("revert"):
+        return hot_terms.revert_hot_term_ai(term)
+    return hot_terms.analyze_hot_term_ai(term)
+
+
 @router.post("/commodities/watch")
 def commodities_watch(symbol: str):
     return commodity.toggle_watch(symbol)
