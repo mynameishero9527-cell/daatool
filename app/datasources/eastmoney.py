@@ -331,7 +331,7 @@ def _security_code(code: str) -> str | None:
 def _shareholder_raw_ok(raw: dict | None) -> bool:
     if not isinstance(raw, dict) or not raw:
         return False
-    for key in ("gdrs", "sdgd", "sdltgd", "jgcc", "sjkzr", "jjcg"):
+    for key in ("gdrs", "sdgd", "sdltgd", "jgcc", "sjkzr", "jjcg", "jgcg"):
         val = raw.get(key)
         if isinstance(val, list) and val:
             return True
@@ -464,19 +464,8 @@ def _fetch_f10_datacenter(digits: str) -> dict:
             continue
         seen.add(name)
         sjkzr.append({"HOLDER_NAME": name, "HOLD_RATIO": r.get("HOLD_RATIO")})
-    funds = []
-    if org_day:
-        funds = _dc_rows(
-            "RPT_MAIN_ORGHOLDDETAIL",
-            f'{filt}(REPORT_DATE=\'{org_day}\')(ORG_TYPE="01")',
-            "TOTAL_SHARES", "-1", 40,
-        )
-        if not funds:
-            funds = _dc_rows(
-                "RPT_MAIN_ORGHOLDDETAIL",
-                f"{filt}(REPORT_DATE='{org_day}')",
-                "TOTAL_SHARES", "-1", 40,
-            )
+    details = _fetch_org_hold_details(digits, org_day)
+    funds = [r for r in details if str(r.get("ORG_TYPE") or "").zfill(2)[-2:] == "01"]
     return {
         "gdrs": gdrs,
         "sdgd": holders,
@@ -484,9 +473,46 @@ def _fetch_f10_datacenter(digits: str) -> dict:
         "jgcc": jgcc,
         "sjkzr": sjkzr,
         "jjcg": funds,
+        "jgcg": details,
         "xsjj": [],
         "ltgf": [],
     }
+
+
+def _fetch_org_hold_details(digits: str, report_date: str | None = None) -> list[dict]:
+    """机构持仓明细：机构名称 + 持股比例。缺披露返回空，不编造。"""
+    digits = (digits or "").strip()
+    if not digits:
+        return []
+    filt = f'(SECURITY_CODE="{digits}")'
+    day = (report_date or "")[:10]
+    if len(day) == 10:
+        filt = f"{filt}(REPORT_DATE='{day}')"
+    try:
+        rows = _dc_rows("RPT_MAIN_ORGHOLDDETAIL", filt, "TOTAL_SHARES", "-1", 80)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("机构持仓明细失败 %s: %s", digits, exc)
+        return []
+    if rows or len(day) == 10:
+        return rows
+    try:
+        return _dc_rows("RPT_MAIN_ORGHOLDDETAIL", f'(SECURITY_CODE="{digits}")',
+                        "REPORT_DATE,TOTAL_SHARES", "-1,-1", 80)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("机构持仓明细失败 %s: %s", digits, exc)
+        return []
+
+
+def _fill_org_details(raw: dict, digits: str) -> dict:
+    """F10 摘要往往只有类型汇总；补机构名称明细。已有 jgcg 不覆盖。"""
+    if not isinstance(raw, dict):
+        return raw
+    if isinstance(raw.get("jgcg"), list) and raw["jgcg"]:
+        return raw
+    day = _latest_date(raw.get("jgcc") or [], "REPORT_DATE") or _latest_date(
+        raw.get("jjcg") or [], "REPORT_DATE")
+    raw["jgcg"] = _fetch_org_hold_details(digits, day)
+    return raw
 
 
 def fetch_shareholders(code: str) -> dict:
@@ -507,14 +533,22 @@ def fetch_shareholders(code: str) -> dict:
             errors.append(f"F10页面: {exc}")
             f10_raw = {}
         if _shareholder_raw_ok(f10_raw):
-            return f10_raw
+            try:
+                return _fill_org_details(f10_raw, digits)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("补机构持仓明细失败 %s: %s", em, exc)
+                return f10_raw
         try:
             dc_raw = fut_dc.result(timeout=18)
         except (Exception, FutTimeout) as exc:  # noqa: BLE001
             errors.append(f"数据中心: {exc}")
             dc_raw = {}
     if _shareholder_raw_ok(dc_raw):
-        return dc_raw
+        try:
+            return _fill_org_details(dc_raw, digits)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("补机构持仓明细失败 %s: %s", em, exc)
+            return dc_raw
     if errors:
         log.warning("股东数据均失败 %s: %s", em, " | ".join(errors))
         raise RuntimeError("；".join(errors))

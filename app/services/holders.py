@@ -155,6 +155,75 @@ def _holder_row(r: dict, *, float_holder: bool) -> dict | None:
 
 
 FUND_TOP_N = 10
+ORG_HOLD_TOP_N = 80
+
+
+def _org_type_code(raw) -> str:
+    s = str(raw or "").strip()
+    return s.zfill(2)[-2:] if s else ""
+
+
+def _parse_org_holders(rows: list[dict]) -> list[dict]:
+    """机构持仓明细：名称 + 持股比例。不编造未披露的机构。"""
+    items = []
+    seen: set[str] = set()
+    for r in rows:
+        code = _org_type_code(r.get("ORG_TYPE"))
+        if code == "00":
+            continue
+        name = (
+            (r.get("HOLDER_NAME") or r.get("ORG_NAME") or r.get("F9_HOLDER_NAME") or "")
+            .strip()
+        )
+        if not name or name in ("机构汇总", "合计"):
+            continue
+        key = (r.get("HOLDER_CODE") or r.get("FUND_CODE") or name).strip()
+        if key in seen:
+            continue
+        seen.add(key)
+        shares = _num(r.get("TOTAL_SHARES") or r.get("FREE_SHARES") or r.get("HOLD_NUM"))
+        ratio = _round(
+            r.get("TOTALSHARES_RATIO") or r.get("FREESHARES_RATIO") or r.get("HOLD_NUM_RATIO"),
+            4,
+        )
+        float_ratio = _round(r.get("FREESHARES_RATIO"), 4)
+        chg = (r.get("CHANGE_TYPE_NEW") or r.get("CHANGE_TYPE") or "").strip() or None
+        chg_ratio = _round(r.get("FSR_RATE_CHANGE_NEW") or r.get("FSR_RATE_CHANGE"), 4)
+        change = None
+        if chg and chg_ratio is not None:
+            change = f"{chg} {chg_ratio:+.2f}%"
+        elif chg:
+            change = chg
+        elif chg_ratio is not None:
+            change = f"{chg_ratio:+.2f}%"
+        type_name = (
+            (r.get("F9_ORGTYPE_NAME") or r.get("ORG_TYPE_NAME") or r.get("ORG_TYPEName") or "")
+            .strip()
+            or ORG_TYPE_NAME.get(code, f"机构类型{code}" if code else "未标注")
+        )
+        items.append({
+            "name": name,
+            "code": (r.get("HOLDER_CODE") or r.get("FUND_CODE") or "").strip() or None,
+            "org_type": code,
+            "type_name": type_name,
+            "shares": shares,
+            "shares_txt": _shares_txt(shares) if shares is not None else _shares_txt(
+                r.get("TOTAL_SHARES") or r.get("FREE_SHARES") or r.get("HOLD_NUM")),
+            "ratio": ratio,
+            "float_ratio": float_ratio,
+            "change": change,
+            "date": _date(r.get("REPORT_DATE") or r.get("END_DATE")),
+        })
+    items.sort(key=lambda x: (
+        x.get("ratio") is None,
+        -(x.get("ratio") or 0),
+        x.get("shares") is None,
+        -(x.get("shares") or 0),
+    ))
+    out = items[:ORG_HOLD_TOP_N]
+    for i, item in enumerate(out, 1):
+        item["rank"] = i
+    return out
 
 
 def _parse_funds(rows: list[dict]) -> list[dict]:
@@ -276,6 +345,7 @@ def parse_shareholders(raw: dict) -> dict:
     top10_float = [x for x in (_holder_row(r, float_holder=True) for r in _rows(raw.get("sdltgd"))) if x]
 
     funds = _parse_funds(_rows(raw.get("jjcg")))
+    org_holders = _parse_org_holders(_rows(raw.get("jgcg")) or _rows(raw.get("jjcg")))
 
     unlocks = []
     for r in _rows(raw.get("xsjj")):
@@ -303,7 +373,9 @@ def parse_shareholders(raw: dict) -> dict:
         or (top10[0]["date"] if top10 else None)
         or (top10_float[0]["date"] if top10_float else None)
     )
-    has_data = bool(counts or controllers or org_rows or top10 or top10_float or funds or unlocks)
+    has_data = bool(
+        counts or controllers or org_rows or org_holders or top10 or top10_float or funds or unlocks
+    )
     return {
         "asof": asof,
         "controller": controllers,
@@ -313,6 +385,11 @@ def parse_shareholders(raw: dict) -> dict:
         "institution_count": inst_count,
         "person_ratio": person_ratio,
         "org_hold": org_rows,
+        "org_holders": org_holders,
+        "org_holders_note": (
+            f"按持股比例取前{len(org_holders)}家已披露机构（最多{ORG_HOLD_TOP_N}）。"
+            "显示机构名称与持股比例。缺披露不编造。"
+        ) if org_holders else "本期未披露机构持仓明细，不编造机构名称。",
         "org_types": [
             {"org_type": x["org_type"], "name": x["name"], "count": x.get("count")}
             for x in org_rows
@@ -331,7 +408,8 @@ def _empty(code: str, note: str, offline: bool = False) -> dict:
     return {
         "code": code, "asof": None, "controller": [], "counts": [], "latest": {},
         "institution_ratio": None, "institution_count": None, "person_ratio": None,
-        "org_hold": [], "org_types": [], "top10": [], "top10_float": [],
+        "org_hold": [], "org_holders": [], "org_holders_note": "",
+        "org_types": [], "top10": [], "top10_float": [],
         "funds": [], "funds_note": "", "unlocks": [],
         "float_struct": None, "empty": True, "offline": offline,
         "source": SOURCE, "note": note,
@@ -358,6 +436,8 @@ def _load_db(code: str) -> dict | None:
         for x in (payload.get("org_hold") or [])
     ])
     payload.setdefault("funds_note", "按持股数量降序取前10（数量缺失时按占股本比）。缺披露不编造。")
+    payload.setdefault("org_holders", [])
+    payload.setdefault("org_holders_note", "本期未披露机构持仓明细，不编造机构名称。")
     if isinstance(payload.get("funds"), list) and payload["funds"]:
         payload["funds"] = _rerank_saved_funds(payload["funds"])
     return payload
@@ -387,7 +467,7 @@ def get_holders(code: str) -> dict:
     if code.startswith(("sh000", "sz399", "bj899", "sh880")):
         return _with_ai(code, _empty(code, "指数没有股东持股披露"))
 
-    key = f"holders:v4:{code}"
+    key = f"holders:v5:{code}"
     hit = cache.get(key)
     if hit is not None:
         return _with_ai(code, hit)
@@ -407,6 +487,7 @@ def get_holders(code: str) -> dict:
         parsed["fetched_at"] = _now()
         parsed["source"] = SOURCE
         parsed["note"] = (
+            "机构持仓展示已披露机构名称与持股比例。"
             "机构占比为已披露机构持仓合计；个人及其他为流通盘剩余，"
             "不是单独公布的零售户口径。"
         )
@@ -527,7 +608,14 @@ def _holder_ai_context(snap: dict) -> str:
             f"{r.get('name')} {r.get('count') if r.get('count') is not None else '-'}家"
             f"/{r.get('shares_txt') or '-'} / 流通{r.get('float_ratio') if r.get('float_ratio') is not None else '-'}%"
         )
-    lines.append("机构构成：" + ("；".join(org_bits) if org_bits else "未披露"))
+    lines.append("机构类型汇总：" + ("；".join(org_bits) if org_bits else "未披露"))
+    names = []
+    for r in (snap.get("org_holders") or [])[:10]:
+        names.append(
+            f"{r.get('name')} {r.get('type_name') or ''} "
+            f"持股比{r.get('ratio') if r.get('ratio') is not None else '未披露'}%"
+        )
+    lines.append("机构持仓明细：" + ("；".join(names) if names else "未披露"))
     funds = snap.get("funds") or []
     if funds:
         bits = []

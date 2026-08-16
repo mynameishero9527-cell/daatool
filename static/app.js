@@ -2206,30 +2206,58 @@ function refreshHoldExtraPanes() {
 }
 
 function orgHoldPane(h) {
-  const all = h.org_hold || [];
-  const types = [["", "全部"], ...all.map((r) => [
-    r.org_type,
-    `${r.name}${r.count != null ? `（${fmtInt(r.count)}）` : ""}`,
-  ])];
-  if (holdOrgType && !all.some((r) => r.org_type === holdOrgType)) holdOrgType = "";
-  const rows = all.filter((r) => !holdOrgType || r.org_type === holdOrgType);
+  const details = h.org_holders || [];
+  const summary = h.org_hold || [];
+  const typeMap = new Map();
+  for (const r of summary) {
+    if (r && r.org_type) typeMap.set(r.org_type, r.name || r.org_type);
+  }
+  for (const r of details) {
+    if (r && r.org_type && !typeMap.has(r.org_type)) {
+      typeMap.set(r.org_type, r.type_name || r.org_type);
+    }
+  }
+  const types = [["", "全部"], ...[...typeMap.entries()].map(([id, name]) => {
+    const n = details.filter((r) => r.org_type === id).length;
+    const sum = summary.find((r) => r.org_type === id);
+    const extra = n ? n : (sum && sum.count != null ? sum.count : null);
+    return [id, `${name}${extra != null ? `（${fmtInt(extra)}）` : ""}`];
+  })];
+  if (holdOrgType && !typeMap.has(holdOrgType)) holdOrgType = "";
+  const rows = details.filter((r) => !holdOrgType || r.org_type === holdOrgType);
   const sub = types.length > 1 ? `<div class="btn-group hold-org-tabs" id="holdOrgTabs">${types.map(([id, title]) =>
     `<button type="button" class="opt js-hold-org ${holdOrgType === id ? "active" : ""}" data-org="${esc(id)}">${esc(title)}</button>`
   ).join("")}</div>` : "";
-  if (!all.length) {
-    return `${sub}<div class="empty">本期未披露机构持仓构成，不编造分类。</div>`;
+  if (!details.length) {
+    const empty = esc(h.org_holders_note || "本期未披露机构持仓明细，不编造机构名称。");
+    if (!summary.length) return `${sub}<div class="empty">${empty}</div>`;
+    return `${sub}<div class="empty">${empty}</div>
+      <div class="muted" style="font-size:calc(11px * var(--font-scale));margin-top:6px">仅有类型汇总，无机构名称。</div>
+      <table><thead><tr><th>类型</th><th>家数</th><th>持股</th><th>占流通比</th><th>报告期</th></tr></thead>
+      <tbody>${summary.map((r) => `
+        <tr>
+          <td>${esc(r.name)}</td>
+          <td class="num">${r.count != null ? fmtInt(r.count) : "-"}</td>
+          <td class="num">${esc(r.shares_txt || "-")}</td>
+          <td class="num">${r.float_ratio != null ? fmt(r.float_ratio, 2) + "%" : "-"}</td>
+          <td>${esc(r.date || "-")}</td>
+        </tr>`).join("")}</tbody></table>`;
   }
   return `${sub}
-    <table><thead><tr><th>类型</th><th>家数</th><th>持股</th><th>占流通比</th><th>报告期</th></tr></thead>
+    <table><thead><tr>
+      <th>名次</th><th>机构名称</th><th>类型</th><th>持股比例</th><th>持股数量</th><th>变动</th><th>报告期</th>
+    </tr></thead>
     <tbody>${rows.map((r) => `
       <tr>
-        <td>${esc(r.name)}</td>
-        <td class="num">${r.count != null ? fmtInt(r.count) : "-"}</td>
+        <td>${r.rank || "-"}</td>
+        <td><span class="holder-name">${esc(r.name)}</span>${r.code ? ` <span class="muted">${esc(r.code)}</span>` : ""}</td>
+        <td>${esc(r.type_name || "-")}</td>
+        <td class="num">${r.ratio != null ? fmt(r.ratio, 2) + "%" : "-"}</td>
         <td class="num">${esc(r.shares_txt || "-")}</td>
-        <td class="num">${r.float_ratio != null ? fmt(r.float_ratio, 2) + "%" : "-"}</td>
+        <td class="num">${esc(r.change || "-")}</td>
         <td>${esc(r.date || "-")}</td>
       </tr>`).join("")}</tbody></table>
-    <div class="muted" style="font-size:calc(11px * var(--font-scale));margin-top:6px">子集为已披露机构类型。无明细名单的类型只展示汇总，不编造持有人。</div>`;
+    <div class="muted" style="font-size:calc(11px * var(--font-scale));margin-top:6px">${esc(h.org_holders_note || "已披露机构名称与持股比例。缺披露不编造。")}</div>`;
 }
 
 function countsPane(h) {
