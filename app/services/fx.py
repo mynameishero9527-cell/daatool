@@ -14,36 +14,40 @@ log = logging.getLogger("fx")
 _TZ = ZoneInfo("Asia/Shanghai")
 
 # pair, 名称, 国家/地区, ISO, 新浪符号, 东财 secid, 是否 ECB 官方, 计价说明
+# 东财 121.*CNYI 为在岸混合价；JPYCNYI 是 100 日元，换算见 EM_SCALE
 FX_CATALOG: list[tuple[str, str, str, str, str, str, bool, str]] = [
-    ("USDCNY", "美元/人民币", "美国", "USD", "fx_susdcny", "133.USDCNY", True, "1美元兑人民币"),
-    ("EURCNY", "欧元/人民币", "欧元区", "EUR", "fx_seurcny", "133.EURCNY", True, "1欧元兑人民币"),
-    ("JPYCNY", "日元/人民币", "日本", "JPY", "fx_sjpycny", "133.JPYCNY", True, "1日元兑人民币"),
-    ("GBPCNY", "英镑/人民币", "英国", "GBP", "fx_sgbpcny", "133.GBPCNY", True, "1英镑兑人民币"),
-    ("HKDCNY", "港元/人民币", "中国香港", "HKD", "fx_shkdcny", "133.HKDCNY", True, "1港元兑人民币"),
-    ("AUDCNY", "澳元/人民币", "澳大利亚", "AUD", "fx_saudcny", "133.AUDCNY", True, "1澳元兑人民币"),
-    ("CADCNY", "加元/人民币", "加拿大", "CAD", "fx_scadcny", "133.CADCNY", True, "1加元兑人民币"),
-    ("CHFCNY", "瑞士法郎/人民币", "瑞士", "CHF", "fx_schfcny", "133.CHFCNY", True, "1法郎兑人民币"),
-    ("SGDCNY", "新加坡元/人民币", "新加坡", "SGD", "fx_ssgdcny", "133.SGDCNY", True, "1新元兑人民币"),
-    ("NZDCNY", "新西兰元/人民币", "新西兰", "NZD", "fx_snzdcny", "133.NZDCNY", True, "1纽元兑人民币"),
-    ("KRWCNY", "韩元/人民币", "韩国", "KRW", "fx_skrwcny", "133.KRWCNY", True, "1韩元兑人民币"),
-    ("THBCNY", "泰铢/人民币", "泰国", "THB", "fx_sthbcny", "133.THBCNY", True, "1泰铢兑人民币"),
-    ("INRCNY", "印度卢比/人民币", "印度", "INR", "fx_sinrcny", "133.INRCNY", True, "1卢比兑人民币"),
-    ("MYRCNY", "林吉特/人民币", "马来西亚", "MYR", "fx_smyrcny", "133.MYRCNY", True, "1林吉特兑人民币"),
-    ("IDRCNY", "印尼盾/人民币", "印度尼西亚", "IDR", "fx_sidrcny", "133.IDRCNY", True, "1印尼盾兑人民币"),
-    ("PHPCNY", "菲律宾比索/人民币", "菲律宾", "PHP", "fx_sphpcny", "133.PHPCNY", True, "1比索兑人民币"),
-    ("MXNCNY", "墨西哥比索/人民币", "墨西哥", "MXN", "fx_smxncny", "133.MXNCNY", True, "1比索兑人民币"),
-    ("BRLCNY", "巴西雷亚尔/人民币", "巴西", "BRL", "fx_sbrlcny", "133.BRLCNY", True, "1雷亚尔兑人民币"),
-    ("ZARCNY", "南非兰特/人民币", "南非", "ZAR", "fx_szarcny", "133.ZARCNY", True, "1兰特兑人民币"),
-    ("TRYCNY", "土耳其里拉/人民币", "土耳其", "TRY", "fx_strycny", "133.TRYCNY", True, "1里拉兑人民币"),
-    ("DKKCNY", "丹麦克朗/人民币", "丹麦", "DKK", "fx_sdkkcny", "133.DKKCNY", True, "1克朗兑人民币"),
-    ("SEKCNY", "瑞典克朗/人民币", "瑞典", "SEK", "fx_ssekcny", "133.SEKCNY", True, "1克朗兑人民币"),
-    ("NOKCNY", "挪威克朗/人民币", "挪威", "NOK", "fx_snokcny", "133.NOKCNY", True, "1克朗兑人民币"),
-    ("PLNCNY", "波兰兹罗提/人民币", "波兰", "PLN", "fx_splncny", "133.PLNCNY", True, "1兹罗提兑人民币"),
-    ("CZKCNY", "捷克克朗/人民币", "捷克", "CZK", "fx_sczkcny", "133.CZKCNY", True, "1克朗兑人民币"),
-    ("HUFCNY", "匈牙利福林/人民币", "匈牙利", "HUF", "fx_shufcny", "133.HUFCNY", True, "1福林兑人民币"),
-    ("ILSCNY", "以色列新谢克尔/人民币", "以色列", "ILS", "fx_silscny", "133.ILSCNY", True, "1谢克尔兑人民币"),
+    ("USDCNY", "美元/人民币", "美国", "USD", "fx_susdcny", "121.USDCNYI", True, "1美元兑人民币"),
+    ("EURCNY", "欧元/人民币", "欧元区", "EUR", "fx_seurcny", "121.EURCNYI", True, "1欧元兑人民币"),
+    ("JPYCNY", "日元/人民币", "日本", "JPY", "fx_sjpycny", "121.JPYCNYI", True, "1日元兑人民币"),
+    ("GBPCNY", "英镑/人民币", "英国", "GBP", "fx_sgbpcny", "121.GBPCNYI", True, "1英镑兑人民币"),
+    ("HKDCNY", "港元/人民币", "中国香港", "HKD", "fx_shkdcny", "121.HKDCNYI", True, "1港元兑人民币"),
+    ("AUDCNY", "澳元/人民币", "澳大利亚", "AUD", "fx_saudcny", "121.AUDCNYI", True, "1澳元兑人民币"),
+    ("CADCNY", "加元/人民币", "加拿大", "CAD", "fx_scadcny", "121.CADCNYI", True, "1加元兑人民币"),
+    ("CHFCNY", "瑞士法郎/人民币", "瑞士", "CHF", "fx_schfcny", "121.CHFCNYI", True, "1法郎兑人民币"),
+    ("SGDCNY", "新加坡元/人民币", "新加坡", "SGD", "fx_ssgdcny", "121.SGDCNYI", True, "1新元兑人民币"),
+    ("NZDCNY", "新西兰元/人民币", "新西兰", "NZD", "fx_snzdcny", "121.NZDCNYI", True, "1纽元兑人民币"),
+    ("KRWCNY", "韩元/人民币", "韩国", "KRW", "fx_skrwcny", "", True, "1韩元兑人民币"),
+    ("THBCNY", "泰铢/人民币", "泰国", "THB", "fx_sthbcny", "", True, "1泰铢兑人民币"),
+    ("INRCNY", "印度卢比/人民币", "印度", "INR", "fx_sinrcny", "", True, "1卢比兑人民币"),
+    ("MYRCNY", "林吉特/人民币", "马来西亚", "MYR", "fx_smyrcny", "", True, "1林吉特兑人民币"),
+    ("IDRCNY", "印尼盾/人民币", "印度尼西亚", "IDR", "fx_sidrcny", "", True, "1印尼盾兑人民币"),
+    ("PHPCNY", "菲律宾比索/人民币", "菲律宾", "PHP", "fx_sphpcny", "", True, "1比索兑人民币"),
+    ("MXNCNY", "墨西哥比索/人民币", "墨西哥", "MXN", "fx_smxncny", "", True, "1比索兑人民币"),
+    ("BRLCNY", "巴西雷亚尔/人民币", "巴西", "BRL", "fx_sbrlcny", "", True, "1雷亚尔兑人民币"),
+    ("ZARCNY", "南非兰特/人民币", "南非", "ZAR", "fx_szarcny", "", True, "1兰特兑人民币"),
+    ("TRYCNY", "土耳其里拉/人民币", "土耳其", "TRY", "fx_strycny", "", True, "1里拉兑人民币"),
+    ("DKKCNY", "丹麦克朗/人民币", "丹麦", "DKK", "fx_sdkkcny", "", True, "1克朗兑人民币"),
+    ("SEKCNY", "瑞典克朗/人民币", "瑞典", "SEK", "fx_ssekcny", "", True, "1克朗兑人民币"),
+    ("NOKCNY", "挪威克朗/人民币", "挪威", "NOK", "fx_snokcny", "", True, "1克朗兑人民币"),
+    ("PLNCNY", "波兰兹罗提/人民币", "波兰", "PLN", "fx_splncny", "", True, "1兹罗提兑人民币"),
+    ("CZKCNY", "捷克克朗/人民币", "捷克", "CZK", "fx_sczkcny", "", True, "1克朗兑人民币"),
+    ("HUFCNY", "匈牙利福林/人民币", "匈牙利", "HUF", "fx_shufcny", "", True, "1福林兑人民币"),
+    ("ILSCNY", "以色列新谢克尔/人民币", "以色列", "ILS", "fx_silscny", "", True, "1谢克尔兑人民币"),
     ("USDCNH", "美元/离岸人民币", "中国香港", "USD", "fx_susdcnh", "133.USDCNH", False, "离岸价，无欧洲央行官方日线"),
 ]
+
+# 东财柜台习惯：100 日元；统一存 1 外币兑人民币，避免和欧洲央行日线混单位
+EM_SCALE = {"JPYCNY": 0.01}
 
 KEEP_DAYS = 400
 MAX_PULL_DAYS = 400
@@ -285,12 +289,27 @@ def _fetch_live() -> dict[str, dict]:
         except Exception as exc:  # noqa: BLE001
             log.warning("东财汇率失败: %s", exc)
             em_q = {}
-        em_by_code = {row[5].split(".", 1)[-1]: row[0] for row in FX_CATALOG}
+        em_by_code = {row[5].split(".", 1)[-1]: row[0] for row in FX_CATALOG if row[5]}
         for code, q in em_q.items():
             pair = em_by_code.get(code)
             if pair and pair not in by_pair:
-                by_pair[pair] = {**q, "pair": pair}
+                by_pair[pair] = _scale_em_quote(pair, q)
     return by_pair
+
+
+def _scale_em_quote(pair: str, quote: dict) -> dict:
+    """把东财 100 日元等柜台价折成 1 外币兑人民币。"""
+    scale = EM_SCALE.get(pair, 1.0)
+    out = {**quote, "pair": pair}
+    if scale == 1.0:
+        return out
+    if out.get("rate") is not None:
+        out["rate"] = out["rate"] * scale
+    if out.get("prev") is not None:
+        out["prev"] = out["prev"] * scale
+    if out.get("change") is not None:
+        out["change"] = out["change"] * scale
+    return out
 
 
 def refresh_live() -> dict[str, dict]:

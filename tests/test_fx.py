@@ -33,12 +33,20 @@ class FxParseTests(unittest.TestCase):
 
     def test_em_skips_blank_rate(self):
         out = fx_src.parse_em_fx_diff([
-            {"f12": "USDCNY", "f2": "-", "f14": "美元兑人民币"},
-            {"f12": "EURCNY", "f2": 7.85, "f18": 7.80, "f3": 0.64, "f4": 0.05, "f14": "欧元兑人民币"},
+            {"f12": "USDCNYI", "f2": "-", "f14": "美元人民币混合"},
+            {"f12": "EURCNYI", "f2": 7.85, "f18": 7.80, "f3": 0.64, "f4": 0.05, "f14": "欧元人民币混合"},
         ])
-        self.assertNotIn("USDCNY", out)
-        self.assertAlmostEqual(out["EURCNY"]["rate"], 7.85)
-        self.assertAlmostEqual(out["EURCNY"]["prev"], 7.80)
+        self.assertNotIn("USDCNYI", out)
+        self.assertAlmostEqual(out["EURCNYI"]["rate"], 7.85)
+        self.assertAlmostEqual(out["EURCNYI"]["prev"], 7.80)
+
+    def test_em_jpy_100_scaled_to_one(self):
+        raw = {"rate": 4.2358, "prev": 4.2300, "change": 0.0058, "pct": 0.14, "source": "东方财富"}
+        out = fx_svc._scale_em_quote("JPYCNY", raw)
+        self.assertAlmostEqual(out["rate"], 0.042358, places=6)
+        self.assertAlmostEqual(out["prev"], 0.042300, places=6)
+        usd = fx_svc._scale_em_quote("USDCNY", {"rate": 6.74, "prev": 6.75, "change": -0.01, "pct": -0.15})
+        self.assertAlmostEqual(usd["rate"], 6.74)
 
     def test_frankfurter_inverts_and_skips_weekend_and_cnh(self):
         payload = {
