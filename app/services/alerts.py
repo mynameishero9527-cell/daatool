@@ -201,6 +201,8 @@ def _decorate_buy_rows(rows: list[dict], kind: str = "buy") -> None:
             buy_lv, buy_act = metrics_svc.buy_index_level(r.get("buy_index") or 0)
             sent_lv, sent_ds = metrics_svc.sentiment_level(r.get("sentiment") or 50)
             _score, op = rating_svc.quick_score(r)
+            from . import strategy as strategy_svc
+            op = strategy_svc.point_advice(kind, op, r.get("room_to_high"))
             r["buy_level"] = buy_lv
             r["sent_level"] = sent_lv
             r["sent_desc"] = sent_ds
@@ -280,10 +282,14 @@ def _advice_summary(r: dict, kind: str, buy_lv: str, buy_act: str, op: str) -> s
     pos = r.get("pos60")
     pos_txt = f"60日位置 {pos * 100:.0f}% 分位" if pos is not None else ""
     half = _half_txt(r)
+    sc = r.get("score")
+    sc_txt = f"综合评分 {sc:.0f}" if sc is not None else ""
+    room = r.get("room_to_high")
+    room_txt = f"距半年高点 {room:+.1f}%" if room is not None else ""
     if (r.get("point_gate") or "") == "new_stock":
-        sc = r.get("score")
-        sc_txt = f"{sc:.0f}" if sc is not None else "—"
-        half = "，".join(x for x in (half, f"新股通道 综合评分 {sc_txt}") if x)
+        half = "，".join(x for x in (half, "新股通道", sc_txt) if x)
+    else:
+        half = "，".join(x for x in (half, sc_txt, room_txt) if x)
     net = r.get("main_net_in")
     if net is None:
         flow_txt = ""
@@ -310,8 +316,8 @@ def _advice_summary(r: dict, kind: str, buy_lv: str, buy_act: str, op: str) -> s
 def get_buy_points(limit: int = 8) -> dict:
     """实时最佳买点（供全局弹窗）。空结果必须带回原因，避免窗口空白。
 
-    多方案并行扫描。老股须交叉命中至少 2 个方案并结合近半年日K；
-    日K不足即时补真实K线；新股按综合评分+财报评级。不回退观察池。
+    多方案并行扫描。再叠加上涨空间、综合评分、财报评级与板块热度。
+    买点不对减持/空间过小，卖点不对增持/仍有较大空间。不回退观察池。
     """
     from . import strategy as strategy_svc
 

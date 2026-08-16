@@ -7332,7 +7332,10 @@ async function loadBuyPoints() {
           <span class="m ${cls(r.pct)}">${pct(r.pct)}</span>
           <span class="m">量比 <b>${fmt(r.volume_ratio)}</b></span>
           <span class="m">购买指数 <b>${fmt(r.buy_index, 0)}</b></span>
-          ${r.point_gate === "new_stock" ? `<span class="m">新股 <b>综合评分 ${fmt(r.score, 0)}</b></span>` : ""}
+          ${r.score != null ? `<span class="m">综合评分 <b>${fmt(r.score, 0)}</b></span>` : ""}
+          ${r.room_to_high != null ? `<span class="m">上涨空间 <b>${fmt(r.room_to_high, 1)}%</b></span>` : ""}
+          ${r.sector_hot != null ? `<span class="m">板块热度 <b>${fmt(r.sector_hot, 1)}</b></span>` : ""}
+          ${r.point_gate === "new_stock" ? `<span class="m">新股通道</span>` : ""}
           ${r.half_range_pct != null ? `<span class="m">半年振幅 <b>${fmt(r.half_range_pct, 0)}%</b></span>` : ""}
           ${r.half_pos != null ? `<span class="m">半年位置 <b>${fmt(r.half_pos * 100, 0)}%</b></span>` : ""}
           <span class="m">财报评级 ${finBadge(r)}</span>

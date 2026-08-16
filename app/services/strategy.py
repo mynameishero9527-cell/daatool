@@ -5,6 +5,8 @@ SQL 条件全部硬编码在本模块，不接受前端拼 SQL。
 空命中必须带回原因，不拿观察池或低质量票凑数。
 方案 I/J 只用已缓存持股/解禁，缺则零命中。
 最佳买/卖点多方案并行扫描；老股须交叉命中至少 2 个方案并结合近半年真实日K；
+再叠加板块热度、综合评分、财报评级、距半年高点上涨空间；
+买点不对减持/空间过小，卖点不对增持/仍有较大空间；
 日K不完整即时补真实K线（不用涨跌幅/离线哈希冒充）；
 新股改走综合评分 + 财报评级，未评级不伪造 A。
 """
@@ -20,7 +22,7 @@ META_KEY = "strategy_enabled"  # 兼容旧键：曾同时控制买/卖
 META_KEY_BUY = "strategy_enabled_buy"
 META_KEY_SELL = "strategy_enabled_sell"
 RULES_VER_KEY = "strategy_rules_ver"
-RULES_VER = "13.0.32"
+RULES_VER = "13.0.34"
 DEFAULT_BUY_IDS = ["BP", "BT", "BZ"]
 DEFAULT_SELL_IDS = ["ST", "SO", "SR"]
 DEFAULT_IDS = list(DEFAULT_BUY_IDS)  # 兼容旧测试/调用，仅表示买点默认
@@ -31,6 +33,15 @@ NEW_LAST_DAYS = 12
 NEW_BUY_MIN_SCORE = 65.0
 NEW_SELL_MIN_SCORE = 72.0
 NEW_BUY_GRADES = ("A", "B")
+BUY_MIN_SCORE = 60.0
+BUY_MIN_ROOM = 12.0
+BUY_MAX_HALF_POS = 0.68
+SELL_MAX_ROOM = 8.0
+SELL_TINY_ROOM = 5.0
+SELL_MIN_HALF_POS = 0.80
+HOT_FLOOR = -5.0
+GOOD_GRADES = ("A", "B")
+WEAK_GRADES = ("C", "D")
 NAME_OK = "s.name NOT LIKE '%ST%' AND s.name NOT LIKE '%退%'"
 PER_PLAN_CAP = 80
 _TZ = ZoneInfo("Asia/Shanghai")
@@ -127,14 +138,14 @@ _reg_buy(SidePlan(
     summary="中位区间、持续净流入、未超买。默认买点之一，用来找还有空间的票，不接暴跌也不追高。",
     formula=(
         "BuyIndex ≥ 70  ∧  当日主力净流入>0  ∧  5日主力净流入≥0\n"
-        "∧  0.22 ≤ pos60 ≤ 0.70  ∧  当日涨跌 > −3%\n"
+        "∧  0.22 ≤ pos60 ≤ 0.66  ∧  当日涨跌 > −3%\n"
         "∧  量比 0.85–2.6  ∧  情绪<82  ∧  乖离<12  ∧  RSI 在 40–68（有值才限）\n"
         "排除 ST/退市、暴跌、情绪过热、60日顶部。"
     ),
     where=(
         f"{_BUY_SAFE} AND m.buy_index >= 70 AND s.main_net_in > 0 "
         "AND COALESCE(s.main_net_in_d5, 0) >= 0 "
-        "AND m.pos60 IS NOT NULL AND m.pos60 >= 0.22 AND m.pos60 <= 0.70 "
+        "AND m.pos60 IS NOT NULL AND m.pos60 >= 0.22 AND m.pos60 <= 0.66 "
         "AND s.pct > -3 "
         "AND (s.pct_d5 IS NULL OR s.pct_d5 > -8) "
         "AND (s.volume_ratio IS NULL OR (s.volume_ratio >= 0.85 AND s.volume_ratio <= 2.6)) "
@@ -271,11 +282,11 @@ _reg_sell(SidePlan(
     summary="高位或中高位出现持续净流出/暗中派发。用来规避主力离场，不把低位阴跌弱票标成卖点。",
     formula=(
         "当日主力净流入 < −5000万  ∧  (5日净流入<0 ∨ 暗中派发)\n"
-        "∧  pos60 ≥ 0.45"
+        "∧  pos60 ≥ 0.62"
     ),
     where=(
         "s.main_net_in < -5000 AND (COALESCE(s.main_net_in_d5, 0) < 0 OR m.divergence = '暗中派发') "
-        "AND (m.pos60 IS NULL OR m.pos60 >= 0.45)"
+        "AND m.pos60 IS NOT NULL AND m.pos60 >= 0.62"
     ),
     action="资金出逃·避险减仓",
     order="s.main_net_in ASC",
@@ -684,6 +695,7 @@ def attach_half_year(row: dict, stats: dict | None) -> dict:
         row["half_range_pct"] = None
         row["half_pos"] = None
         row["half_last_date"] = None
+        row["room_to_high"] = None
         return row
     row.update(stats)
     price = row.get("price")
@@ -700,6 +712,11 @@ def attach_half_year(row: dict, stats: dict | None) -> dict:
         row["half_pos"] = None
     else:
         row["half_pos"] = (price - lo) / span
+    hi = stats.get("half_high") if stats else None
+    if price and hi is not None and price > 0:
+        row["room_to_high"] = (float(hi) - float(price)) / float(price) * 100.0
+    else:
+        row["room_to_high"] = None
     return row
 
 
@@ -710,15 +727,20 @@ def half_year_pass(row: dict, kind: str) -> bool:
     rng = row.get("half_range_pct")
     pos = row.get("half_pos")
     ret = row.get("half_ret")
+    room = row.get("room_to_high")
     if rng is None or pos is None or ret is None:
         return False
     if kind == "sell":
-        if pos < 0.68 or rng < 10:
+        if pos < SELL_MIN_HALF_POS or rng < 10:
             return False
-        return ret >= 0 or pos >= 0.78
+        if room is None or room > SELL_MAX_ROOM:
+            return False
+        return ret >= 0 or pos >= 0.88
     if rng < 12 or rng > 90:
         return False
-    if pos < 0.18 or pos > 0.80:
+    if pos < 0.18 or pos > BUY_MAX_HALF_POS:
+        return False
+    if room is None or room < BUY_MIN_ROOM:
         return False
     return ret > -40
 
@@ -731,13 +753,68 @@ def _codes_needing_backfill(codes: list[str]) -> list[str]:
 def _attach_score_finance(items: list[dict]) -> None:
     from . import finance as finance_svc
     from . import rating as rating_svc
+    from . import sector as sector_svc
     finance_svc.attach_grades(items)
+    heat_map = {}
+    try:
+        heat_map = sector_svc.industry_heat_map()
+    except Exception:  # noqa: BLE001
+        heat_map = {}
     for r in items:
-        if r.get("score") is None:
-            score, advice = rating_svc.quick_score(r)
-            r["score"] = score
-            r.setdefault("op_advice", advice)
+        score, advice = rating_svc.quick_score(r)
+        r["score"] = score
+        r["score_advice"] = advice
         r["finance_grade"] = (r.get("finance_grade") or "").strip()
+        industry = (r.get("industry") or "").strip()
+        r["sector_hot"] = heat_map.get(industry)
+        r["op_advice"] = point_advice(r.get("side") or "", advice, r.get("room_to_high"))
+
+
+def point_advice(kind: str, score_advice: str, room_to_high=None) -> str:
+    """买/卖点操作建议与名单方向对齐，避免买点亮减持、卖点亮增持。"""
+    if kind == "sell":
+        return "减持"
+    if score_advice == "减持":
+        return "减持"
+    if score_advice == "增持":
+        return "增持"
+    return "保持不变"
+
+
+def quality_pass(row: dict, kind: str) -> bool:
+    """板块热度、综合评分、财报、上涨空间。财报不并入评分，未评级不伪造 A。"""
+    score = row.get("score")
+    try:
+        score = float(score) if score is not None else None
+    except (TypeError, ValueError):
+        score = None
+    grade = (row.get("finance_grade") or "").strip()
+    advice = row.get("score_advice") or row.get("op_advice") or ""
+    room = row.get("room_to_high")
+    heat = row.get("sector_hot")
+    if kind == "sell":
+        if room is None or room > SELL_MAX_ROOM:
+            return False
+        if advice == "增持" and room > SELL_TINY_ROOM:
+            return False
+        # 板块仍热且离半年高点还有空间：先不标卖点，避免和热度/评分打架
+        if heat is not None and heat >= 5 and room > SELL_TINY_ROOM:
+            return False
+        return True
+    if score is None or score < BUY_MIN_SCORE:
+        return False
+    if advice == "减持":
+        return False
+    if heat is not None and heat < HOT_FLOOR:
+        return False
+    if grade in WEAK_GRADES:
+        return False
+    if room is None:
+        return False
+    if grade in GOOD_GRADES:
+        return room >= BUY_MIN_ROOM
+    # 未评级：不伪造 A，只允许更高分且空间更大
+    return score >= 70 and room >= 18
 
 
 def is_new_listing(row: dict) -> bool:
@@ -767,9 +844,11 @@ def new_stock_pass(row: dict, kind: str) -> bool:
     except (TypeError, ValueError):
         return False
     if kind == "sell":
-        if grade in ("C", "D") and score >= 50:
+        if grade in WEAK_GRADES and score >= 50:
             return True
         return score >= NEW_SELL_MIN_SCORE
+    if (row.get("score_advice") or "") == "减持":
+        return False
     return score >= NEW_BUY_MIN_SCORE and grade in NEW_BUY_GRADES
 
 
@@ -796,14 +875,19 @@ def apply_recommend_gate(
         attach_half_year(r, stats.get(r.get("code") or ""))
         r["kline_backfilled"] = r.get("code") in backfilled
         hits = len(r.get("plans") or [])
-        if half_year_pass(r, kind) and hits >= need_hits:
+        r["side"] = "sell" if kind == "sell" else "buy"
+        r["op_advice"] = point_advice(kind, r.get("score_advice") or "", r.get("room_to_high"))
+        ok = False
+        if half_year_pass(r, kind) and hits >= need_hits and quality_pass(r, kind):
             r["point_gate"] = "half_year"
-            kept.append(r)
-        elif is_new_listing(r) and new_stock_pass(r, kind) and hits >= 1:
+            ok = True
+        elif is_new_listing(r) and new_stock_pass(r, kind) and hits >= 1 and quality_pass(r, kind):
             r["point_gate"] = "new_stock"
-            kept.append(r)
+            ok = True
         else:
             r["point_gate"] = ""
+        if ok:
+            kept.append(r)
     return kept
 
 
@@ -829,8 +913,8 @@ def _empty_half_reason(enabled: list[str], kind: str, had_hits: bool) -> str:
     if had_hits:
         return (
             f"当前启用{side}方案（{names}）已并行扫描到命中，"
-            "但老股未同时过半年波动门（或未交叉命中足够方案），"
-            "新股也未同时达到综合评分与财报评级门槛。"
+            "但未同时通过半年波动、上涨空间、综合评分、财报或板块热度门禁，"
+            "或未交叉命中足够方案。"
             f"{tail}已尝试补真实日K；补不到的不编造。"
         )
     extra = (
@@ -844,6 +928,39 @@ def _empty_half_reason(enabled: list[str], kind: str, had_hits: bool) -> str:
     )
 
 
+def _rank_kept(items: list[dict], kind: str) -> list[dict]:
+    """过门禁后再按空间/评分/热度排，买点优先还有空间，卖点优先贴近半年高。"""
+    def key(r: dict):
+        room = r.get("room_to_high")
+        score = r.get("score")
+        heat = r.get("sector_hot")
+        pos = r.get("half_pos")
+        try:
+            room_v = float(room) if room is not None else (-1.0 if kind == "buy" else 99.0)
+        except (TypeError, ValueError):
+            room_v = -1.0 if kind == "buy" else 99.0
+        try:
+            score_v = float(score) if score is not None else 0.0
+        except (TypeError, ValueError):
+            score_v = 0.0
+        try:
+            heat_v = float(heat) if heat is not None else 0.0
+        except (TypeError, ValueError):
+            heat_v = 0.0
+        try:
+            pos_v = float(pos) if pos is not None else 0.0
+        except (TypeError, ValueError):
+            pos_v = 0.0
+        boost = 1 if (r.get("score_advice") or "") == "增持" else 0
+        grade = (r.get("finance_grade") or "").strip()
+        grade_v = 2 if grade == "A" else 1 if grade == "B" else 0
+        if kind == "sell":
+            return (room_v, -pos_v, -score_v)
+        return (-boost, -room_v, -score_v, -heat_v, -grade_v)
+
+    return sorted(items, key=key)
+
+
 def collect_buy_points(limit: int = 12, backfill: bool = True) -> tuple[list[dict], str, str]:
     """实时买点窗：多方案并行；老股交叉命中+半年日K，新股综合评分+财报评级。"""
     limit = max(3, min(int(limit or 12), 40))
@@ -854,7 +971,7 @@ def collect_buy_points(limit: int = 12, backfill: bool = True) -> tuple[list[dic
     raw = collect_hits("buy", enabled, limit=PER_PLAN_CAP, min_hits=1)
     kept = apply_recommend_gate(raw, "buy", backfill=backfill, min_hits=need)
     if kept:
-        return _fair_take(kept, enabled, limit), "hit", _hit_note(enabled, "buy")
+        return _fair_take(_rank_kept(kept, "buy"), enabled, limit), "hit", _hit_note(enabled, "buy")
     return [], "empty", _empty_half_reason(enabled, "buy", had_hits=bool(raw))
 
 
@@ -867,15 +984,16 @@ def collect_sell_points(limit: int = 12, backfill: bool = True) -> tuple[list[di
     raw = collect_hits("sell", enabled, limit=PER_PLAN_CAP, min_hits=1)
     kept = apply_recommend_gate(raw, "sell", backfill=backfill, min_hits=need)
     if kept:
-        return _fair_take(kept, enabled, limit), "hit", _hit_note(enabled, "sell")
+        return _fair_take(_rank_kept(kept, "sell"), enabled, limit), "hit", _hit_note(enabled, "sell")
     return [], "empty", _empty_half_reason(enabled, "sell", had_hits=bool(raw))
 
 
 def _hit_note(enabled: list[str], kind: str) -> str:
     labels = "、".join(plan_caption(i, kind) for i in enabled)
     gate = (
-        f"多方案并行扫描。老股须交叉命中至少 {MIN_PLAN_HITS} 个方案并结合近半年真实日K；"
-        "日K不足会即时补真实K线；新股改看综合评分与财报评级（未评级不伪造）。"
+        f"多方案并行扫描。老股须交叉命中至少 {MIN_PLAN_HITS} 个方案，并结合近半年日K、"
+        "上涨空间、综合评分、财报评级与板块热度；买点不对减持/空间过小，卖点不对增持/仍有较大空间。"
+        "日K不足会即时补真实K线；未评级不伪造 A。"
     )
     if kind == "buy":
         extra = "买点只保留有潜力结构的命中，不接飞刀、不追高潮、不展示观察池。"
@@ -910,8 +1028,8 @@ def executing_text(kind: str = "buy", enabled: list[str] | None = None) -> dict:
         f"当前执行的{prefix}策略：{title}",
         f"{prefix}与另一侧完全分开勾选、分开扫描，方案名称也不共用。",
         f"多方案可并行勾选。老股须交叉命中至少 {MIN_PLAN_HITS} 个方案，并结合近半年真实日K。",
-        "日K不完整会即时补真实K线；新股按综合评分+财报评级，未评级不伪造 A。",
-        "财报评级为独立维度，不并入购买指数或综合评分。",
+        "再叠加板块热度、综合评分、财报评级、距半年高点上涨空间；买点与增持一致，卖点与减持/兑现一致。",
+        "日K不完整会即时补真实K线；未评级不伪造 A。财报评级不并入购买指数或综合评分。",
         "空名单不回退观察池，不编造个股，不用涨跌幅冒充日K。",
         "",
     ]
@@ -988,7 +1106,9 @@ def get_config() -> dict:
         "note": (
             "买点策略与卖点策略分开勾选、分开扫描，名称也不共用。"
             "买点默认「潜力主升 + 趋势回踩 + 企稳蓄势」，卖点默认「高位止盈 + 超买回吐 + 资金出逃避险」。"
-            f"多方案并行扫描；老股须交叉命中至少 {MIN_PLAN_HITS} 个方案并结合近半年日K；"
-            "缺K线即时补真实日K；新股按综合评分+财报评级。空列表回退到该侧默认方案，不再用观察池凑数。"
+            f"多方案并行扫描；老股须交叉命中至少 {MIN_PLAN_HITS} 个方案，"
+            "再结合近半年日K、上涨空间、综合评分、财报与板块热度。"
+            "买点不对减持/空间过小，卖点不对增持/仍有较大空间。缺K线即时补真实日K。"
+            "空列表回退到该侧默认方案，不再用观察池凑数。"
         ),
     }
