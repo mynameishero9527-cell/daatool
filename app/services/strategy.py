@@ -1,7 +1,9 @@
-"""选股策略方案：最佳买点 / 最佳卖点可多方案并行。
+"""选股策略：最佳买点看潜力，最佳卖点看止盈/避险。两侧方案名与规则完全分开。
 
-方案 A 即现行线上逻辑。SQL 条件全部硬编码在本模块，不接受前端拼 SQL。
+SQL 条件全部硬编码在本模块，不接受前端拼 SQL。
 财报评级为独立维度，不并入购买指数。
+空命中必须带回原因，不拿观察池或低质量票凑数。
+方案 I/J 只用已缓存持股/解禁，缺则零命中。
 """
 from __future__ import annotations
 
@@ -12,9 +14,18 @@ from ..database import get_meta_json, query, set_meta_json
 META_KEY = "strategy_enabled"  # 兼容旧键：曾同时控制买/卖
 META_KEY_BUY = "strategy_enabled_buy"
 META_KEY_SELL = "strategy_enabled_sell"
-DEFAULT_IDS = ["A"]
+DEFAULT_BUY_IDS = ["BP"]
+DEFAULT_SELL_IDS = ["ST"]
+DEFAULT_IDS = list(DEFAULT_BUY_IDS)  # 兼容旧测试/调用，仅表示买点默认
 NAME_OK = "s.name NOT LIKE '%ST%' AND s.name NOT LIKE '%退%'"
 PER_PLAN_CAP = 80
+
+# 买点共用安全闸：排除暴跌、情绪过热追高、已在 60 日顶部
+_BUY_SAFE = (
+    "s.price IS NOT NULL AND s.pct > -5 "
+    "AND (m.sentiment IS NULL OR m.sentiment < 85) "
+    "AND (m.pos60 IS NULL OR m.pos60 <= 0.78)"
+)
 
 _SELECT = """SELECT s.code, s.name, s.pct, s.volume_ratio, s.price, s.main_net_in,
        s.main_net_in_d5, s.pct_d5, s.pct_d20, s.float_mv, s.turnover_rate,
@@ -34,11 +45,11 @@ BUY_INDEX_FORMULA = """购买指数 BuyIndex（FR2-03，0–100，财报评级�
   F_trend = clamp(50 + 15·ma_bull + 10·above_ma20 + (MACD柱>0 ? 10 : −10) + clamp(pct_d20, −20, 20))
   F_fund  = clamp(50 + clamp(当日主力净流入/流通市值×400, −30, 30) + clamp((量比−1)×10, −15, 15))
   F_sent  = clamp(100 − |情绪温度−60|×1.8)               // 情绪<15 恐慌冰点再 +15
-  Dark    = 暗盘力量（见方案 D）
+  Dark    = 暗盘力量
   Env     = 市场环境分
   BuyIndex = clamp(0.25·F_pos + 0.20·F_trend + 0.20·F_fund + 0.15·Dark + 0.10·F_sent + 0.10·Env)
   若过企稳四闸门：BuyIndex += min(6, Stabilize/20)
-分档：≥80 极佳买点 · ≥65 较好 · ≥50 中性 · ≥35 偏差 · 否则高风险"""
+分档：≥80 极佳 · ≥65 较好 · ≥50 中性 · ≥35 偏差 · 否则高风险。买点策略另加结构过滤，不用分档单独凑名单。"""
 
 STABILIZE_FORMULA = """企稳四闸门（FR2-02，四闸全过才计 Stabilize，否则为 NULL）：
   G1 深度：drawdown60 ≥ 25% 且 pos60 ≤ 0.30
@@ -54,274 +65,304 @@ DARK_FORMULA = """暗盘力量 Dark（FR2-06，0–100）：
 
 
 @dataclass(frozen=True)
-class Plan:
+class SidePlan:
     id: str
     name: str
     summary: str
-    buy_formula: str
-    sell_formula: str
-    buy_where: str
-    sell_where: str
-    buy_action: str
-    sell_action: str
-    buy_order: str = "m.buy_index DESC"
-    sell_order: str = "m.buy_index ASC"
-    buy_fallback_where: str | None = None
+    formula: str
+    where: str
+    action: str
+    order: str = "m.buy_index DESC"
     extra_docs: str = ""
+    default_off: bool = False
 
 
-PLANS: dict[str, Plan] = {}
+BUY_PLANS: dict[str, SidePlan] = {}
+SELL_PLANS: dict[str, SidePlan] = {}
+PLANS: dict[str, SidePlan] = {}
 
 
-def _reg(plan: Plan) -> Plan:
+def _reg_buy(plan: SidePlan) -> SidePlan:
+    BUY_PLANS[plan.id] = plan
     PLANS[plan.id] = plan
     return plan
 
 
-_reg(Plan(
-    id="A",
-    name="购买指数极值",
-    summary="现行线上方案。买点看购买指数高位且主力净流入；卖点看指数低位或资金出逃叠加情绪过热。",
-    buy_formula=(
-        "主规则：BuyIndex ≥ 80  ∧  主力净流入 main_net_in > 0\n"
-        "回退：当日无主规则命中时，BuyIndex ≥ 65  ∧  main_net_in > 0（较好买点观察，非极佳）\n"
-        "排除 ST / 退市。观察池（按 BuyIndex 从高到低）仅在方案 A 启用且所有启用方案均无命中时使用，且不得标为极佳买点。"
+def _reg_sell(plan: SidePlan) -> SidePlan:
+    SELL_PLANS[plan.id] = plan
+    PLANS[plan.id] = plan
+    return plan
+
+
+def catalog_map(kind: str) -> dict[str, SidePlan]:
+    return SELL_PLANS if kind == "sell" else BUY_PLANS
+
+
+# —— 买点：筛选有结构的潜力，不接飞刀、不追高潮 ——
+_reg_buy(SidePlan(
+    id="BP",
+    name="潜力主升",
+    summary="中位区间、持续净流入、未超买。默认买点，用来找还有空间的票，不接暴跌也不追高。",
+    formula=(
+        "BuyIndex ≥ 70  ∧  当日主力净流入>0  ∧  5日主力净流入≥0\n"
+        "∧  0.22 ≤ pos60 ≤ 0.70  ∧  当日涨跌 > −3%\n"
+        "∧  量比 0.85–2.6  ∧  情绪<82  ∧  乖离<12  ∧  RSI 在 40–68（有值才限）\n"
+        "排除 ST/退市、暴跌、情绪过热、60日顶部。"
     ),
-    sell_formula=(
-        "BuyIndex ≤ 30\n"
-        "  ∨  (主力净流入 < −8000 万  ∧  情绪温度 ≥ 80)"
+    where=(
+        f"{_BUY_SAFE} AND m.buy_index >= 70 AND s.main_net_in > 0 "
+        "AND COALESCE(s.main_net_in_d5, 0) >= 0 "
+        "AND m.pos60 IS NOT NULL AND m.pos60 >= 0.22 AND m.pos60 <= 0.70 "
+        "AND s.pct > -3 "
+        "AND (s.pct_d5 IS NULL OR s.pct_d5 > -8) "
+        "AND (s.volume_ratio IS NULL OR (s.volume_ratio >= 0.85 AND s.volume_ratio <= 2.6)) "
+        "AND (m.sentiment IS NULL OR m.sentiment < 82) "
+        "AND (m.bias20 IS NULL OR m.bias20 < 12) "
+        "AND (m.rsi14 IS NULL OR (m.rsi14 >= 40 AND m.rsi14 <= 68))"
     ),
-    buy_where="m.buy_index >= 80 AND s.main_net_in > 0",
-    buy_fallback_where="m.buy_index >= 65 AND s.main_net_in > 0",
-    sell_where="(m.buy_index <= 30 OR (s.main_net_in < -8000 AND m.sentiment >= 80))",
-    buy_action="极佳买点·可分批建仓",
-    sell_action="高风险位置·建议回避",
+    action="中位净流入·潜力观察，可分批跟踪",
     extra_docs=BUY_INDEX_FORMULA,
 ))
 
-_reg(Plan(
-    id="B",
-    name="企稳四闸门",
-    summary="低位缩量后资金回流的企稳买点；高位或闸门失效视为卖点。",
-    buy_formula=(
-        "stabilize_score IS NOT NULL  ∧  main_net_in > 0  ∧  pos60 ≤ 0.45\n"
-        "含义：四闸门全过且仍处 60 日区间下半区，当日主力净流入。"
+_reg_buy(SidePlan(
+    id="BT",
+    name="趋势回踩",
+    summary="多头趋势里缩量回踩，资金仍在。用来找主升浪中的低吸，不买均线已坏的票。",
+    formula=(
+        "均线多头  ∧  站上MA20  ∧  MACD柱>0  ∧  主力净流入>0\n"
+        "∧  0.32 ≤ pos60 ≤ 0.68  ∧  (缩量回踩 ∨ 当日振幅温和)\n"
+        "∧  BuyIndex ≥ 58  ∧  乖离<10"
     ),
-    sell_formula="pos60 ≥ 0.85  ∧  (情绪温度 ≥ 78  ∨  stabilize_score IS NULL)",
-    buy_where="m.stabilize_score IS NOT NULL AND s.main_net_in > 0 AND m.pos60 <= 0.45",
-    sell_where="m.pos60 >= 0.85 AND (m.sentiment >= 78 OR m.stabilize_score IS NULL)",
-    buy_action="四闸门企稳·可轻仓试探",
-    sell_action="高位或闸门失效·减仓回避",
-    buy_order="m.stabilize_score DESC",
+    where=(
+        f"{_BUY_SAFE} AND m.ma_bull = 1 AND m.above_ma20 = 1 AND m.macd_bar > 0 "
+        "AND s.main_net_in > 0 AND m.buy_index >= 58 "
+        "AND m.pos60 IS NOT NULL AND m.pos60 >= 0.32 AND m.pos60 <= 0.68 "
+        "AND (m.pullback_shrink = 1 OR (s.pct >= -2.5 AND s.pct <= 2.5)) "
+        "AND (m.bias20 IS NULL OR m.bias20 < 10)"
+    ),
+    action="趋势回踩·等稳可跟",
+    order="m.macd_bar DESC",
+))
+
+_reg_buy(SidePlan(
+    id="BZ",
+    name="企稳蓄势",
+    summary="四闸门已过、低位、资金连续回流，且 RSI 已离开冰点。不是超卖接飞刀。",
+    formula=(
+        "stabilize_score ≥ 65  ∧  当日及5日主力净流入不差\n"
+        "∧  pos60 ≤ 0.42  ∧  BuyIndex ≥ 55\n"
+        "∧  RSI 有值则 ≥ 32（已离开极端超卖） ∧  5日跌幅 > −10%"
+    ),
+    where=(
+        f"{_BUY_SAFE} AND m.stabilize_score IS NOT NULL AND m.stabilize_score >= 65 "
+        "AND s.main_net_in > 0 AND COALESCE(s.main_net_in_d5, 0) >= 0 "
+        "AND m.pos60 IS NOT NULL AND m.pos60 <= 0.42 AND m.buy_index >= 55 "
+        "AND (m.rsi14 IS NULL OR m.rsi14 >= 32) "
+        "AND (s.pct_d5 IS NULL OR s.pct_d5 > -10)"
+    ),
+    action="低位企稳·轻仓蓄势",
+    order="m.stabilize_score DESC",
     extra_docs=STABILIZE_FORMULA,
 ))
 
-_reg(Plan(
-    id="C",
-    name="超跌 RSI 反弹",
-    summary="RSI 超卖、低位缩量回调且资金回流；超买叠加高乖离兑现。",
-    buy_formula=(
-        "RSI14 < 32  ∧  pos60 ≤ 0.35  ∧  main_net_in > 0  ∧  pullback_shrink = 1\n"
-        "RSI14 = 100 × 近14日上涨幅度 / (上涨幅度+下跌幅度)（本地简易口径）\n"
-        "pullback_shrink：近3日跌幅在 (−5%, 0) 且 5日均量 < 20日均量×0.8"
+_reg_buy(SidePlan(
+    id="BD",
+    name="资金吸筹",
+    summary="价跌资金进且暗盘偏强，但拒绝自由落体。用来跟踪主力吸筹，不是抄底暴跌。",
+    formula=(
+        "divergence=暗中吸筹  ∧  Dark≥68  ∧  主力净流入>0\n"
+        "∧  pos60≤0.58  ∧  BuyIndex≥52  ∧  当日>−4%  ∧  5日>−8%"
     ),
-    sell_formula="RSI14 > 75  ∧  bias20 > 12%\nbias20 = (现价 / MA20 − 1) × 100",
-    buy_where=(
-        "m.rsi14 IS NOT NULL AND m.rsi14 < 32 AND m.pos60 <= 0.35 "
-        "AND s.main_net_in > 0 AND m.pullback_shrink = 1"
+    where=(
+        f"{_BUY_SAFE} AND m.divergence = '暗中吸筹' AND m.dark_power >= 68 "
+        "AND s.main_net_in > 0 AND m.buy_index >= 52 "
+        "AND m.pos60 IS NOT NULL AND m.pos60 <= 0.58 "
+        "AND s.pct > -4 AND (s.pct_d5 IS NULL OR s.pct_d5 > -8)"
     ),
-    sell_where="m.rsi14 IS NOT NULL AND m.rsi14 > 75 AND m.bias20 > 12",
-    buy_action="超卖缩量·轻仓博弈反弹",
-    sell_action="超买高乖离·注意兑现",
-    buy_order="m.rsi14 ASC",
-    sell_order="m.rsi14 DESC",
-))
-
-_reg(Plan(
-    id="D",
-    name="暗中吸筹",
-    summary="价量背离：下跌时主力净流入视为吸筹；上涨时净流出视为派发。",
-    buy_formula="divergence = '暗中吸筹'  ∧  Dark ≥ 65  ∧  main_net_in > 0",
-    sell_formula="divergence = '暗中派发'  ∧  Dark ≤ 40",
-    buy_where="m.divergence = '暗中吸筹' AND m.dark_power >= 65 AND s.main_net_in > 0",
-    sell_where="m.divergence = '暗中派发' AND m.dark_power <= 40",
-    buy_action="暗中吸筹·可跟踪资金",
-    sell_action="暗中派发·警惕减仓",
-    buy_order="m.dark_power DESC",
-    sell_order="m.dark_power ASC",
+    action="暗中吸筹·跟踪资金",
+    order="m.dark_power DESC",
     extra_docs=DARK_FORMULA,
 ))
 
-_reg(Plan(
-    id="E",
-    name="均线多头 + MACD 金叉",
-    summary="趋势跟随：均线多头、站上 MA20、近3日 MACD 金叉且资金流入。",
-    buy_formula=(
-        "ma_bull = 1  ∧  macd_gold = 1  ∧  above_ma20 = 1  ∧  main_net_in > 0\n"
-        "ma_bull：MA5 > MA10 > MA20\n"
-        "macd_gold：近3日内 DIF 上穿 DEA\n"
-        "MACD柱 = 2×(DIF−DEA)，DIF=EMA12−EMA26，DEA=DIF 的 9 日 EMA"
-    ),
-    sell_formula="ma_bull = 0  ∧  MACD柱 < 0  ∧  近5日涨跌幅 < −3%",
-    buy_where="m.ma_bull = 1 AND m.macd_gold = 1 AND m.above_ma20 = 1 AND s.main_net_in > 0",
-    sell_where="m.ma_bull = 0 AND m.macd_bar < 0 AND s.pct_d5 < -3",
-    buy_action="趋势金叉·可顺势跟踪",
-    sell_action="均线破坏·注意止盈",
-    buy_order="m.macd_bar DESC",
-))
-
-_reg(Plan(
-    id="F",
-    name="低位放量回补 / 高位兑现",
-    summary="中低位购买指数尚可且放量净流入；走到 60 日高位叠加过热或资金流出则兑现。",
-    buy_formula="BuyIndex ≥ 70  ∧  pos60 ≤ 0.50  ∧  量比 ≥ 1.2  ∧  main_net_in > 0",
-    sell_formula="pos60 ≥ 0.90  ∧  (情绪温度 ≥ 78  ∨  main_net_in < 0)",
-    buy_where="m.buy_index >= 70 AND m.pos60 <= 0.50 AND s.volume_ratio >= 1.2 AND s.main_net_in > 0",
-    sell_where="m.pos60 >= 0.90 AND (m.sentiment >= 78 OR s.main_net_in < 0)",
-    buy_action="低位放量·可回补观察",
-    sell_action="高位过热·建议兑现",
-))
-
-_reg(Plan(
-    id="G",
-    name="量能回踩均线",
-    summary="站上 MA20 后缩量回踩、MACD 柱仍红且资金流入，避免追高；放量高乖离减仓。",
-    buy_formula=(
-        "above_ma20 = 1  ∧  pullback_shrink = 1  ∧  MACD柱 > 0\n"
-        "  ∧  main_net_in > 0  ∧  0.35 ≤ pos60 ≤ 0.70"
-    ),
-    sell_formula="量比 ≥ 2.5  ∧  bias20 > 10%  ∧  情绪温度 ≥ 75",
-    buy_where=(
-        "m.above_ma20 = 1 AND m.pullback_shrink = 1 AND m.macd_bar > 0 "
-        "AND s.main_net_in > 0 AND m.pos60 >= 0.35 AND m.pos60 <= 0.70"
-    ),
-    sell_where="s.volume_ratio >= 2.5 AND m.bias20 > 10 AND m.sentiment >= 75",
-    buy_action="回踩均线·可等企稳加仓",
-    sell_action="放量高乖离·减仓防回吐",
-))
-
-_reg(Plan(
-    id="H",
-    name="乖离率超卖",
-    summary="相对 MA20 大幅负乖离且仍有资金回流；正乖离过大叠加 RSI 超买卖出。",
-    buy_formula=(
-        "bias20 ≤ −8%  ∧  RSI14 < 40  ∧  main_net_in > 0  ∧  drawdown60 ≥ 15%\n"
-        "bias20 = (现价 / MA20 − 1) × 100"
-    ),
-    sell_formula="bias20 ≥ 15%  ∧  RSI14 > 70",
-    buy_where=(
-        "m.bias20 <= -8 AND m.rsi14 IS NOT NULL AND m.rsi14 < 40 "
-        "AND s.main_net_in > 0 AND m.drawdown60 >= 15"
-    ),
-    sell_where="m.bias20 >= 15 AND m.rsi14 IS NOT NULL AND m.rsi14 > 70",
-    buy_action="负乖离超卖·可分批试探",
-    sell_action="正乖离过大·注意回归",
-    buy_order="m.bias20 ASC",
-    sell_order="m.bias20 DESC",
-))
-
-_reg(Plan(
+_reg_buy(SidePlan(
     id="I",
-    name="筹码集中 / 户数扩散",
-    summary="只用已缓存持股。户数环比下降且当期有机构披露为买；户数明显扩散为卖。缺缓存零命中，不猜户数。",
-    buy_formula=(
-        "holders_qoq < 0  ∧  当期有机构占比或机构家数披露  ∧  main_net_in > 0  ∧  非 ST\n"
-        "机构无上期序列，不编造「机构占流通上升 / 家数增加」，只要求当期有披露。\n"
-        "数据仅来自已打开持股页缓存的 stock_holders，不扫全市场 HTTP。"
+    name="筹码集中",
+    summary="只用已缓存持股。户数环比下降且当期有机构披露，再叠加净流入与位置。缺缓存零命中。默认关闭。",
+    formula=(
+        "holders_qoq < 0  ∧  当期有机构披露  ∧  主力净流入>0\n"
+        "∧  BuyIndex ≥ 58  ∧  pos60 ≤ 0.70  ∧  当日 > −5%\n"
+        "不编造户数，不扫全市场 HTTP。"
     ),
-    sell_formula=(
-        "holders_qoq ≥ 5（户数环比明显上升） ∧ 当期有机构披露\n"
-        "无机构上期，不编造「机构占比下降」。"
-    ),
-    buy_where=(
-        "s.main_net_in > 0 AND EXISTS ("
+    where=(
+        f"{_BUY_SAFE} AND s.main_net_in > 0 AND m.buy_index >= 58 "
+        "AND (m.pos60 IS NULL OR m.pos60 <= 0.70) AND s.pct > -5 AND EXISTS ("
         "SELECT 1 FROM holder_feature h WHERE h.code=m.code "
         "AND h.holders_qoq IS NOT NULL AND h.holders_qoq < 0 AND h.has_institution=1)"
     ),
-    sell_where=(
-        "EXISTS (SELECT 1 FROM holder_feature h WHERE h.code=m.code "
-        "AND h.holders_qoq IS NOT NULL AND h.holders_qoq >= 5 AND h.has_institution=1)"
-    ),
-    buy_action="筹码趋向集中·可跟踪",
-    sell_action="户数明显扩散·回避",
-    extra_docs="缺持股/解禁缓存则该股不命中。禁止用十大股东名单猜户数。",
+    action="筹码趋向集中·可跟踪",
+    extra_docs="缺持股缓存则该股不命中。禁止用十大股东名单猜户数。",
+    default_off=True,
 ))
 
-_reg(Plan(
+_reg_buy(SidePlan(
     id="J",
-    name="解禁避让 / 解禁后回流",
-    summary="未来10个工作日大解禁且位置偏高为卖；解禁已过≥5个工作日且资金回流为严买。无解禁数据不买不卖。",
-    buy_formula=(
-        "最近一次解禁已过 ≥ 5 个工作日（周末已剔除，法定节假日未内置）\n"
-        "∧ 当日主力净流入 > 0（无解禁后区间资金序列，不编造多日资金）\n"
-        "∧ BuyIndex ≥ 65"
+    name="解禁后回流",
+    summary="解禁已过≥5个工作日、资金仍进、位置未到顶部。无解禁数据不买。默认关闭。",
+    formula=(
+        "最近一次解禁已过 ≥ 5 个工作日  ∧  当日及5日净流入不差\n"
+        "∧  BuyIndex ≥ 65  ∧  pos60 ≤ 0.65"
     ),
-    sell_formula=(
-        "未来 10 个工作日内存在解禁  ∧  解禁占流通 ≥ 3%  ∧  pos60 ≥ 0.6"
-    ),
-    buy_where=(
-        "s.main_net_in > 0 AND m.buy_index >= 65 AND EXISTS ("
+    where=(
+        f"{_BUY_SAFE} AND s.main_net_in > 0 AND m.buy_index >= 65 "
+        "AND COALESCE(s.main_net_in_d5, 0) >= 0 "
+        "AND (m.pos60 IS NULL OR m.pos60 <= 0.65) AND EXISTS ("
         "SELECT 1 FROM holder_feature h WHERE h.code=m.code "
         "AND h.last_unlock_days_ago IS NOT NULL AND h.last_unlock_days_ago >= 5)"
     ),
-    sell_where=(
+    action="解禁后回流·严观察",
+    extra_docs="工作日口径剔除周末，无官方节假日表。无解禁列表则零命中。",
+    default_off=True,
+))
+
+# —— 卖点：止盈兑现 + 风险离场，不把已经砸死的弱票当卖点 ——
+_reg_sell(SidePlan(
+    id="ST",
+    name="高位止盈",
+    summary="默认卖点。走到 60 日高位后再叠加超买、过热或资金转出，用来兑现利润，不是找已经跌残的票。",
+    formula=(
+        "pos60 ≥ 0.86  ∧  (乖离≥9 ∨ RSI≥72 ∨ 情绪≥76 ∨ 主力净流入<0)"
+    ),
+    where=(
+        "m.pos60 IS NOT NULL AND m.pos60 >= 0.86 AND ("
+        "(m.bias20 IS NOT NULL AND m.bias20 >= 9) "
+        "OR (m.rsi14 IS NOT NULL AND m.rsi14 >= 72) "
+        "OR (m.sentiment IS NOT NULL AND m.sentiment >= 76) "
+        "OR s.main_net_in < 0)"
+    ),
+    action="高位止盈·建议减仓兑现",
+    order="m.pos60 DESC",
+))
+
+_reg_sell(SidePlan(
+    id="SR",
+    name="资金出逃避险",
+    summary="高位或中高位出现持续净流出/暗中派发。用来规避主力离场，不把低位阴跌弱票标成卖点。",
+    formula=(
+        "当日主力净流入 < −5000万  ∧  (5日净流入<0 ∨ 暗中派发)\n"
+        "∧  pos60 ≥ 0.45"
+    ),
+    where=(
+        "s.main_net_in < -5000 AND (COALESCE(s.main_net_in_d5, 0) < 0 OR m.divergence = '暗中派发') "
+        "AND (m.pos60 IS NULL OR m.pos60 >= 0.45)"
+    ),
+    action="资金出逃·避险减仓",
+    order="s.main_net_in ASC",
+))
+
+_reg_sell(SidePlan(
+    id="SO",
+    name="超买回吐",
+    summary="高位超买且正乖离过大，均值回归风险高，适合止盈而不是追涨。",
+    formula="RSI14 > 74  ∧  bias20 > 11%  ∧  pos60 ≥ 0.72",
+    where=(
+        "m.rsi14 IS NOT NULL AND m.rsi14 > 74 "
+        "AND m.bias20 IS NOT NULL AND m.bias20 > 11 "
+        "AND m.pos60 IS NOT NULL AND m.pos60 >= 0.72"
+    ),
+    action="超买高乖离·止盈防回吐",
+    order="m.rsi14 DESC",
+))
+
+_reg_sell(SidePlan(
+    id="SD",
+    name="暗中派发",
+    summary="已经走出一段后出现价涨资金出。只在中高位预警，避免把底部震荡标成卖点。",
+    formula="divergence=暗中派发  ∧  (Dark≤42 ∨ 主力净流入<0)  ∧  pos60≥0.50",
+    where=(
+        "m.divergence = '暗中派发' AND (m.dark_power <= 42 OR s.main_net_in < 0) "
+        "AND m.pos60 IS NOT NULL AND m.pos60 >= 0.50"
+    ),
+    action="暗中派发·警惕减仓",
+    order="m.dark_power ASC",
+    extra_docs=DARK_FORMULA,
+))
+
+_reg_sell(SidePlan(
+    id="SB",
+    name="趋势破坏",
+    summary="曾经有过一段走势后均线破坏、MACD 转负且近5日下跌。用来止损避险，不是罗列长期弱势股。",
+    formula=(
+        "均线多头破坏  ∧  MACD柱<0  ∧  近5日涨跌<−3%\n"
+        "∧  pos60 ≥ 0.38  ∧  BuyIndex≤55（有值才限）"
+    ),
+    where=(
+        "m.ma_bull = 0 AND m.macd_bar < 0 AND s.pct_d5 < -3 "
+        "AND m.pos60 IS NOT NULL AND m.pos60 >= 0.38 "
+        "AND (m.buy_index IS NULL OR m.buy_index <= 55)"
+    ),
+    action="趋势转弱·止损避险",
+    order="s.pct_d5 ASC",
+))
+
+_reg_sell(SidePlan(
+    id="I",
+    name="户数扩散",
+    summary="只用已缓存持股。户数环比明显上升且当期有机构披露。缺缓存零命中。默认关闭。",
+    formula="holders_qoq ≥ 5  ∧  当期有机构披露。不编造机构占比下降。",
+    where=(
+        "EXISTS (SELECT 1 FROM holder_feature h WHERE h.code=m.code "
+        "AND h.holders_qoq IS NOT NULL AND h.holders_qoq >= 5 AND h.has_institution=1)"
+    ),
+    action="户数明显扩散·回避",
+    extra_docs="缺持股缓存则该股不命中。禁止用十大股东名单猜户数。",
+    default_off=True,
+))
+
+_reg_sell(SidePlan(
+    id="J",
+    name="解禁避让",
+    summary="未来10个工作日大解禁且位置偏高。无解禁数据不卖。默认关闭。",
+    formula="未来10个工作日解禁占流通≥3%  ∧  pos60≥0.6",
+    where=(
         "m.pos60 >= 0.6 AND EXISTS ("
         "SELECT 1 FROM holder_feature h WHERE h.code=m.code "
         "AND h.unlock_days_to IS NOT NULL AND h.unlock_days_to BETWEEN 0 AND 10 "
         "AND h.unlock_float_ratio IS NOT NULL AND h.unlock_float_ratio >= 3)"
     ),
-    buy_action="解禁后回流·严观察",
-    sell_action="临近大解禁·避让",
+    action="临近大解禁·避让",
     extra_docs="工作日口径剔除周末，无官方节假日表。无解禁列表则零命中。",
+    default_off=True,
 ))
 
-PLAN_ORDER = list(PLANS.keys())
+BUY_ORDER = ["BP", "BT", "BZ", "BD", "I", "J"]
+SELL_ORDER = ["ST", "SR", "SO", "SD", "SB", "I", "J"]
+PLAN_ORDER = list(dict.fromkeys(BUY_ORDER + SELL_ORDER))
 
-BUY_TITLE = {
-    "A": "购买指数高位", "B": "企稳四闸门", "C": "超跌RSI反弹", "D": "暗中吸筹",
-    "E": "均线多头金叉", "F": "低位放量回补", "G": "量能回踩均线", "H": "乖离率超卖",
-    "I": "筹码集中", "J": "解禁后回流",
+# 旧版 A–H 共用一套名字；读配置时映射到新的买/卖方案，不沿用同名
+_BUY_LEGACY = {
+    "A": "BP", "B": "BZ", "C": "BZ", "D": "BD", "E": "BT", "F": "BP", "G": "BT", "H": "BZ",
 }
-SELL_TITLE = {
-    "A": "购买指数低位/过热兑现", "B": "高位闸门失效", "C": "RSI超买高乖离", "D": "暗中派发",
-    "E": "均线破坏", "F": "高位过热兑现", "G": "放量高乖离减仓", "H": "乖离率超买",
-    "I": "户数扩散", "J": "解禁避让",
-}
-BUY_SUMMARY = {
-    "A": "购买指数≥80 且主力净流入，现行买点主规则。",
-    "B": "四闸门全过、低位、资金回流的企稳买点。",
-    "C": "RSI 超卖 + 缩量回调 + 资金回流。",
-    "D": "价跌资金进，暗盘偏买。",
-    "E": "均线多头、站上 MA20、近3日 MACD 金叉且资金流入。",
-    "F": "中低位购买指数尚可且放量净流入。",
-    "G": "站上 MA20 后缩量回踩，MACD 柱仍红。",
-    "H": "相对 MA20 负乖离较大且仍有资金回流。",
-    "I": "户数环比下降且当期有机构披露、主力净流入。默认关闭。",
-    "J": "解禁已过≥5 个工作日、当日净流入、购买指数≥65。默认关闭。",
-}
-SELL_SUMMARY = {
-    "A": "购买指数≤30，或主力大幅净流出叠加情绪过热。",
-    "B": "60 日高位且情绪过热，或企稳闸门失效。",
-    "C": "RSI 超买且正乖离过大，注意兑现。",
-    "D": "价涨资金出，暗中派发。",
-    "E": "均线多头破坏、MACD 柱转负且近5日下跌。",
-    "F": "走到 60 日高位，情绪过热或资金流出则兑现。",
-    "G": "放量、高乖离、情绪偏热，减仓防回吐。",
-    "H": "正乖离过大叠加 RSI 超买，注意均值回归。",
-    "I": "户数环比≥5% 且当期有机构披露。默认关闭。",
-    "J": "未来10个工作日解禁占流通≥3% 且 pos60≥0.6。默认关闭。",
+_SELL_LEGACY = {
+    "A": "ST", "B": "ST", "C": "SO", "D": "SD", "E": "SB", "F": "ST", "G": "SO", "H": "SO",
 }
 
 
-def _normalize_ids(ids) -> list[str]:
+def _defaults(kind: str) -> list[str]:
+    return list(DEFAULT_SELL_IDS if kind == "sell" else DEFAULT_BUY_IDS)
+
+
+def _normalize_ids(ids, kind: str = "buy") -> list[str]:
+    catalog = catalog_map(kind)
+    legacy = _SELL_LEGACY if kind == "sell" else _BUY_LEGACY
     if not isinstance(ids, (list, tuple)):
-        return list(DEFAULT_IDS)
+        return _defaults(kind)
     out = []
     for raw in ids:
         pid = str(raw or "").strip().upper()
-        if pid in PLANS and pid not in out:
+        pid = legacy.get(pid, pid)
+        if pid in catalog and pid not in out:
             out.append(pid)
-    return out or list(DEFAULT_IDS)
+    return out or _defaults(kind)
 
 
 def get_enabled(kind: str = "buy") -> list[str]:
@@ -330,18 +371,18 @@ def get_enabled(kind: str = "buy") -> list[str]:
     if raw is None:
         raw = get_meta_json(META_KEY, None)
     if raw is None:
-        return list(DEFAULT_IDS)
-    return _normalize_ids(raw)
+        return _defaults(kind)
+    return _normalize_ids(raw, kind)
 
 
 def set_enabled(ids=None, *, buy_ids=None, sell_ids=None) -> dict:
-    """买点方案与卖点方案分开保存。旧参数 ids 会同时写入两侧（兼容）。"""
+    """买点方案与卖点方案分开保存。旧参数 ids 会同时写入两侧（兼容，并按侧映射）。"""
     if buy_ids is None and sell_ids is None and ids is not None:
         buy_ids = sell_ids = ids
     if buy_ids is not None:
-        set_meta_json(META_KEY_BUY, _normalize_ids(buy_ids))
+        set_meta_json(META_KEY_BUY, _normalize_ids(buy_ids, "buy"))
     if sell_ids is not None:
-        set_meta_json(META_KEY_SELL, _normalize_ids(sell_ids))
+        set_meta_json(META_KEY_SELL, _normalize_ids(sell_ids, "sell"))
     return {"buy": get_enabled("buy"), "sell": get_enabled("sell")}
 
 
@@ -380,38 +421,39 @@ def _sort_hits(items: list[dict], kind: str) -> list[dict]:
         n = len(r.get("plans") or [])
         bi = r.get("buy_index")
         bi = float(bi) if bi is not None else 0.0
-        return (-n, -bi if kind == "buy" else bi)
+        pos = r.get("pos60")
+        pos = float(pos) if pos is not None else 0.0
+        if kind == "buy":
+            return (-n, -bi, pos)
+        return (-n, -pos, bi)
     items.sort(key=key)
     return items
 
 
 def plan_caption(pid: str, kind: str = "buy") -> str:
-    p = PLANS.get(pid)
-    titles = BUY_TITLE if kind == "buy" else SELL_TITLE
+    p = catalog_map(kind).get(pid)
     prefix = "买点方案" if kind == "buy" else "卖点方案"
-    name = titles.get(pid) or (p.name if p else pid)
+    name = p.name if p else pid
     return f"{prefix}{pid}·{name}"
 
 
 def stamp_plans(row: dict, plans: list[str] | None, kind: str) -> dict:
     """给命中行打上该侧方案出处。买点只标买点方案，卖点只标卖点方案。"""
-    ids = [p for p in (plans or []) if p in PLANS]
+    catalog = catalog_map(kind)
+    ids = [p for p in (plans or []) if p in catalog]
     row["side"] = "sell" if kind == "sell" else "buy"
     row["plans"] = ids
     row["plan_id"] = ",".join(ids)
     row["plan_labels"] = [plan_caption(p, kind) for p in ids]
     row["plan_names"] = "、".join(row["plan_labels"])
-    if kind == "buy":
-        actions = [PLANS[p].buy_action for p in ids]
-    else:
-        actions = [PLANS[p].sell_action for p in ids]
+    actions = [catalog[p].action for p in ids]
     row["hit_action"] = "；".join(actions) if actions else ""
     if ids:
         row["picked_by"] = row["plan_names"]
         row["picked_text"] = f"由{'、'.join(row['plan_labels'])}选出"
     else:
         row["picked_by"] = ""
-        row["picked_text"] = "观察池（非策略命中）"
+        row["picked_text"] = "未命中策略（不展示）"
     return row
 
 
@@ -475,18 +517,18 @@ def collect_hits(kind: str, enabled: list[str] | None = None, limit: int = PER_P
     """启用方案并集。买点只跑买点规则，卖点只跑卖点规则，互不混用。"""
     if kind not in ("buy", "sell"):
         raise ValueError("kind must be buy or sell")
+    catalog = catalog_map(kind)
     enabled = enabled if enabled is not None else get_enabled(kind)
+    enabled = [p for p in enabled if p in catalog]
     if any(p in enabled for p in ("I", "J")):
         from . import holder_feature
         holder_feature.refresh_all_features()
     bucket: dict[str, dict] = {}
     for pid in enabled:
-        plan = PLANS.get(pid)
+        plan = catalog.get(pid)
         if not plan:
             continue
-        fragment = plan.buy_where if kind == "buy" else plan.sell_where
-        order = plan.buy_order if kind == "buy" else plan.sell_order
-        for row in _fetch(fragment, order):
+        for row in _fetch(plan.where, plan.order):
             _merge(bucket, row, pid)
     items = _annotate(_sort_hits(list(bucket.values()), kind), kind)
     if kind == "buy":
@@ -496,41 +538,18 @@ def collect_hits(kind: str, enabled: list[str] | None = None, limit: int = PER_P
 
 
 def collect_buy_points(limit: int = 12) -> tuple[list[dict], str, str]:
-    """实时买点窗：主规则并集 →（仅当全空且 A 启用）A 的 65 回退 → 观察池。"""
+    """实时买点窗：只返回规则命中。无命中给原因，不再回退观察池。"""
     limit = max(3, min(int(limit or 12), 40))
     enabled = get_enabled("buy")
     items = collect_hits("buy", enabled, limit=limit)
-    source, note = "hit", _hit_note(enabled, "buy")
     if items:
-        return items, source, note
-
-    plan_a = PLANS["A"]
-    if "A" in enabled and plan_a.buy_fallback_where:
-        bucket: dict[str, dict] = {}
-        for row in _fetch(plan_a.buy_fallback_where, plan_a.buy_order):
-            _merge(bucket, row, "A")
-        items = _annotate(_sort_hits(list(bucket.values()), "buy"), "buy")[:limit]
-        if items:
-            note = (
-                "启用方案主规则暂无命中，已按方案 A 回退：购买指数≥65 且主力净流入>0"
-                "（较好买点观察池，非极佳买点）。不构成投资建议"
-            )
-            return items, "relaxed_65", note
-
-    if "A" in enabled:
-        rows = _fetch("m.buy_index IS NOT NULL", "m.buy_index DESC", limit)
-        for r in rows:
-            stamp_plans(r, [], "buy")
-            r["hit_action"] = "观察池，非策略命中"
-        if rows:
-            note = (
-                "启用方案暂无「规则命中且主力净流入」组合，已按购买指数从高到低展示观察池"
-                "（不标为极佳买点，不构成买入建议）"
-            )
-            return rows[:limit], "top_buy_index", note
-
+        return items, "hit", _hit_note(enabled, "buy")
     names = "、".join(plan_caption(i, "buy") for i in enabled)
-    return [], "empty", f"当前启用买点方案（{names}）暂无买点命中，请确认已同步行情并重建指标"
+    return [], "empty", (
+        f"当前启用买点方案（{names}）暂无符合潜力结构的命中。"
+        "已去掉观察池/降低门槛回退，避免把高风险或无结构的票凑进最佳买点。"
+        "请确认已同步行情并重建指标，或在设置里加开趋势回踩/企稳蓄势。"
+    )
 
 
 def collect_sell_points(limit: int = 12) -> tuple[list[dict], str, str]:
@@ -540,57 +559,60 @@ def collect_sell_points(limit: int = 12) -> tuple[list[dict], str, str]:
     if items:
         return items, "hit", _hit_note(enabled, "sell")
     names = "、".join(plan_caption(i, "sell") for i in enabled)
-    return [], "empty", f"当前启用卖点方案（{names}）暂无卖点命中"
+    return [], "empty", (
+        f"当前启用卖点方案（{names}）暂无止盈或避险命中。"
+        "卖点不再用低购买指数弱票凑数。请确认已同步行情并重建指标。"
+    )
 
 
 def _hit_note(enabled: list[str], kind: str) -> str:
     labels = "、".join(plan_caption(i, kind) for i in enabled)
-    verb = "买点" if kind == "buy" else "卖点"
+    if kind == "buy":
+        extra = "买点只保留有潜力结构的命中，不接飞刀、不追高潮、不展示观察池。"
+    else:
+        extra = "卖点只做高位止盈或中高位避险，不把已经跌残的弱票标成卖点。"
     if len(enabled) > 1:
-        return (
-            f"并行{verb}方案 {labels} 取并集：只使用{verb}规则，不与另一侧混淆。"
-            f"不构成投资建议"
-        )
-    return f"当前执行{labels}。只使用{verb}规则。不构成投资建议"
+        return f"并行方案 {labels} 取并集。{extra}不构成投资建议"
+    return f"当前执行{labels}。{extra}不构成投资建议"
 
 
 def plan_counts() -> dict[str, dict[str, int]]:
     from . import holder_feature
     holder_feature.ensure_tables()
-    out = {}
-    for pid, plan in PLANS.items():
-        out[pid] = {"buy": _count(plan.buy_where), "sell": _count(plan.sell_where)}
+    out: dict[str, dict[str, int]] = {}
+    for pid, plan in BUY_PLANS.items():
+        out.setdefault(pid, {"buy": 0, "sell": 0})
+        out[pid]["buy"] = _count(plan.where)
+    for pid, plan in SELL_PLANS.items():
+        out.setdefault(pid, {"buy": 0, "sell": 0})
+        out[pid]["sell"] = _count(plan.where)
     return out
 
 
 def executing_text(kind: str = "buy", enabled: list[str] | None = None) -> dict:
     kind = "sell" if kind == "sell" else "buy"
+    catalog = catalog_map(kind)
     enabled = enabled if enabled is not None else get_enabled(kind)
-    titles = BUY_TITLE if kind == "buy" else SELL_TITLE
-    summaries = BUY_SUMMARY if kind == "buy" else SELL_SUMMARY
     prefix = "买点" if kind == "buy" else "卖点"
     names = [plan_caption(pid, kind) for pid in enabled]
     title = (prefix + " " + "、".join(names) + " 并行") if len(enabled) > 1 else names[0]
     blocks = [
         f"当前执行的{prefix}策略：{title}",
-        f"{prefix}与另一侧完全分开勾选、分开扫描，个股不会串到另一列。",
+        f"{prefix}与另一侧完全分开勾选、分开扫描，方案名称也不共用。",
         "财报评级为独立维度，不并入购买指数。",
+        "空名单不回退观察池，不编造个股。",
         "",
     ]
     for pid in enabled:
-        p = PLANS[pid]
+        p = catalog.get(pid)
+        if not p:
+            continue
         blocks.append(f"—— {plan_caption(pid, kind)} ——")
-        blocks.append(summaries.get(pid) or p.summary)
-        if kind == "buy":
-            blocks.append("买点公式：" + p.buy_formula)
-            if p.extra_docs and pid in ("A", "B", "D"):
-                blocks.append(p.extra_docs)
-        else:
-            blocks.append("卖点公式：" + p.sell_formula)
+        blocks.append(p.summary)
+        blocks.append(("买点公式：" if kind == "buy" else "卖点公式：") + p.formula)
+        if p.extra_docs:
+            blocks.append(p.extra_docs)
         blocks.append("")
-    if kind == "buy" and "A" in enabled:
-        blocks.append("买点方案A 与历史线上一致：购买指数≥80 且主力净流入>0；"
-                      "全部买点方案均无命中时才回退到≥65 或观察池。")
     return {
         "ids": enabled,
         "kind": kind,
@@ -604,27 +626,29 @@ def catalog(kind: str = "buy") -> list[dict]:
     kind = "sell" if kind == "sell" else "buy"
     counts = plan_counts()
     enabled = set(get_enabled(kind))
-    titles = BUY_TITLE if kind == "buy" else SELL_TITLE
-    summaries = BUY_SUMMARY if kind == "buy" else SELL_SUMMARY
+    defaults = set(_defaults(kind))
+    order = SELL_ORDER if kind == "sell" else BUY_ORDER
+    catalog = catalog_map(kind)
     rows = []
-    for pid in PLAN_ORDER:
-        p = PLANS[pid]
+    for pid in order:
+        p = catalog[pid]
         c = counts.get(pid) or {"buy": 0, "sell": 0}
         rows.append({
             "id": p.id,
             "kind": kind,
-            "name": titles.get(pid) or p.name,
-            "summary": summaries.get(pid) or p.summary,
-            "formula": p.buy_formula if kind == "buy" else p.sell_formula,
-            "buy_formula": p.buy_formula,
-            "sell_formula": p.sell_formula,
-            "extra_docs": p.extra_docs if kind == "buy" and pid in ("A", "B", "D", "I", "J") else (p.extra_docs if pid in ("I", "J") else ""),
-            "action": p.buy_action if kind == "buy" else p.sell_action,
+            "name": p.name,
+            "summary": p.summary,
+            "formula": p.formula,
+            "buy_formula": BUY_PLANS[pid].formula if pid in BUY_PLANS else "",
+            "sell_formula": SELL_PLANS[pid].formula if pid in SELL_PLANS else "",
+            "extra_docs": p.extra_docs,
+            "action": p.action,
             "enabled": p.id in enabled,
-            "is_default": p.id == "A",
+            "is_default": p.id in defaults,
+            "default_off": p.default_off,
             "count": c["buy"] if kind == "buy" else c["sell"],
-            "buy_count": c["buy"],
-            "sell_count": c["sell"],
+            "buy_count": c.get("buy", 0),
+            "sell_count": c.get("sell", 0),
             "caption": plan_caption(pid, kind),
         })
     return rows
@@ -650,7 +674,8 @@ def get_config() -> dict:
             "detail": "【最佳买点】\n" + buy_exe["detail"] + "\n\n【最佳卖点】\n" + sell_exe["detail"],
         },
         "note": (
-            "买点策略与卖点策略分开勾选、分开扫描。"
-            "红色为买点方案，绿色为卖点方案。空列表将强制回退为方案 A。"
+            "买点策略与卖点策略分开勾选、分开扫描，名称也不共用。"
+            "买点默认「潜力主升」，卖点默认「高位止盈」。"
+            "空列表回退到该侧默认方案，不再用观察池凑数。"
         ),
     }

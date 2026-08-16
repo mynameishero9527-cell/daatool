@@ -136,6 +136,7 @@ class StrategyIJTests(unittest.TestCase):
         }, date(2026, 8, 15))
         sells = strategy.collect_hits("sell", enabled=["J"], limit=80)
         self.assertTrue(any(r.get("code") == CODE for r in sells))
+        _seed_quote(CODE, main_net_in=1500, buy_index=70, pos60=0.55)
         holder_feature.upsert_from_payload(CODE, {
             "latest": {"holders_qoq": 0.1},
             "institution_ratio": 5.0,
@@ -144,10 +145,14 @@ class StrategyIJTests(unittest.TestCase):
         buys = strategy.collect_hits("buy", enabled=["J"], limit=80)
         self.assertTrue(any(r.get("code") == CODE for r in buys))
 
-    def test_default_ids_still_a(self):
-        self.assertEqual(strategy.DEFAULT_IDS, ["A"])
-        self.assertIn("I", strategy.PLANS)
-        self.assertIn("J", strategy.PLANS)
+    def test_default_ids_split(self):
+        self.assertEqual(strategy.DEFAULT_BUY_IDS, ["BP"])
+        self.assertEqual(strategy.DEFAULT_SELL_IDS, ["ST"])
+        self.assertIn("I", strategy.BUY_PLANS)
+        self.assertIn("J", strategy.BUY_PLANS)
+        self.assertIn("I", strategy.SELL_PLANS)
+        self.assertIn("J", strategy.SELL_PLANS)
+        self.assertNotEqual(set(strategy.BUY_PLANS) - {"I", "J"}, set(strategy.SELL_PLANS) - {"I", "J"})
 
 
 class WeekGateTests(unittest.TestCase):

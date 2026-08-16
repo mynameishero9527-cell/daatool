@@ -33,7 +33,7 @@ def _scan_buy_points() -> None:
     cap = min(18, max(5, 3 * max(1, len(enabled))))
     rows = strategy_svc.collect_hits("buy", enabled, limit=cap)
     for r in rows:
-        picked = r.get("picked_text") or "由买点方案A选出"
+        picked = r.get("picked_text") or "由买点策略选出"
         bi = r.get("buy_index")
         bi_txt = f"{bi:.0f}" if bi is not None else "-"
         pos = r.get("pos60")
@@ -50,7 +50,7 @@ def _scan_sell_points() -> None:
     cap = min(18, max(5, 3 * max(1, len(enabled))))
     rows, _src, _note = strategy_svc.collect_sell_points(limit=cap)
     for r in rows:
-        picked = r.get("picked_text") or "由卖点方案A选出"
+        picked = r.get("picked_text") or "由卖点策略选出"
         bi = r.get("buy_index")
         bi_txt = f"{bi:.0f}" if bi is not None else "-"
         extra = "，情绪过热注意兑现" if (r.get("sentiment") or 0) >= 80 else ""
@@ -299,8 +299,8 @@ def _advice_summary(r: dict, kind: str, buy_lv: str, buy_act: str, op: str) -> s
 def get_buy_points(limit: int = 8) -> dict:
     """实时最佳买点（供全局弹窗）。空结果必须带回原因，避免窗口空白。
 
-    按设置中启用的选股方案并行取并集。方案 A 即原「购买指数≥80 且主力净流入」。
-    全部启用方案均无命中且 A 仍启用时，才回退到≥65 或观察池——不把观察池伪装成极佳买点。
+    按设置中启用的买点方案并行取并集。只保留有潜力结构的命中，
+    不再回退观察池或降低门槛凑数。
     """
     from . import strategy as strategy_svc
 
@@ -335,24 +335,6 @@ def get_buy_points(limit: int = 8) -> dict:
         engine_svc.attach_signal_levels(rows, "buy", (asof or "")[:10] or None)
     except Exception:  # noqa: BLE001
         pass
-    if source == "top_buy_index":
-        for r in rows:
-            r["buy_level"] = "观察池"
-            r["advice"] = "观察池，非策略命中，不构成买入建议"
-            wx = "、".join(r.get("wuxing") or []) or "未标注"
-            heat = r.get("heat")
-            heat_txt = f"{heat:.0f}（{r.get('heat_level') or ''}）" if heat is not None else "—"
-            sec = r.get("sector_hot")
-            sec_txt = f"{sec:.1f}（{r.get('sector_hot_level') or ''}）" if sec is not None else "—"
-            r["advice_summary"] = (
-                f"观察池展示，非策略命中，不构成买入建议。"
-                f"所属板块「{r.get('board_text') or r.get('industry') or '未分类'}」，五行属{wx}。"
-                f"个股热度 {heat_txt}，板块热度 {sec_txt}。"
-            )
-    elif source == "relaxed_65":
-        for r in rows:
-            if (r.get("buy_index") or 0) < 80:
-                r["buy_level"] = "较好买点"
     return {**base, "items": rows, "count": len(rows), "source": source, "note": note}
 
 
