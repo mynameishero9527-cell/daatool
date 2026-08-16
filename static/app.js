@@ -6313,7 +6313,7 @@ window.saveStrategyPlans = async (preset) => {
   }
 };
 
-$("#btnResetBuy")?.addEventListener("click", () => saveStrategyPlans({ buy_ids: ["BP", "BT", "BZ"], sell_ids: selectedStrategyIds("sell") }));
+$("#btnResetBuy")?.addEventListener("click", () => saveStrategyPlans({ buy_ids: ["A"], sell_ids: selectedStrategyIds("sell") }));
 $("#btnResetSell")?.addEventListener("click", () => saveStrategyPlans({ buy_ids: selectedStrategyIds("buy"), sell_ids: ["ST", "SO", "SR"] }));
 
 let engineBlueprint = null;

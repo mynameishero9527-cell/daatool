@@ -1,16 +1,13 @@
-"""选股策略：最佳买点看潜力，最佳卖点看止盈/避险。两侧方案名与规则完全分开。
+"""选股策略：最佳买点默认第一版「选股方案A」，最佳卖点看止盈/避险。
 
 SQL 条件全部硬编码在本模块，不接受前端拼 SQL。
 财报评级为独立维度，不并入购买指数。
-空命中必须带回原因，不拿观察池或低质量票凑数。
+空命中必须带回原因，不拿无流入观察池凑数。
 方案 I/J 只用已缓存持股/解禁，缺则零命中。
-最佳买点多方案并行取并集（主升/回踩/企稳本身互斥，不强制交叉命中）；
-卖点仍须交叉命中至少 2 个方案；两侧都结合近半年真实日K；
-再叠加板块热度、综合评分、财报评级、距半年高点上涨空间；
-买点不对减持/空间过小，卖点不对增持/仍有较大空间；
-买点窗口不套用引擎周线门，避免把合格票一票否决；
-日K不完整即时补真实K线（不用涨跌幅/离线哈希冒充）；
-新股改走综合评分 + 财报评级，未评级不伪造 A。
+最佳买点默认选股方案A：购买指数≥80 且主力净流入>0；
+无主规则命中时回退≥65 且净流入>0（较好观察，非极佳）。
+卖点仍须交叉命中至少 2 个方案，并结合近半年真实日K。
+买点窗口不套用引擎周线门；未评级不伪造 A。
 """
 from __future__ import annotations
 
@@ -24,8 +21,8 @@ META_KEY = "strategy_enabled"  # 兼容旧键：曾同时控制买/卖
 META_KEY_BUY = "strategy_enabled_buy"
 META_KEY_SELL = "strategy_enabled_sell"
 RULES_VER_KEY = "strategy_rules_ver"
-RULES_VER = "13.0.36"
-DEFAULT_BUY_IDS = ["BP", "BT", "BZ"]
+RULES_VER = "13.0.40"
+DEFAULT_BUY_IDS = ["A"]
 DEFAULT_SELL_IDS = ["ST", "SO", "SR"]
 DEFAULT_IDS = list(DEFAULT_BUY_IDS)  # 兼容旧测试/调用，仅表示买点默认
 MIN_PLAN_HITS = 2
@@ -49,8 +46,8 @@ NAME_OK = "s.name NOT LIKE '%ST%' AND s.name NOT LIKE '%退%'"
 PER_PLAN_CAP = 80
 _TZ = ZoneInfo("Asia/Shanghai")
 _EMPTY_BUY_TAIL = (
-    "已去掉观察池/降低门槛回退，避免把高风险或无结构的票凑进最佳买点。"
-    "缺日K会即时补真实K线，不用涨跌幅冒充；补不到且不是新股则不推荐。"
+    "最佳买点按选股方案A：购买指数与主力净流入。无流入的观察池不凑数。"
+    "主规则无命中时才回退到购买指数≥65且净流入>0（较好观察，非极佳）。"
 )
 _EMPTY_SELL_TAIL = (
     "卖点不再用低购买指数弱票凑数。缺日K会即时补真实K线，不用涨跌幅冒充。"
@@ -111,6 +108,7 @@ class SidePlan:
     order: str = "m.buy_index DESC"
     extra_docs: str = ""
     default_off: bool = False
+    fallback_where: str = ""
 
 
 BUY_PLANS: dict[str, SidePlan] = {}
@@ -134,11 +132,27 @@ def catalog_map(kind: str) -> dict[str, SidePlan]:
     return SELL_PLANS if kind == "sell" else BUY_PLANS
 
 
-# —— 买点：筛选有结构的潜力，不接飞刀、不追高潮 ——
+# —— 买点默认：第一版选股方案A ——
+_reg_buy(SidePlan(
+    id="A",
+    name="选股方案A",
+    summary="第一版线上买点。购买指数高位且主力净流入；无极佳命中时回退较好观察，不拿无流入名单凑数。",
+    formula=(
+        "主规则：BuyIndex ≥ 80  ∧  主力净流入 main_net_in > 0\n"
+        "回退：当日无主规则命中时，BuyIndex ≥ 65  ∧  main_net_in > 0（较好买点观察，非极佳）\n"
+        "排除 ST / 退市。不回退无净流入的观察池。"
+    ),
+    where="m.buy_index >= 80 AND s.main_net_in > 0",
+    fallback_where="m.buy_index >= 65 AND s.main_net_in > 0",
+    action="极佳买点·可分批建仓",
+    extra_docs=BUY_INDEX_FORMULA,
+))
+
+# —— 其余买点方案可并行勾选，不再作为默认 ——
 _reg_buy(SidePlan(
     id="BP",
     name="潜力主升",
-    summary="中位区间、持续净流入、未超买。默认买点之一，用来找还有空间的票，不接暴跌也不追高。",
+    summary="中位区间、持续净流入、未超买。可选买点，用来找还有空间的票，不接暴跌也不追高。",
     formula=(
         "BuyIndex ≥ 70  ∧  当日主力净流入>0  ∧  5日主力净流入≥0\n"
         "∧  0.22 ≤ pos60 ≤ 0.66  ∧  当日涨跌 > −3%\n"
@@ -370,13 +384,13 @@ _reg_sell(SidePlan(
     default_off=True,
 ))
 
-BUY_ORDER = ["BP", "BT", "BZ", "BD", "I", "J"]
+BUY_ORDER = ["A", "BP", "BT", "BZ", "BD", "I", "J"]
 SELL_ORDER = ["ST", "SR", "SO", "SD", "SB", "I", "J"]
 PLAN_ORDER = list(dict.fromkeys(BUY_ORDER + SELL_ORDER))
 
-# 旧版 A–H 共用一套名字；读配置时映射到新的买/卖方案，不沿用同名
+# 买点 A 就是第一版选股方案A，不再映射到潜力主升。其余旧字母仍映射到后加方案。
 _BUY_LEGACY = {
-    "A": "BP", "B": "BZ", "C": "BZ", "D": "BD", "E": "BT", "F": "BP", "G": "BT", "H": "BZ",
+    "B": "BZ", "C": "BZ", "D": "BD", "E": "BT", "F": "BP", "G": "BT", "H": "BZ",
 }
 _SELL_LEGACY = {
     "A": "ST", "B": "ST", "C": "SO", "D": "SD", "E": "SB", "F": "ST", "G": "SO", "H": "SO",
@@ -418,7 +432,14 @@ def ensure_multi_plan_defaults() -> None:
     if buy_raw is None:
         buy_raw = get_meta_json(META_KEY, None)
     buy_list = _raw_id_list(buy_raw)
-    if buy_list in (None, ["A"], ["BP"]):
+    old_buy = {
+        None,
+        frozenset(),
+        frozenset({"A"}),
+        frozenset({"BP"}),
+        frozenset({"BP", "BT", "BZ"}),
+    }
+    if buy_list is None or frozenset(buy_list) in old_buy:
         set_meta_json(META_KEY_BUY, list(DEFAULT_BUY_IDS))
     sell_raw = get_meta_json(META_KEY_SELL, None)
     if sell_raw is None:
@@ -497,6 +518,8 @@ def _sort_hits(items: list[dict], kind: str) -> list[dict]:
 
 def plan_caption(pid: str, kind: str = "buy") -> str:
     p = catalog_map(kind).get(pid)
+    if kind != "sell" and pid == "A":
+        return (p.name if p else "选股方案A")
     prefix = "买点方案" if kind == "buy" else "卖点方案"
     name = p.name if p else pid
     return f"{prefix}{pid}·{name}"
@@ -906,8 +929,7 @@ def _need_multi_reason(enabled: list[str], kind: str) -> str:
     tail = _EMPTY_BUY_TAIL if kind == "buy" else _EMPTY_SELL_TAIL
     return (
         f"当前未启用任何{side}方案（{names}）。"
-        f"可并行勾选多个方案；买点取并集后过质量门禁，卖点老股须交叉命中至少 {MIN_PLAN_HITS} 个。"
-        "新股看综合评分与财报评级。"
+        f"可并行勾选多个方案；买点默认选股方案A，卖点老股须交叉命中至少 {MIN_PLAN_HITS} 个。"
         f"{tail}"
     )
 
@@ -923,7 +945,7 @@ def _empty_half_reason(enabled: list[str], kind: str, had_hits: bool) -> str:
             f"{tail}已尝试补真实日K；补不到的不编造。"
         )
     extra = (
-        "请确认已同步行情并重建指标，或在设置里加开趋势回踩/企稳蓄势。"
+        "请确认已同步行情并重建指标，或确认选股方案A的购买指数与净流入条件。"
         if kind == "buy"
         else "请确认已同步行情并重建指标。"
     )
@@ -967,17 +989,53 @@ def _rank_kept(items: list[dict], kind: str) -> list[dict]:
     return sorted(items, key=key)
 
 
+def _attach_buy_display(items: list[dict], backfill: bool = True) -> list[dict]:
+    """给买点名单贴评分/财报/半年K，只作展示，不再当第一版方案A的过滤门。"""
+    codes = [r.get("code") for r in items if r.get("code")]
+    backfilled: set[str] = set()
+    if backfill:
+        need = _codes_needing_backfill(codes)
+        if need:
+            from . import kline as kline_svc
+            res = kline_svc.backfill_daily_real(need, count=180, limit=min(16, len(need)))
+            backfilled = set(res.get("ok") or [])
+    stats = half_year_stats(codes)
+    _attach_score_finance(items)
+    for r in items:
+        attach_half_year(r, stats.get(r.get("code") or ""))
+        r["kline_backfilled"] = r.get("code") in backfilled
+        r["side"] = "buy"
+        r["op_advice"] = point_advice("buy", r.get("score_advice") or "", r.get("room_to_high"))
+        r["point_gate"] = "plan_a" if "A" in (r.get("plans") or []) else "hit"
+    return items
+
+
 def collect_buy_points(limit: int = 12, backfill: bool = True) -> tuple[list[dict], str, str]:
-    """实时买点窗：多方案并行取并集；半年日K+质量门禁，新股综合评分+财报评级。"""
+    """实时买点窗：默认选股方案A（购买指数≥80且净流入>0）。不套质量门，不凑观察池。"""
     limit = max(3, min(int(limit or 12), 40))
     enabled = get_enabled("buy")
     if not enabled:
         return [], "empty", _need_multi_reason(enabled, "buy")
     raw = collect_hits("buy", enabled, limit=PER_PLAN_CAP, min_hits=1, use_week_gate=False)
-    kept = apply_recommend_gate(raw, "buy", backfill=backfill, min_hits=1)
-    if kept:
-        return _fair_take(_rank_kept(kept, "buy"), enabled, limit), "hit", _hit_note(enabled, "buy")
-    return [], "empty", _empty_half_reason(enabled, "buy", had_hits=bool(raw))
+    source, note = "hit", _hit_note(enabled, "buy")
+    if not raw and "A" in enabled:
+        plan_a = BUY_PLANS.get("A")
+        if plan_a and plan_a.fallback_where:
+            bucket: dict[str, dict] = {}
+            for row in _fetch(plan_a.fallback_where, plan_a.order):
+                _merge(bucket, row, "A")
+            raw = _annotate(_sort_hits(list(bucket.values()), "buy"), "buy")
+            if raw:
+                source = "relaxed_65"
+                note = (
+                    "选股方案A主规则（购买指数≥80且主力净流入>0）暂无命中，"
+                    "已按第一版回退：购买指数≥65且主力净流入>0（较好买点观察，非极佳）。"
+                    "不回退无流入观察池。不构成投资建议"
+                )
+    if not raw:
+        return [], "empty", _empty_half_reason(enabled, "buy", had_hits=False)
+    kept = _attach_buy_display(raw, backfill=backfill)
+    return _fair_take(_sort_hits(kept, "buy"), enabled, limit), source, note
 
 
 def collect_sell_points(limit: int = 12, backfill: bool = True) -> tuple[list[dict], str, str]:
@@ -997,11 +1055,12 @@ def _hit_note(enabled: list[str], kind: str) -> str:
     labels = "、".join(plan_caption(i, kind) for i in enabled)
     if kind == "buy":
         gate = (
-            "多方案并行取并集，交叉命中优先排序，不强制同一只股票同时命中互斥方案。"
-            "再结合近半年日K、上涨空间、综合评分、财报评级与板块热度；不对减持/空间过小。"
-            "买点窗口不套用引擎周线门。日K不足会即时补真实K线；未评级不伪造 A。"
+            "最佳买点默认选股方案A：购买指数≥80且主力净流入>0；"
+            "无主规则命中时回退≥65且净流入>0（较好观察，非极佳）。"
+            "买点窗口不套用引擎周线门，也不再用半年空间/评分门把方案A名单滤空。"
+            "未评级不伪造 A。不回退无流入观察池。"
         )
-        extra = "买点只保留有潜力结构的命中，不接飞刀、不追高潮、不展示观察池。"
+        extra = "可并行加开其他买点方案，取并集。"
         head = f"并行方案 {labels}。" if len(enabled) > 1 else f"当前执行{labels}。"
         return f"{head}{gate}{extra}不构成投资建议"
     gate = (
@@ -1039,14 +1098,17 @@ def executing_text(kind: str = "buy", enabled: list[str] | None = None) -> dict:
         f"当前执行的{prefix}策略：{title}",
         f"{prefix}与另一侧完全分开勾选、分开扫描，方案名称也不共用。",
         (
-            "买点多方案并行取并集，交叉命中优先；卖点老股须交叉命中至少 "
-            f"{MIN_PLAN_HITS} 个方案。两侧都结合近半年真实日K。"
+            "买点默认选股方案A（购买指数≥80且主力净流入>0），可并行加开其他买点方案。"
             if kind == "buy"
             else f"多方案可并行勾选。老股须交叉命中至少 {MIN_PLAN_HITS} 个方案，并结合近半年真实日K。"
         ),
-        "再叠加板块热度、综合评分、财报评级、距半年高点上涨空间；买点与增持一致，卖点与减持/兑现一致。",
-        "买点窗口不套用引擎周线门。日K不完整会即时补真实K线；未评级不伪造 A。财报评级不并入购买指数或综合评分。",
-        "空名单不回退观察池，不编造个股，不用涨跌幅冒充日K。",
+        (
+            "无极佳命中时回退购买指数≥65且净流入>0（较好观察，非极佳）。不回退无流入观察池。"
+            if kind == "buy"
+            else "再叠加板块热度、综合评分、财报评级、距半年高点上涨空间；卖点与减持/兑现一致。"
+        ),
+        "买点窗口不套用引擎周线门。未评级不伪造 A。财报评级不并入购买指数或综合评分。",
+        "空名单不编造个股，不用涨跌幅冒充日K。",
         "",
     ]
     for pid in enabled:
@@ -1121,10 +1183,10 @@ def get_config() -> dict:
         },
         "note": (
             "买点策略与卖点策略分开勾选、分开扫描，名称也不共用。"
-            "买点默认「潜力主升 + 趋势回踩 + 企稳蓄势」，卖点默认「高位止盈 + 超买回吐 + 资金出逃避险」。"
-            "买点并行取并集后过质量门禁，卖点老股须交叉命中至少 "
-            f"{MIN_PLAN_HITS} 个方案；再结合近半年日K、上涨空间、综合评分、财报与板块热度。"
-            "买点不对减持/空间过小，卖点不对增持/仍有较大空间。缺K线即时补真实日K。"
-            "空列表回退到该侧默认方案，不再用观察池凑数。"
+            "买点默认「选股方案A」：购买指数≥80且主力净流入>0；"
+            "无命中时回退≥65且净流入>0（较好观察，非极佳）。"
+            "卖点默认「高位止盈 + 超买回吐 + 资金出逃避险」，老股须交叉命中至少 "
+            f"{MIN_PLAN_HITS} 个方案。"
+            "空列表不拿无流入观察池凑数。"
         ),
     }

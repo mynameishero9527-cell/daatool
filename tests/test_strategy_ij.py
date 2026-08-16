@@ -146,7 +146,7 @@ class StrategyIJTests(unittest.TestCase):
         self.assertTrue(any(r.get("code") == CODE for r in buys))
 
     def test_default_ids_split(self):
-        self.assertEqual(strategy.DEFAULT_BUY_IDS, ["BP", "BT", "BZ"])
+        self.assertEqual(strategy.DEFAULT_BUY_IDS, ["A"])
         self.assertEqual(strategy.DEFAULT_SELL_IDS, ["ST", "SO", "SR"])
         self.assertIn("I", strategy.BUY_PLANS)
         self.assertIn("J", strategy.BUY_PLANS)

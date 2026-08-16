@@ -316,8 +316,7 @@ def _advice_summary(r: dict, kind: str, buy_lv: str, buy_act: str, op: str) -> s
 def get_buy_points(limit: int = 8) -> dict:
     """实时最佳买点（供全局弹窗）。空结果必须带回原因，避免窗口空白。
 
-    多方案并行扫描。再叠加上涨空间、综合评分、财报评级与板块热度。
-    买点不对减持/空间过小，卖点不对增持/仍有较大空间。不回退观察池。
+    默认选股方案A：购买指数≥80且主力净流入>0。无流入观察池不凑数。
     """
     from . import strategy as strategy_svc
 
