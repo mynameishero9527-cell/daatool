@@ -1277,9 +1277,10 @@ def executing_text(kind: str = "buy", enabled: list[str] | None = None) -> dict:
     }
 
 
-def catalog(kind: str = "buy") -> list[dict]:
+def catalog(kind: str = "buy", counts: dict | None = None) -> list[dict]:
     kind = "sell" if kind == "sell" else "buy"
-    counts = plan_counts()
+    if counts is None:
+        counts = plan_counts()
     enabled = set(get_enabled(kind))
     defaults = set(_defaults(kind))
     hidden = set(get_hidden(kind))
@@ -1313,19 +1314,20 @@ def catalog(kind: str = "buy") -> list[dict]:
     return rows
 
 
-def get_config() -> dict:
+def get_config(with_counts: bool = True) -> dict:
     buy_ids = get_enabled("buy")
     sell_ids = get_enabled("sell")
     buy_exe = executing_text("buy", buy_ids)
     sell_exe = executing_text("sell", sell_ids)
+    counts = plan_counts() if with_counts else {}
     return {
         "buy_enabled": buy_ids,
         "sell_enabled": sell_ids,
         "enabled": buy_ids,
         "parallel": len(buy_ids) > 1 or len(sell_ids) > 1,
-        "buy_plans": catalog("buy"),
-        "sell_plans": catalog("sell"),
-        "plans": catalog("buy"),
+        "buy_plans": catalog("buy", counts=counts),
+        "sell_plans": catalog("sell", counts=counts),
+        "plans": catalog("buy", counts=counts),
         "buy_hidden": get_hidden("buy"),
         "sell_hidden": get_hidden("sell"),
         "executing": {

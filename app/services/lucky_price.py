@@ -4,7 +4,13 @@
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
 from ..database import query
+
+_TZ = ZoneInfo("Asia/Shanghai")
+KLINE_LOOKBACK_DAYS = 90
 
 NEAR_PCT = 0.08
 LOOKBACK_BARS = 40
@@ -130,14 +136,15 @@ def recent_low_map(codes: list[str]) -> dict[str, dict]:
     if not codes:
         return {}
     out: dict[str, dict] = {}
+    cutoff = (datetime.now(_TZ).date() - timedelta(days=KLINE_LOOKBACK_DAYS)).isoformat()
     chunk = 300
     for i in range(0, len(codes), chunk):
         part = codes[i:i + chunk]
         marks = ",".join("?" * len(part))
         rows = query(
             f"SELECT code, date, low, close FROM daily_kline "
-            f"WHERE code IN ({marks}) ORDER BY code, date DESC",
-            tuple(part),
+            f"WHERE code IN ({marks}) AND date >= ? ORDER BY code, date DESC",
+            tuple(part) + (cutoff,),
         )
         buckets: dict[str, list] = {}
         for row in rows:

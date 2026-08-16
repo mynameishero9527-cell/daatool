@@ -4,12 +4,42 @@
      / fund_switch 资金高低切换 / rotation 板块轮动。
 """
 import logging
+import time
 from datetime import datetime
 
 from ..database import execute, get_meta_json, query, set_meta_json
 from . import kline as kline_svc
 
 log = logging.getLogger("alerts")
+_POINTS_CACHE: dict[tuple, tuple[float, dict]] = {}
+_POINTS_TTL = 8.0
+
+
+def invalidate_points_cache(side: str | None = None) -> None:
+    """方案组合变更后丢掉买/卖点短缓存，避免刷到旧名单。"""
+    if side not in ("buy", "sell"):
+        _POINTS_CACHE.clear()
+        return
+    for key in [k for k in _POINTS_CACHE if k[0] == side]:
+        _POINTS_CACHE.pop(key, None)
+
+
+def _points_cache_get(side: str, enabled: list[str], limit: int) -> dict | None:
+    key = (side, tuple(enabled or []), int(limit))
+    hit = _POINTS_CACHE.get(key)
+    if not hit:
+        return None
+    ts, payload = hit
+    if time.monotonic() - ts > _POINTS_TTL:
+        _POINTS_CACHE.pop(key, None)
+        return None
+    return payload
+
+
+def _points_cache_put(side: str, enabled: list[str], limit: int, payload: dict) -> dict:
+    key = (side, tuple(enabled or []), int(limit))
+    _POINTS_CACHE[key] = (time.monotonic(), payload)
+    return payload
 
 TYPE_NAMES = {
     "buy_point": "买点关注", "sell_point": "卖点警示", "index_move": "大盘异动",
@@ -318,18 +348,23 @@ def _advice_summary(r: dict, kind: str, buy_lv: str, buy_act: str, op: str) -> s
     return "".join(bits)
 
 
-def get_buy_points(limit: int = 8) -> dict:
+def get_buy_points(limit: int = 8, backfill: bool = False, fresh: bool = False) -> dict:
     """实时最佳买点（供全局弹窗）。空结果必须带回原因，避免窗口空白。
 
     默认选股方案A：购买指数≥80且主力净流入>0。无流入观察池不凑数。
+    交互刷新默认不回补日K，避免挡住其他页面请求。
     """
     from . import strategy as strategy_svc
 
     limit = max(3, min(int(limit or 12), 40))
+    enabled = strategy_svc.get_enabled("buy")
+    if not fresh:
+        cached = _points_cache_get("buy", enabled, limit)
+        if cached is not None:
+            return cached
     metric_n = query("SELECT COUNT(*) AS n FROM stock_metrics")[0]["n"]
     snap_n = query("SELECT COUNT(*) AS n FROM stock_snapshot")[0]["n"]
     asof = (query("SELECT MAX(updated_at) AS t FROM stock_snapshot")[0]["t"] or "")[:19]
-    enabled = strategy_svc.get_enabled("buy")
     exe = strategy_svc.executing_text("buy", enabled)
     base = {
         "metrics_count": metric_n, "snapshot_count": snap_n, "asof": asof,
@@ -344,11 +379,13 @@ def get_buy_points(limit: int = 8) -> dict:
                 "empty_reason": "no_snapshot",
                 "note": "暂无行情快照：请先全量同步后再看买点"}
 
-    rows, source, note = strategy_svc.collect_buy_points(limit)
+    rows, source, note = strategy_svc.collect_buy_points(limit, backfill=backfill)
     if not rows:
-        return {**base, "items": [], "count": 0, "source": source or "empty",
-                "empty_reason": "no_candidates",
-                "note": note or "指标已计算但暂无可用个股，请确认快照已同步"}
+        return _points_cache_put("buy", enabled, limit, {
+            **base, "items": [], "count": 0, "source": source or "empty",
+            "empty_reason": "no_candidates",
+            "note": note or "指标已计算但暂无可用个股，请确认快照已同步",
+        })
 
     _decorate_buy_rows(rows)
     try:
@@ -356,18 +393,23 @@ def get_buy_points(limit: int = 8) -> dict:
         engine_svc.attach_signal_levels(rows, "buy", (asof or "")[:10] or None)
     except Exception:  # noqa: BLE001
         pass
-    return {**base, "items": rows, "count": len(rows), "source": source, "note": note}
+    out = {**base, "items": rows, "count": len(rows), "source": source, "note": note}
+    return _points_cache_put("buy", enabled, limit, out)
 
 
-def get_sell_points(limit: int = 12) -> dict:
+def get_sell_points(limit: int = 12, backfill: bool = False, fresh: bool = False) -> dict:
     """实时最佳卖点。空结果必须带回原因。每条标明选出方案。"""
     from . import strategy as strategy_svc
 
     limit = max(3, min(int(limit or 12), 40))
+    enabled = strategy_svc.get_enabled("sell")
+    if not fresh:
+        cached = _points_cache_get("sell", enabled, limit)
+        if cached is not None:
+            return cached
     metric_n = query("SELECT COUNT(*) AS n FROM stock_metrics")[0]["n"]
     snap_n = query("SELECT COUNT(*) AS n FROM stock_snapshot")[0]["n"]
     asof = (query("SELECT MAX(updated_at) AS t FROM stock_snapshot")[0]["t"] or "")[:19]
-    enabled = strategy_svc.get_enabled("sell")
     exe = strategy_svc.executing_text("sell", enabled)
     base = {
         "metrics_count": metric_n, "snapshot_count": snap_n, "asof": asof,
@@ -381,15 +423,19 @@ def get_sell_points(limit: int = 12) -> dict:
         return {**base, "items": [], "count": 0, "source": "empty",
                 "empty_reason": "no_snapshot",
                 "note": "暂无行情快照：请先全量同步后再看卖点"}
-    rows, source, note = strategy_svc.collect_sell_points(limit)
+    rows, source, note = strategy_svc.collect_sell_points(limit, backfill=backfill)
     if not rows:
-        return {**base, "items": [], "count": 0, "source": source or "empty",
-                "empty_reason": "no_candidates",
-                "note": note or "当前启用方案暂无卖点命中"}
+        return _points_cache_put("sell", enabled, limit, {
+            **base, "items": [], "count": 0, "source": source or "empty",
+            "empty_reason": "no_candidates",
+            "note": note or "当前启用方案暂无卖点命中",
+        })
     _decorate_buy_rows(rows, "sell")
     try:
         from . import engine as engine_svc
         engine_svc.attach_signal_levels(rows, "sell", (asof or "")[:10] or None)
     except Exception:  # noqa: BLE001
         pass
-    return {**base, "items": rows, "count": len(rows), "source": source, "note": note}
+    return _points_cache_put("sell", enabled, limit, {
+        **base, "items": rows, "count": len(rows), "source": source, "note": note,
+    })

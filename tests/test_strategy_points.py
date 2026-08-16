@@ -165,6 +165,24 @@ class StrategyPointsTests(unittest.TestCase):
         self.assertIn("async function refreshStrategyPoints", js)
         self.assertIn("applyPendingStrategy", js)
         self.assertIn('id="buyFlashRefresh"', html)
+        self.assertIn("skipReload: true", js)
+        self.assertIn("loadBuyPoints({ fresh: true })", js)
+        start = js.index("async function refreshStrategyPoints")
+        end = js.index("$(\"#btnRefreshBuy\")", start)
+        self.assertNotIn("loadAlerts()", js[start:end])
+
+    def test_points_cache_and_light_config(self):
+        from app.services import alerts
+        alerts.invalidate_points_cache()
+        first = alerts.get_buy_points(8, backfill=False)
+        second = alerts.get_buy_points(8, backfill=False)
+        self.assertIs(first, second)
+        alerts.invalidate_points_cache("buy")
+        fresh = alerts.get_buy_points(8, backfill=False, fresh=True)
+        self.assertIsNot(fresh, first)
+        light = strategy.get_config(with_counts=False)
+        self.assertTrue(light.get("buy_plans"))
+        self.assertEqual(intelpick.get_page("up")["items"], [])
 
     def test_legacy_a_maps_separately(self):
         self.assertEqual(strategy._normalize_ids(["A"], "buy"), ["A"])

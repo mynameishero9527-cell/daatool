@@ -91,13 +91,13 @@ def get_alerts(limit: int = Query(50, le=100)):
 
 
 @router.get("/alerts/buy-points")
-def alerts_buy_points(limit: int = Query(12, le=40)):
-    return alerts.get_buy_points(limit)
+def alerts_buy_points(limit: int = Query(12, le=40), fresh: bool = False):
+    return alerts.get_buy_points(limit, backfill=False, fresh=fresh)
 
 
 @router.get("/alerts/sell-points")
-def alerts_sell_points(limit: int = Query(12, le=40)):
-    return alerts.get_sell_points(limit)
+def alerts_sell_points(limit: int = Query(12, le=40), fresh: bool = False):
+    return alerts.get_sell_points(limit, backfill=False, fresh=fresh)
 
 
 @router.get("/strategy/plans")
@@ -112,11 +112,8 @@ def strategy_enable(payload: dict = Body(default={})):
         buy_ids=(payload or {}).get("buy_ids"),
         sell_ids=(payload or {}).get("sell_ids"),
     )
-    try:
-        alerts.scan_all()
-    except Exception:  # noqa: BLE001
-        pass
-    cfg = strategy.get_config()
+    alerts.invalidate_points_cache()
+    cfg = strategy.get_config(with_counts=False)
     cfg["saved"] = saved
     cfg["ok"] = True
     return cfg
@@ -128,10 +125,7 @@ def strategy_plan_delete(payload: dict = Body(default={})):
     body = payload or {}
     out = strategy.delete_plan(str(body.get("kind") or "buy"), str(body.get("id") or body.get("plan_id") or ""))
     if out.get("ok") and not out.get("already"):
-        try:
-            alerts.scan_all()
-        except Exception:  # noqa: BLE001
-            pass
+        alerts.invalidate_points_cache()
     cfg = strategy.get_config()
     cfg.update(out)
     return cfg
@@ -145,10 +139,7 @@ def strategy_reset(payload: dict = Body(default={})):
     if kind not in ("buy", "sell"):
         return {"ok": False, "error": "请指定 buy 或 sell"}
     strategy.reset_side(kind)
-    try:
-        alerts.scan_all()
-    except Exception:  # noqa: BLE001
-        pass
+    alerts.invalidate_points_cache()
     cfg = strategy.get_config()
     cfg["ok"] = True
     cfg["kind"] = kind

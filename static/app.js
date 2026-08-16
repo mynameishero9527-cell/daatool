@@ -1076,7 +1076,9 @@ function bindAlertDock() {
   });
 }
 
+let strategyRefreshBusy = false;
 async function loadAlerts() {
+  if (strategyRefreshBusy) return;
   try {
     const [d, buyLive, sellLive] = await Promise.all([
       api("/api/alerts"),
@@ -6309,6 +6311,7 @@ function saveStrategySoon() {
 window.saveStrategyPlans = async (preset) => {
   cancelStrategySave();
   const msg = $("#strategySaveMsg");
+  const skipReload = !!(preset && preset.skipReload);
   const buyIds = preset && preset.buy_ids ? preset.buy_ids : selectedStrategyIds("buy");
   const sellIds = preset && preset.sell_ids ? preset.sell_ids : selectedStrategyIds("sell");
   if (msg) msg.textContent = "保存中…";
@@ -6321,13 +6324,11 @@ window.saveStrategyPlans = async (preset) => {
     strategyDirty = false;
     strategyLoaded = true;
     renderStrategyExec(d);
-    renderStrategyPlans(d);
     const title = (d.executing && d.executing.title) || "";
     if (msg) msg.textContent = `已应用：${title}。买点红色、卖点绿色，两侧互不混淆。`;
-    loadBuyPoints();
-    loadAlerts();
   } catch (err) {
     if (msg) msg.textContent = "保存失败：" + (err.message || err);
+    if (skipReload) throw err;
   }
 };
 
@@ -6361,8 +6362,6 @@ async function deleteStrategyPlan(kind, pid) {
     renderStrategyExec(d);
     renderStrategyPlans(d);
     if (msg) msg.textContent = `已删除${side === "sell" ? "卖点" : "买点"}方案 ${id}。`;
-    loadBuyPoints();
-    loadAlerts();
   } catch (err) {
     if (msg) msg.textContent = "删除失败：" + (err.message || err);
   }
@@ -6388,8 +6387,6 @@ async function resetStrategySide(kind) {
     renderStrategyExec(d);
     renderStrategyPlans(d);
     if (msg) msg.textContent = side === "sell" ? "卖点已恢复默认方案。" : "买点已恢复默认选股方案A。";
-    loadBuyPoints();
-    loadAlerts();
   } catch (err) {
     if (msg) msg.textContent = "恢复失败：" + (err.message || err);
   }
@@ -6398,7 +6395,6 @@ async function resetStrategySide(kind) {
 $("#btnResetBuy")?.addEventListener("click", () => resetStrategySide("buy"));
 $("#btnResetSell")?.addEventListener("click", () => resetStrategySide("sell"));
 
-let strategyRefreshBusy = false;
 function showBuyFlashKind(kind) {
   buyFlashKind = kind === "sell" ? "sell" : "buy";
   $$("#buyFlashKind .opt").forEach((b) => b.classList.toggle("active", (b.dataset.kind || "buy") === buyFlashKind));
@@ -6406,19 +6402,25 @@ function showBuyFlashKind(kind) {
 }
 async function applyPendingStrategy() {
   if (saveStrategyTimer || strategyDirty) {
-    await saveStrategyPlans();
+    await saveStrategyPlans({ skipReload: true });
   }
 }
 async function refreshStrategyPoints(kind) {
   const side = kind === "sell" ? "sell" : "buy";
   const btn = side === "sell" ? $("#btnRefreshSell") : $("#btnRefreshBuy");
+  const flashBtn = $("#buyFlashRefresh");
   const msg = $("#strategySaveMsg");
   if (strategyRefreshBusy) return;
   strategyRefreshBusy = true;
   const prev = btn ? btn.textContent : "";
+  const flashPrev = flashBtn ? flashBtn.textContent : "";
   if (btn) {
     btn.disabled = true;
     btn.textContent = "刷新中…";
+  }
+  if (flashBtn) {
+    flashBtn.disabled = true;
+    flashBtn.textContent = "刷新中…";
   }
   if (msg) msg.textContent = side === "sell" ? "正在按当前卖点方案刷新推荐…" : "正在按当前买点方案刷新推荐…";
   try {
@@ -6426,8 +6428,7 @@ async function refreshStrategyPoints(kind) {
     showBuyFlashKind(side);
     const body = $("#buyFlashBody");
     if (body) body.innerHTML = '<div class="empty">刷新中…</div>';
-    await loadBuyPoints();
-    loadAlerts();
+    await loadBuyPoints({ fresh: true });
     if (msg) {
       msg.textContent = side === "sell"
         ? "已按当前卖点方案刷新最佳卖点推荐。"
@@ -6439,6 +6440,10 @@ async function refreshStrategyPoints(kind) {
     if (btn) {
       btn.disabled = false;
       btn.textContent = prev || (side === "sell" ? "刷新卖点" : "刷新买点");
+    }
+    if (flashBtn) {
+      flashBtn.disabled = false;
+      flashBtn.textContent = flashPrev || "刷新";
     }
     strategyRefreshBusy = false;
   }
@@ -7440,13 +7445,24 @@ function bindSoulDrag(el, kind) {
 }
 
 let buyFlashKind = "buy";
+let buyPointsInFlight = null;
 
-async function loadBuyPoints() {
+async function loadBuyPoints(opts) {
+  if (buyPointsInFlight && !(opts && opts.fresh)) return buyPointsInFlight;
+  const run = _loadBuyPoints(opts);
+  buyPointsInFlight = run;
+  try {
+    return await run;
+  } finally {
+    if (buyPointsInFlight === run) buyPointsInFlight = null;
+  }
+}
+async function _loadBuyPoints(opts) {
   const body = $("#buyFlashBody");
   const countEl = $("#buyFlashCount");
   const noteEl = $("#buyFlashNote");
   const badge = $("#buyFlashBadge");
-  const kind = buyFlashKind === "sell" ? "sell" : "buy";
+  const kind = (opts && opts.kind) || (buyFlashKind === "sell" ? "sell" : "buy");
   const kindLabel = kind === "sell" ? "最佳卖点" : "最佳买点";
   const titleEl = $("#buyFlashKindLabel");
   if (titleEl) titleEl.textContent = kindLabel;
@@ -7473,7 +7489,10 @@ async function loadBuyPoints() {
     if (body) body.innerHTML = `<div class="empty">${esc(text || "暂无" + kindLabel)}</div>`;
   };
   try {
-    const path = kind === "sell" ? "/api/alerts/sell-points?limit=16" : "/api/alerts/buy-points?limit=16";
+    const fresh = opts && opts.fresh ? "&fresh=1" : "";
+    const path = kind === "sell"
+      ? `/api/alerts/sell-points?limit=16${fresh}`
+      : `/api/alerts/buy-points?limit=16${fresh}`;
     const d = await api(path);
     const items = d.items || [];
     const source = d.source || "";
@@ -7925,7 +7944,10 @@ schedule("global", loadGlobal, 60000);
 schedule("recommend", loadRecommend, 60000);
 schedule("ranks", loadRanks, 60000);
 schedule("smartpick", loadAlerts, 10000);
-setInterval(loadBuyPoints, 15000);
+setInterval(() => {
+  if (strategyRefreshBusy || buyPointsInFlight) return;
+  loadBuyPoints();
+}, 15000);
 schedule("settings", loadSettings, 10000);
 setInterval(loadSettingsHealthOnly, 30000);
 async function loadSettingsHealthOnly() {

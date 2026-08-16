@@ -348,6 +348,7 @@ CREATE TABLE IF NOT EXISTS stock_ai_brief (
 -- 13.0.43：智能选股下新增主页 tab；预测推荐数据层独立成 tab，不混在主页
 -- 13.0.44：吉利低点贴水放宽到 8% 并扫全候选池，避免实盘筛不出
 -- 13.0.45：设置买/卖点策略增加刷新，勾选方案后可立即重算浮窗推荐
+-- 13.0.46：刷新只重算当前侧买/卖点，不再顺带全量扫描拖慢其他页
 -- intel_item_ai / hot_term_ai 表结构不变，失败仍不覆盖已保存结果
 
 CREATE TABLE IF NOT EXISTS knowledge_ai (
