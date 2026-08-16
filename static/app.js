@@ -545,6 +545,79 @@ if (!window._topAlmanacTimer) {
 
 let almanacPick = "";
 let almanacLoadSeq = 0;
+let almanacCache = null;
+let almanacZhi = null;
+
+function luckClass(luck) {
+  return luck === "吉" ? "luck-ji" : luck === "凶" ? "luck-xiong" : "luck-ping";
+}
+function renderShichenBar(a, zhi) {
+  return (a.shichen_hours || []).map((h) => `
+    <button type="button" class="shichen-btn ${luckClass(h.luck)} ${h.zhi_index === zhi ? "on" : ""}"
+      data-zhi="${h.zhi_index}">
+      <b>${esc(h.zhi)}时</b><span>${esc(h.luck)}</span><i>${esc((h.name || "").split(" ")[0] || "")}</i>
+    </button>`).join("");
+}
+function renderQimen(q) {
+  if (!q || !q.grid) return '<div class="empty">无奇门盘</div>';
+  const ju = q.ju || {};
+  const cells = q.grid.flat();
+  return `
+    <div class="muted">${esc(q.shichen || "")} ${esc(q.hour_ganzhi || "")}
+      · ${ju.yang ? "阳遁" : "阴遁"}${ju.ju || ""}局 ${esc(ju.yuan || "")}
+      · 值符${esc(q.zhi_fu_star || "")} 值使${esc(q.zhi_shi_door || "")}门</div>
+    <div class="jiugong qimen">${cells.map((c) => `
+      <div class="${c.palace === 5 ? "center" : ""} ${c.zhi_fu ? "zhi" : ""}">
+        <div class="qm-lab">${esc(c.label)}</div>
+        <div class="qm-god">${esc(c.god || "")}</div>
+        <div class="qm-star">${esc(c.star || "")} · ${esc(c.door || "")}门</div>
+        <div class="qm-yi">天${esc(c.tian || "")} / 地${esc(c.di || "")}</div>
+      </div>`).join("")}</div>
+    <div class="muted" style="font-size:calc(11px * var(--font-scale))">${esc(q.note || "")}</div>`;
+}
+function renderZiwei(z) {
+  if (!z) return '<div class="empty">无紫微示意</div>';
+  const pal = z.palaces || [];
+  const hua = (z.sihua || []).map((s) => `${s.star || ""}${s.hua || ""}`).filter(Boolean).join("、");
+  return `
+    <div class="muted">${esc(z.note || "")}</div>
+    ${hua ? `<div class="muted">${esc(z.sihua_note || "流年四化示意")}：${esc(hua)}</div>` : ""}
+    <div class="ziwei-grid">${pal.map((p) => `
+      <div class="zw-cell ${p.name === "命宫" ? "ming" : ""}">
+        <div class="k">${esc(p.name)} · ${esc(p.zhi)}</div>
+        <div>${esc(p.stars_txt || (p.stars || []).join("、") || "—")}</div>
+      </div>`).join("")}</div>`;
+}
+function calPackHtml(title, pack) {
+  pack = pack || {};
+  const today = pack.today || [];
+  if (today.length) {
+    return `<div><b>${esc(title)}</b> 当日：${today.map((x) => esc(x.name)).join("、")}</div>`;
+  }
+  let s = `<div><b>${esc(title)}</b> 当日无。`;
+  if (pack.next) s += ` 距${esc(pack.next.name)}（${esc(pack.next.date)}）还有 <b>${pack.next.days}</b> 天。`;
+  if (pack.prev) s += ` 距上次${esc(pack.prev.name)}（${esc(pack.prev.date)}）已过 ${pack.prev.days} 天。`;
+  return s + "</div>";
+}
+function paintAlmanacHour(zhi) {
+  const a = almanacCache;
+  if (!a) return;
+  almanacZhi = zhi;
+  const hours = a.shichen_hours || [];
+  const cur = hours.find((h) => h.zhi_index === zhi) || {};
+  const bar = $("#almanacShichen");
+  if (bar) bar.innerHTML = renderShichenBar(a, zhi);
+  const det = $("#almanacHourDet");
+  if (det) {
+    det.innerHTML = cur.name
+      ? `${esc(cur.ganzhi || "")} ${esc(cur.name)} · ${esc(cur.luck)} · ${esc(cur.reason || "")} · ${esc(cur.direction || "")}`
+      : "";
+  }
+  const qm = $("#almanacQimen");
+  if (qm) qm.innerHTML = renderQimen((a.qimen_plates || []).find((p) => p.zhi_index === zhi) || a.qimen);
+  const zw = $("#almanacZiwei");
+  if (zw) zw.innerHTML = renderZiwei((a.ziwei_plates || [])[zhi] || a.ziwei);
+}
 function almanacTodayStr() {
   const n = new Date();
   const p = (x) => String(x).padStart(2, "0");
@@ -618,6 +691,11 @@ async function loadDashAlmanac(forceDate) {
     const wxCompact = wx["旺"] ? `${wx["旺"]}旺 ${wx["相"] || ""}相` : (a.wangxiang_text || "—");
     const solarTxt = (a.solar && a.solar.text) || a.date;
     const lunarTxt = (a.lunar && a.lunar.ok) ? (a.lunar.full || ("农历" + a.lunar.text)) : "";
+    const cal = a.calendar || {};
+    const pickZhi = (a.selected_shichen && a.selected_shichen.zhi_index != null)
+      ? a.selected_shichen.zhi_index
+      : ((a.hour && a.hour.zhi_index != null) ? a.hour.zhi_index : 6);
+    almanacCache = a;
     host.innerHTML = `
       <div class="almanac-head">${esc(solarTxt)}（${esc(a.weekday)}）${a.is_today ? '<span class="badge level-3">今天</span>' : ""}
         ${lunarTxt ? `<span class="badge level-2">${esc(lunarTxt)}</span>` : ""}
@@ -627,13 +705,34 @@ async function loadDashAlmanac(forceDate) {
         <div class="kpi"><span class="k">年柱</span><span class="v">${esc(a.year_ganzhi)}【${esc(a.zodiac)}】</span></div>
         <div class="kpi"><span class="k">月柱</span><span class="v">${esc(a.month_ganzhi)}</span></div>
         <div class="kpi"><span class="k">日柱</span><span class="v">${esc(a.day_ganzhi)}</span></div>
-        <div class="kpi"><span class="k">时柱</span><span class="v">${esc(a.hour_ganzhi || (a.is_today ? "—" : "仅当天"))}</span></div>
+        <div class="kpi"><span class="k">时柱</span><span class="v">${esc(a.hour_ganzhi || (a.is_today ? "—" : "点选时辰"))}</span></div>
         <div class="kpi ${h.is_huangdao ? "hd" : "bd"}"><span class="k">黄道</span><span class="v">${esc(h.text || "—")}</span></div>
         <div class="kpi caishen"><span class="k">财神</span><span class="v">${esc(a.caishen || "—")}${a.zhi_dir ? ` · 日支${esc(a.zhi_dir)}` : ""}</span></div>
         <div class="kpi"><span class="k">旺相</span><span class="v">${esc(wxCompact)}</span></div>
       </div>
       <div class="muted" style="font-size:calc(12px * var(--font-scale));margin:4px 0">${esc(a.wuxing)} ｜ ${esc(a.wangxiang_text || "")}</div>
       <div class="jiugong">${renderJiugong(a)}</div>
+      <div class="almanac-block">
+        <div class="card-title" style="margin:10px 0 6px">十二时辰吉凶 <span class="muted">点选时辰看奇门/紫微 · 民俗推算</span></div>
+        <div id="almanacShichen" class="shichen-bar">${renderShichenBar(a, pickZhi)}</div>
+        <div id="almanacHourDet" class="muted" style="margin:6px 0"></div>
+      </div>
+      <div class="almanac-block">
+        <div class="card-title" style="margin:10px 0 6px">奇门遁甲 <span class="muted">时家盘 · 随所选时辰变化</span></div>
+        <div id="almanacQimen"></div>
+      </div>
+      <div class="almanac-block">
+        <div class="card-title" style="margin:10px 0 6px">紫微斗数 <span class="muted">流日示意，不是本命盘</span></div>
+        <div id="almanacZiwei"></div>
+      </div>
+      <div class="almanac-block cal-box">
+        <div class="card-title" style="margin:10px 0 6px">节气与节假日</div>
+        ${cal.current_term ? `<div>当前交节后处于「${esc(cal.current_term.name)}」${cal.current_term.days_ago ? `（已过 ${cal.current_term.days_ago} 天）` : "（今日交节）"}。</div>` : ""}
+        ${calPackHtml("24节气", cal.solar_term)}
+        ${calPackHtml("国内节日", cal.domestic)}
+        ${calPackHtml("国外节日", cal.foreign)}
+        <div class="muted" style="margin-top:4px">${esc((cal.note || ""))}</div>
+      </div>
       <div class="kv"><span class="k">${nextLab}</span>
         <span>${esc(t.date || "")}（${esc(t.weekday || "")}）${esc(t.day_ganzhi || "")}
         ${th.text ? `<span class="badge ${th.is_huangdao ? "level-3" : "level-2"}">${esc(th.text)}</span>` : ""}
@@ -641,6 +740,12 @@ async function loadDashAlmanac(forceDate) {
         ${t.festival ? `<span class="badge level-4">${esc(t.festival)}</span>` : ""}
         <span class="muted">财神${esc(t.caishen || "")}</span></span></div>
       <div class="muted" style="font-size:calc(11px * var(--font-scale));margin-top:4px">${esc(a.note)}</div>`;
+    paintAlmanacHour(pickZhi);
+    $("#almanacShichen")?.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-zhi]");
+      if (!btn) return;
+      paintAlmanacHour(Number(btn.dataset.zhi));
+    });
   } catch (err) {
     if (seq !== almanacLoadSeq) return;
     console.warn(err);

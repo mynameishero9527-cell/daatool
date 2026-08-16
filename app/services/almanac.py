@@ -6,6 +6,7 @@
 import json
 import logging
 from datetime import date, datetime, timedelta
+from functools import lru_cache
 from zoneinfo import ZoneInfo
 
 from .lunar import solar_to_lunar
@@ -226,6 +227,221 @@ def _day_summary(d: date) -> dict:
             "zhi_dir": ZHI_DIR[dgz[1]]}
 
 
+# 日支-时支
+_CHONG = {0: 6, 6: 0, 1: 7, 7: 1, 2: 8, 8: 2, 3: 9, 9: 3, 4: 10, 10: 4, 5: 11, 11: 5}
+_HE = {0: 1, 1: 0, 2: 11, 11: 2, 3: 10, 10: 3, 4: 9, 9: 4, 5: 8, 8: 5, 6: 7, 7: 6}
+_SANHE = ({8, 0, 4}, {11, 3, 7}, {2, 6, 10}, {5, 9, 1})
+_JIANCHU = list("建除满平定执破危成收开闭")
+_WX_KE = {"木": "土", "土": "水", "水": "火", "火": "金", "金": "木"}
+_WX_SHENG = {"木": "火", "火": "土", "土": "金", "金": "水", "水": "木"}
+
+# 农历节日（用 1900–2100 月历表查找）。春节/除夕只认 SPRING_FESTIVAL，不另猜。
+_LUNAR_FEST = {
+    (1, 15): "元宵节", (5, 5): "端午节", (7, 7): "七夕",
+    (8, 15): "中秋节", (9, 9): "重阳节", (12, 8): "腊八",
+}
+
+# 国外常见公历纪念日（不是各国法定放假安排）
+_FOREIGN_FIXED = [
+    ((1, 1), "元旦 / New Year"),
+    ((2, 14), "情人节"),
+    ((3, 8), "国际妇女节"),
+    ((3, 17), "圣帕特里克节"),
+    ((4, 1), "愚人节"),
+    ((4, 22), "世界地球日"),
+    ((5, 1), "国际劳动节"),
+    ((10, 31), "万圣节"),
+    ((12, 25), "圣诞节"),
+    ((12, 26), "节礼日"),
+    ((12, 31), "新年夜"),
+]
+
+
+def _easter(year: int) -> date:
+    """Anonymous Gregorian 算法，不是教会颁布的节日表。"""
+    a = year % 19
+    b, c = divmod(year, 100)
+    d, e = divmod(b, 4)
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i, k = divmod(c, 4)
+    ll = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * ll) // 451
+    month, day = divmod(h + ll - 7 * m + 114, 31)
+    return date(year, month, day + 1)
+
+
+def _nth_weekday(year: int, month: int, weekday: int, n: int) -> date:
+    d0 = date(year, month, 1)
+    first = (weekday - d0.weekday()) % 7
+    return d0 + timedelta(days=first + (n - 1) * 7)
+
+
+def shichen_luck(d: date, zhi_i: int) -> dict:
+    """时辰吉凶：日支冲合 + 建除 + 五行生克。民俗推算，不是通书宜忌。"""
+    dgz = day_ganzhi(d)
+    day_zhi = ZHI.index(dgz[1])
+    hour_zhi = ZHI[zhi_i]
+    name, direction = SHICHEN[zhi_i]
+    jc = _JIANCHU[(zhi_i - day_zhi) % 12]
+    reasons = []
+    score = 0
+    if _CHONG.get(day_zhi) == zhi_i:
+        reasons.append(f"日支{dgz[1]}冲时支{hour_zhi}")
+        score -= 2
+    if _HE.get(day_zhi) == zhi_i:
+        reasons.append(f"日支{dgz[1]}合时支{hour_zhi}")
+        score += 2
+    if any({day_zhi, zhi_i} <= g and day_zhi != zhi_i for g in _SANHE):
+        reasons.append("三合")
+        score += 1
+    if jc in ("成", "开", "收"):
+        reasons.append(f"建除「{jc}」偏吉")
+        score += 1
+    elif jc in ("破", "闭", "危"):
+        reasons.append(f"建除「{jc}」偏凶")
+        score -= 1
+    dw, hw = ZHI_WUXING[dgz[1]], ZHI_WUXING[hour_zhi]
+    if _WX_SHENG.get(hw) == dw:
+        reasons.append(f"时{hw}生日{dw}")
+        score += 1
+    elif _WX_KE.get(hw) == dw:
+        reasons.append(f"时{hw}克日{dw}")
+        score -= 1
+    if score >= 2:
+        luck = "吉"
+    elif score <= -2:
+        luck = "凶"
+    else:
+        luck = "平"
+    if not reasons:
+        reasons.append("无冲合，建除" + jc)
+    hh = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22][zhi_i]
+    hg = hour_ganzhi(d, hh)
+    return {
+        "zhi_index": zhi_i,
+        "zhi": hour_zhi,
+        "name": name,
+        "direction": direction,
+        "jianchu": jc,
+        "luck": luck,
+        "reason": "；".join(reasons),
+        "hour": hh,
+        "ganzhi": hg["text"],
+    }
+
+
+def shichen_luck_all(d: date) -> list[dict]:
+    return [shichen_luck(d, i) for i in range(12)]
+
+
+@lru_cache(maxsize=16)
+def _solar_term_dates(year: int) -> tuple[tuple[date, str], ...]:
+    out = []
+    for name, m, dd in SOLAR_TERMS:
+        try:
+            out.append((date(year, m, dd), name))
+        except ValueError:
+            continue
+    return tuple(out)
+
+
+@lru_cache(maxsize=16)
+def _lunar_fest_in_year(year: int) -> tuple[tuple[date, str], ...]:
+    items = []
+    d0 = date(year, 1, 1)
+    end = date(year, 12, 31)
+    while d0 <= end:
+        lu = solar_to_lunar(d0)
+        if lu and not lu.get("leap") and (lu["month"], lu["day"]) in _LUNAR_FEST:
+            items.append((d0, _LUNAR_FEST[(lu["month"], lu["day"])]))
+        d0 += timedelta(days=1)
+    return tuple(items)
+
+
+@lru_cache(maxsize=16)
+def _domestic_dates(year: int) -> tuple[tuple[date, str], ...]:
+    items: list[tuple[date, str]] = []
+    for name, md, *_ in FESTIVALS_FIXED:
+        items.append((date(year, md[0], md[1]), name))
+    spring = SPRING_FESTIVAL.get(year)
+    if spring:
+        items.append((spring, "春节"))
+        items.append((spring - timedelta(days=1), "除夕"))
+    for name, m, dd in SOLAR_TERMS:
+        if name == "清明":
+            try:
+                items.append((date(year, m, dd), "清明节"))
+            except ValueError:
+                pass
+    items.extend(_lunar_fest_in_year(year))
+    seen = set()
+    uniq = []
+    for dt, name in items:
+        key = (dt, name)
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append((dt, name))
+    return tuple(uniq)
+
+
+@lru_cache(maxsize=16)
+def _foreign_dates(year: int) -> tuple[tuple[date, str], ...]:
+    items = [(date(year, m, d), name) for (m, d), name in _FOREIGN_FIXED]
+    eas = _easter(year)
+    items.append((eas, "复活节（推算）"))
+    items.append((eas - timedelta(days=2), "耶稣受难日（推算）"))
+    items.append((eas + timedelta(days=1), "复活节周一（推算）"))
+    items.append((_nth_weekday(year, 5, 6, 2), "母亲节（美国，5月第二个周日）"))
+    items.append((_nth_weekday(year, 6, 6, 3), "父亲节（美国，6月第三个周日）"))
+    items.append((_nth_weekday(year, 11, 3, 4), "感恩节（美国，11月第四个周四）"))
+    return tuple(items)
+
+
+def _nearest(d: date, items: list[tuple[date, str]]) -> dict:
+    on = [{"date": dt.isoformat(), "name": name, "days": 0} for dt, name in items if dt == d]
+    future = sorted((dt, name) for dt, name in items if dt > d)
+    past = sorted((dt, name) for dt, name in items if dt < d)
+    nxt = None
+    if future:
+        dt, name = future[0]
+        nxt = {"date": dt.isoformat(), "name": name, "days": (dt - d).days}
+    prev = None
+    if past:
+        dt, name = past[-1]
+        prev = {"date": dt.isoformat(), "name": name, "days": (d - dt).days}
+    return {"today": on, "next": nxt, "prev": prev}
+
+
+def calendar_bundle(d: date) -> dict:
+    """当日节气/国内节日/国外节日；没有则给距最近日期的天数。"""
+    terms = _solar_term_dates(d.year - 1) + _solar_term_dates(d.year) + _solar_term_dates(d.year + 1)
+    domestic = _domestic_dates(d.year - 1) + _domestic_dates(d.year) + _domestic_dates(d.year + 1)
+    foreign = _foreign_dates(d.year - 1) + _foreign_dates(d.year) + _foreign_dates(d.year + 1)
+    term_n = _nearest(d, terms)
+    dom_n = _nearest(d, domestic)
+    for_n = _nearest(d, foreign)
+    current_term = None
+    for dt, name in sorted(terms):
+        if dt <= d:
+            current_term = {"date": dt.isoformat(), "name": name, "days_ago": (d - dt).days}
+        else:
+            break
+    return {
+        "solar_term": term_n,
+        "current_term": current_term,
+        "domestic": dom_n,
+        "foreign": for_n,
+        "note": (
+            "节气为通用公历近似日（±1日）。国内春节/除夕仅覆盖已录入的 2025–2027；"
+            "其余农历节日按 1900–2100 月历表查找。国外为常见公历纪念日/推算节日，"
+            "不是各国官方放假安排。"
+        ),
+    }
+
+
 def resolve_almanac_date(raw: str | None):
     """解析 YYYY-MM-DD；空则今天。格式非法返回 None，不猜日期。"""
     s = (raw or "").strip()
@@ -246,7 +462,11 @@ def _store_almanac(payload: dict) -> bool:
     try:
         from ..database import execute
         body = {k: v for k, v in payload.items()
-                if k not in ("stored", "stored_days", "hour", "hour_ganzhi", "clock")}
+                if k not in (
+                    "stored", "stored_days", "hour", "hour_ganzhi", "clock",
+                    "shichen_hours", "qimen", "qimen_plates", "ziwei", "ziwei_plates",
+                    "calendar", "selected_shichen",
+                )}
         execute(
             "INSERT INTO almanac_day(day, payload, updated_at) VALUES(?,?,?) "
             "ON CONFLICT(day) DO UPDATE SET payload=excluded.payload, updated_at=excluded.updated_at",
@@ -270,7 +490,7 @@ def prefetch_almanac_range(center: date, span: int = 7) -> list[str]:
 
 
 def get_almanac(d: date | None = None, persist: bool = True,
-                now: datetime | None = None) -> dict:
+                now: datetime | None = None, hour: int | None = None) -> dict:
     clock = now or now_shanghai()
     d = d or clock.date()
     ygz, zodiac = year_ganzhi(d)
@@ -283,10 +503,28 @@ def get_almanac(d: date | None = None, persist: bool = True,
     today = clock.date()
     hd = huangdao_of(d)
     lunar = solar_to_lunar(d)
-    hour = hour_ganzhi(d, clock.hour) if d == today else None
+    clock_hour = hour_ganzhi(d, clock.hour) if d == today else None
+    pick_hour = None
+    if hour is not None:
+        try:
+            pick_hour = int(hour) % 24
+        except (TypeError, ValueError):
+            pick_hour = None
+    if pick_hour is None:
+        pick_hour = clock.hour if d == today else 12
+    pick = hour_ganzhi(d, pick_hour)
+    hours_luck = shichen_luck_all(d)
+    from . import qimen as qimen_svc
+    from . import ziwei as ziwei_svc
+    qimen_plates = qimen_svc.plates_for_day(d)
+    qimen_now = qimen_svc.plate(d, pick_hour)
+    lunar_day = (lunar or {}).get("day") if lunar else None
+    ziwei = ziwei_svc.day_chart(lunar_day, pick["ganzhi"][1], ygz[0])
+    ziwei_plates = [ziwei_svc.day_chart(lunar_day, ZHI[i], ygz[0]) for i in range(12)]
+    cal = calendar_bundle(d)
     pillars = [f"{ygz}年", f"{mgz}月", f"{dgz}日"]
-    if hour:
-        pillars.append(hour["text"])
+    if clock_hour:
+        pillars.append(clock_hour["text"])
     lunar_year_gz = GAN[(lunar["year"] - 4) % 10] + ZHI[(lunar["year"] - 4) % 12] if lunar else ""
     if lunar:
         lunar = {
@@ -307,8 +545,15 @@ def get_almanac(d: date | None = None, persist: bool = True,
         "lunar": lunar or {"ok": False, "text": "", "full": "", "error": "超出农历对照表，不猜测"},
         "year_ganzhi": f"{ygz}年", "zodiac": zodiac,
         "month_ganzhi": f"{mgz}月", "day_ganzhi": f"{dgz}日",
-        "hour_ganzhi": hour["text"] if hour else "",
-        "hour": hour,
+        "hour_ganzhi": clock_hour["text"] if clock_hour else "",
+        "hour": clock_hour,
+        "selected_shichen": pick,
+        "shichen_hours": hours_luck,
+        "qimen": qimen_now,
+        "qimen_plates": qimen_plates,
+        "ziwei": ziwei,
+        "ziwei_plates": ziwei_plates,
+        "calendar": cal,
         "pillars_text": " ".join(pillars),
         "wuxing": f"日干{day_gan}属{GAN_WUXING[day_gan]}，日支{dgz[1]}属{ZHI_WUXING[dgz[1]]}",
         "caishen": CAISHEN[day_gan],
@@ -323,7 +568,7 @@ def get_almanac(d: date | None = None, persist: bool = True,
         "huangdao": hd,
         "tomorrow": _day_summary(d + timedelta(days=1)),
         "stored": False,
-        "note": "干支日柱按1949-10-01甲子日；年柱以春节为界；月柱按节气寅月；时柱五鼠遁用北京时间；农历为1900-2100月历表；民俗参考",
+        "note": "干支日柱按1949-10-01甲子日；年柱以春节为界；月柱按节气寅月；时柱五鼠遁用北京时间；农历为1900-2100月历表；时辰吉凶/奇门/紫微为民俗推算，不是官方黄历",
     }
     if persist:
         payload["stored"] = _store_almanac(payload)

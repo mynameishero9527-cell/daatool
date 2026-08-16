@@ -286,12 +286,13 @@ def macro_event_detail(title: str, bull: str = "", bear: str = "",
 
 
 @router.get("/macro/almanac")
-def macro_almanac(day: str = Query("", alias="date"), span: int = Query(7, ge=0, le=31)):
+def macro_almanac(day: str = Query("", alias="date"), span: int = Query(7, ge=0, le=31),
+                  hour: int | None = Query(None, ge=0, le=23)):
     from .services import almanac
     d = almanac.resolve_almanac_date(day)
     if d is None:
         return {"ok": False, "error": "日期格式无效，请用 YYYY-MM-DD"}
-    payload = almanac.get_almanac(d, persist=True)
+    payload = almanac.get_almanac(d, persist=True, hour=hour)
     try:
         stored = almanac.prefetch_almanac_range(d, span)
         payload["stored"] = True
