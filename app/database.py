@@ -337,6 +337,7 @@ CREATE TABLE IF NOT EXISTS stock_ai_brief (
 -- 13.0.32：多方案并行；日K不足即时补真实K线；新股按综合评分+财报评级，未评级不伪造
 -- 13.0.33：易经卜卦按卦象五行匹配热门板块，只显示财报A/B且综合评分较高的本地股
 -- 13.0.34：买/卖点对齐综合评分与增持减持，叠加板块热度、财报、距半年高点上涨空间
+-- 13.0.35：点击个股进入分析时默认展示日K，不再默认分时
 -- intel_item_ai / hot_term_ai 表结构不变，失败仍不覆盖已保存结果
 
 CREATE TABLE IF NOT EXISTS knowledge_ai (

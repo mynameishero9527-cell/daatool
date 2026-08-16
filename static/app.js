@@ -1260,7 +1260,7 @@ window.pinWatch = async (code) => { await post(`/api/watchlist/pin?code=${code}`
 
 /* ---------------- 个股分析 ---------------- */
 let currentStock = null;
-let currentPeriod = "minute";
+let currentPeriod = "day";
 let klineChart = null;
 let fundKlineChart = null;
 let lastFundKline = null;
@@ -1319,6 +1319,8 @@ $("#copyStockBtn")?.addEventListener("click", (e) => {
 
 window.openStock = (code, name) => {
   currentStock = { code, name };
+  currentPeriod = "day";
+  $$("#periodBtns .opt").forEach((b) => b.classList.toggle("active", b.dataset.period === "day"));
   stockAnalysisCache = null;
   stockFinanceCache = null;
   stockAnnounceCache = null;
