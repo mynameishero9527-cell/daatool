@@ -4,9 +4,11 @@ SQL 条件全部硬编码在本模块，不接受前端拼 SQL。
 财报评级为独立维度，不并入购买指数。
 空命中必须带回原因，不拿观察池或低质量票凑数。
 方案 I/J 只用已缓存持股/解禁，缺则零命中。
-最佳买/卖点多方案并行扫描；老股须交叉命中至少 2 个方案并结合近半年真实日K；
+最佳买点多方案并行取并集（主升/回踩/企稳本身互斥，不强制交叉命中）；
+卖点仍须交叉命中至少 2 个方案；两侧都结合近半年真实日K；
 再叠加板块热度、综合评分、财报评级、距半年高点上涨空间；
 买点不对减持/空间过小，卖点不对增持/仍有较大空间；
+买点窗口不套用引擎周线门，避免把合格票一票否决；
 日K不完整即时补真实K线（不用涨跌幅/离线哈希冒充）；
 新股改走综合评分 + 财报评级，未评级不伪造 A。
 """
@@ -22,13 +24,14 @@ META_KEY = "strategy_enabled"  # 兼容旧键：曾同时控制买/卖
 META_KEY_BUY = "strategy_enabled_buy"
 META_KEY_SELL = "strategy_enabled_sell"
 RULES_VER_KEY = "strategy_rules_ver"
-RULES_VER = "13.0.34"
+RULES_VER = "13.0.36"
 DEFAULT_BUY_IDS = ["BP", "BT", "BZ"]
 DEFAULT_SELL_IDS = ["ST", "SO", "SR"]
 DEFAULT_IDS = list(DEFAULT_BUY_IDS)  # 兼容旧测试/调用，仅表示买点默认
 MIN_PLAN_HITS = 2
 HALF_CAL_DAYS = 180
 HALF_MIN_BARS = 60
+HALF_MAX_RANGE_BUY = 200.0
 NEW_LAST_DAYS = 12
 NEW_BUY_MIN_SCORE = 65.0
 NEW_SELL_MIN_SCORE = 72.0
@@ -39,7 +42,7 @@ BUY_MAX_HALF_POS = 0.68
 SELL_MAX_ROOM = 8.0
 SELL_TINY_ROOM = 5.0
 SELL_MIN_HALF_POS = 0.80
-HOT_FLOOR = -5.0
+HOT_FLOOR = -12.0
 GOOD_GRADES = ("A", "B")
 WEAK_GRADES = ("C", "D")
 NAME_OK = "s.name NOT LIKE '%ST%' AND s.name NOT LIKE '%退%'"
@@ -580,11 +583,12 @@ def collect_hits(
     enabled: list[str] | None = None,
     limit: int = PER_PLAN_CAP,
     min_hits: int = 1,
+    use_week_gate: bool | None = None,
 ) -> list[dict]:
     """启用方案并集。买点只跑买点规则，卖点只跑卖点规则，互不混用。
 
     min_hits 默认 1，供引擎/方案 I/J 单测与策略选股使用。
-    最佳买/卖点窗口走 collect_buy_points / collect_sell_points，要求 ≥2。
+    最佳卖点窗口要求 ≥2；最佳买点取并集后再走质量门禁。
     """
     if kind not in ("buy", "sell"):
         raise ValueError("kind must be buy or sell")
@@ -604,9 +608,10 @@ def collect_hits(
             _merge(bucket, row, pid)
     items = _annotate(_sort_hits(list(bucket.values()), kind), kind)
     items = [r for r in items if len(r.get("plans") or []) >= need]
-    if kind == "buy":
+    if kind == "buy" and use_week_gate is not False:
         from . import week_gate
-        items = week_gate.apply_buy_gate(items, enabled=_week_gate_on())
+        on = _week_gate_on() if use_week_gate is None else bool(use_week_gate)
+        items = week_gate.apply_buy_gate(items, enabled=on)
     return _fair_take(items, enabled, limit)
 
 
@@ -736,7 +741,7 @@ def half_year_pass(row: dict, kind: str) -> bool:
         if room is None or room > SELL_MAX_ROOM:
             return False
         return ret >= 0 or pos >= 0.88
-    if rng < 12 or rng > 90:
+    if rng < 12 or rng > HALF_MAX_RANGE_BUY:
         return False
     if pos < 0.18 or pos > BUY_MAX_HALF_POS:
         return False
@@ -813,8 +818,8 @@ def quality_pass(row: dict, kind: str) -> bool:
         return False
     if grade in GOOD_GRADES:
         return room >= BUY_MIN_ROOM
-    # 未评级：不伪造 A，只允许更高分且空间更大
-    return score >= 70 and room >= 18
+    # 未评级：不伪造 A，按同样的评分/空间门槛，不另造等级
+    return room >= BUY_MIN_ROOM
 
 
 def is_new_listing(row: dict) -> bool:
@@ -858,7 +863,7 @@ def apply_recommend_gate(
     backfill: bool = True,
     min_hits: int = MIN_PLAN_HITS,
 ) -> list[dict]:
-    """老股：并行扫描后须命中 min_hits 且过半年波动门。新股：综合评分+财报评级。"""
+    """老股：命中 min_hits 且过半年波动+质量门。新股：综合评分+财报评级。"""
     codes = [r.get("code") for r in items if r.get("code")]
     backfilled: set[str] = set()
     if backfill:
@@ -901,7 +906,8 @@ def _need_multi_reason(enabled: list[str], kind: str) -> str:
     tail = _EMPTY_BUY_TAIL if kind == "buy" else _EMPTY_SELL_TAIL
     return (
         f"当前未启用任何{side}方案（{names}）。"
-        f"可并行勾选多个方案；老股须交叉命中至少 {MIN_PLAN_HITS} 个，新股看综合评分与财报评级。"
+        f"可并行勾选多个方案；买点取并集后过质量门禁，卖点老股须交叉命中至少 {MIN_PLAN_HITS} 个。"
+        "新股看综合评分与财报评级。"
         f"{tail}"
     )
 
@@ -913,8 +919,7 @@ def _empty_half_reason(enabled: list[str], kind: str, had_hits: bool) -> str:
     if had_hits:
         return (
             f"当前启用{side}方案（{names}）已并行扫描到命中，"
-            "但未同时通过半年波动、上涨空间、综合评分、财报或板块热度门禁，"
-            "或未交叉命中足够方案。"
+            "但未同时通过半年波动、上涨空间、综合评分、财报或板块热度门禁。"
             f"{tail}已尝试补真实日K；补不到的不编造。"
         )
     extra = (
@@ -954,22 +959,22 @@ def _rank_kept(items: list[dict], kind: str) -> list[dict]:
         boost = 1 if (r.get("score_advice") or "") == "增持" else 0
         grade = (r.get("finance_grade") or "").strip()
         grade_v = 2 if grade == "A" else 1 if grade == "B" else 0
+        n = len(r.get("plans") or [])
         if kind == "sell":
-            return (room_v, -pos_v, -score_v)
-        return (-boost, -room_v, -score_v, -heat_v, -grade_v)
+            return (-n, room_v, -pos_v, -score_v)
+        return (-n, -boost, -room_v, -score_v, -heat_v, -grade_v)
 
     return sorted(items, key=key)
 
 
 def collect_buy_points(limit: int = 12, backfill: bool = True) -> tuple[list[dict], str, str]:
-    """实时买点窗：多方案并行；老股交叉命中+半年日K，新股综合评分+财报评级。"""
+    """实时买点窗：多方案并行取并集；半年日K+质量门禁，新股综合评分+财报评级。"""
     limit = max(3, min(int(limit or 12), 40))
     enabled = get_enabled("buy")
     if not enabled:
         return [], "empty", _need_multi_reason(enabled, "buy")
-    need = MIN_PLAN_HITS if len(enabled) >= MIN_PLAN_HITS else 1
-    raw = collect_hits("buy", enabled, limit=PER_PLAN_CAP, min_hits=1)
-    kept = apply_recommend_gate(raw, "buy", backfill=backfill, min_hits=need)
+    raw = collect_hits("buy", enabled, limit=PER_PLAN_CAP, min_hits=1, use_week_gate=False)
+    kept = apply_recommend_gate(raw, "buy", backfill=backfill, min_hits=1)
     if kept:
         return _fair_take(_rank_kept(kept, "buy"), enabled, limit), "hit", _hit_note(enabled, "buy")
     return [], "empty", _empty_half_reason(enabled, "buy", had_hits=bool(raw))
@@ -990,15 +995,21 @@ def collect_sell_points(limit: int = 12, backfill: bool = True) -> tuple[list[di
 
 def _hit_note(enabled: list[str], kind: str) -> str:
     labels = "、".join(plan_caption(i, kind) for i in enabled)
+    if kind == "buy":
+        gate = (
+            "多方案并行取并集，交叉命中优先排序，不强制同一只股票同时命中互斥方案。"
+            "再结合近半年日K、上涨空间、综合评分、财报评级与板块热度；不对减持/空间过小。"
+            "买点窗口不套用引擎周线门。日K不足会即时补真实K线；未评级不伪造 A。"
+        )
+        extra = "买点只保留有潜力结构的命中，不接飞刀、不追高潮、不展示观察池。"
+        head = f"并行方案 {labels}。" if len(enabled) > 1 else f"当前执行{labels}。"
+        return f"{head}{gate}{extra}不构成投资建议"
     gate = (
         f"多方案并行扫描。老股须交叉命中至少 {MIN_PLAN_HITS} 个方案，并结合近半年日K、"
-        "上涨空间、综合评分、财报评级与板块热度；买点不对减持/空间过小，卖点不对增持/仍有较大空间。"
+        "上涨空间、综合评分、财报评级与板块热度；不对增持/仍有较大空间。"
         "日K不足会即时补真实K线；未评级不伪造 A。"
     )
-    if kind == "buy":
-        extra = "买点只保留有潜力结构的命中，不接飞刀、不追高潮、不展示观察池。"
-    else:
-        extra = "卖点只做高位止盈或中高位避险，不把已经跌残的弱票标成卖点。"
+    extra = "卖点只做高位止盈或中高位避险，不把已经跌残的弱票标成卖点。"
     if len(enabled) > 1:
         return f"并行方案 {labels} 交叉命中。{gate}{extra}不构成投资建议"
     return f"当前执行{labels}。{gate}{extra}不构成投资建议"
@@ -1027,9 +1038,14 @@ def executing_text(kind: str = "buy", enabled: list[str] | None = None) -> dict:
     blocks = [
         f"当前执行的{prefix}策略：{title}",
         f"{prefix}与另一侧完全分开勾选、分开扫描，方案名称也不共用。",
-        f"多方案可并行勾选。老股须交叉命中至少 {MIN_PLAN_HITS} 个方案，并结合近半年真实日K。",
+        (
+            "买点多方案并行取并集，交叉命中优先；卖点老股须交叉命中至少 "
+            f"{MIN_PLAN_HITS} 个方案。两侧都结合近半年真实日K。"
+            if kind == "buy"
+            else f"多方案可并行勾选。老股须交叉命中至少 {MIN_PLAN_HITS} 个方案，并结合近半年真实日K。"
+        ),
         "再叠加板块热度、综合评分、财报评级、距半年高点上涨空间；买点与增持一致，卖点与减持/兑现一致。",
-        "日K不完整会即时补真实K线；未评级不伪造 A。财报评级不并入购买指数或综合评分。",
+        "买点窗口不套用引擎周线门。日K不完整会即时补真实K线；未评级不伪造 A。财报评级不并入购买指数或综合评分。",
         "空名单不回退观察池，不编造个股，不用涨跌幅冒充日K。",
         "",
     ]
@@ -1106,8 +1122,8 @@ def get_config() -> dict:
         "note": (
             "买点策略与卖点策略分开勾选、分开扫描，名称也不共用。"
             "买点默认「潜力主升 + 趋势回踩 + 企稳蓄势」，卖点默认「高位止盈 + 超买回吐 + 资金出逃避险」。"
-            f"多方案并行扫描；老股须交叉命中至少 {MIN_PLAN_HITS} 个方案，"
-            "再结合近半年日K、上涨空间、综合评分、财报与板块热度。"
+            "买点并行取并集后过质量门禁，卖点老股须交叉命中至少 "
+            f"{MIN_PLAN_HITS} 个方案；再结合近半年日K、上涨空间、综合评分、财报与板块热度。"
             "买点不对减持/空间过小，卖点不对增持/仍有较大空间。缺K线即时补真实日K。"
             "空列表回退到该侧默认方案，不再用观察池凑数。"
         ),

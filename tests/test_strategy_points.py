@@ -226,18 +226,36 @@ class StrategyPointsTests(unittest.TestCase):
         self.assertIn(CODE_OK, {r["code"] for r in rows})
         self.assertIn("并行", note)
 
-    def test_single_plan_hit_not_recommended(self):
+    def test_single_plan_recommended_if_quality(self):
         set_meta_json(strategy.META_KEY_BUY, ["BP", "BT", "BZ"])
-        _seed(CODE_OK, name="仅主升", ma_bull=0, pullback_shrink=0, pct=3.0, pos60=0.50)
+        _seed(CODE_OK, name="仅主升", buy_index=99.5, ma_bull=0, pullback_shrink=0, pct=3.0, pos60=0.50)
         _seed_half_kline(CODE_OK)
+        _grade(CODE_OK)
         self.assertTrue(self._matches("buy", "BP", CODE_OK))
         self.assertFalse(self._matches("buy", "BT", CODE_OK))
         self.assertFalse(self._matches("buy", "BZ", CODE_OK))
-        rows, src, note = strategy.collect_buy_points(8, backfill=False)
-        self.assertNotIn(CODE_OK, {r["code"] for r in rows})
-        if not rows:
-            self.assertEqual(src, "empty")
-            self.assertTrue(note)
+        raw = {
+            "code": CODE_OK, "name": "仅主升", "price": 10.0, "pct": 3.0,
+            "buy_index": 99.5, "main_net_in": 3000, "float_mv": 80,
+            "volume_ratio": 1.3, "dark_power": 62, "pos60": 0.50,
+            "plans": ["BP"],
+        }
+        strategy.stamp_plans(raw, ["BP"], "buy")
+        with _hot_boards(), patch.object(strategy, "collect_hits", return_value=[raw]):
+            rows, src, note = strategy.collect_buy_points(8, backfill=False)
+        self.assertEqual(src, "hit")
+        self.assertIn(CODE_OK, {r["code"] for r in rows})
+        self.assertEqual(len(rows[0].get("plans") or []), 1)
+        self.assertIn("并集", note)
+
+    def test_week_gate_does_not_empty_buy_points(self):
+        _seed(CODE_OK, name="潜力股", buy_index=99.5, macd_bar=9.5)
+        _seed_half_kline(CODE_OK)
+        _grade(CODE_OK)
+        with _hot_boards(), patch("app.services.week_gate.apply_buy_gate", side_effect=lambda items, enabled=True: []):
+            rows, src, _note = strategy.collect_buy_points(40, backfill=False)
+        self.assertEqual(src, "hit")
+        self.assertIn(CODE_OK, {r["code"] for r in rows})
 
     def test_multi_hit_with_half_kline_recommended(self):
         set_meta_json(strategy.META_KEY_BUY, ["BP", "BT", "BZ"])
@@ -416,6 +434,18 @@ class StrategyPointsTests(unittest.TestCase):
             "sector_hot": 8,
         }
         self.assertFalse(strategy.quality_pass(buy_no_room, "buy"))
+        ungraded = {
+            "score": 62, "score_advice": "保持不变", "finance_grade": "",
+            "room_to_high": 15, "sector_hot": 2,
+        }
+        self.assertTrue(strategy.quality_pass(ungraded, "buy"))
+        ungraded["sector_hot"] = -13
+        self.assertFalse(strategy.quality_pass(ungraded, "buy"))
+        wide = {
+            "half_bars": 80, "half_range_pct": 124, "half_pos": 0.50,
+            "half_ret": 20, "room_to_high": 26,
+        }
+        self.assertTrue(strategy.half_year_pass(wide, "buy"))
         self.assertEqual(strategy.point_advice("sell", "增持", 3), "减持")
         self.assertEqual(strategy.point_advice("buy", "增持", 18), "增持")
 
