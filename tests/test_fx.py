@@ -71,6 +71,10 @@ class FxParseTests(unittest.TestCase):
         self.assertEqual(fx_src.parse_frankfurter_cny_timeseries({"rates": None}, ["USD"]), [])
 
 
+# 落在保留窗口内，避免被 prune_old(400) 清掉；周末 07-11/12 用来确认不插值
+_FIXTURE_DAYS = ("2026-07-06", "2026-07-07", "2026-07-08", "2026-07-11")
+
+
 class FxPersistTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -78,7 +82,14 @@ class FxPersistTests(unittest.TestCase):
 
     def setUp(self):
         cache.clear()
-        execute("DELETE FROM fx_daily WHERE pair IN ('USDCNY','EURCNY','USDCNH','JPYCNY')")
+        execute(
+            f"DELETE FROM fx_daily WHERE trade_date IN ({','.join('?' * len(_FIXTURE_DAYS))})",
+            _FIXTURE_DAYS,
+        )
+        execute("DELETE FROM fx_daily WHERE pair='USDCNH' AND trade_date='2026-07-11'")
+
+    def tearDown(self):
+        self.setUp()
 
     def test_invalid_range_not_guessed(self):
         rng, err = fx_svc.resolve_range("2026-13-40", "2026-08-16")
@@ -100,35 +111,36 @@ class FxPersistTests(unittest.TestCase):
 
     def test_persist_official_no_weekend_fill(self):
         fake = [
-            {"pair": "USDCNY", "trade_date": "2026-08-14", "rate": 7.15, "source": "欧洲央行"},
-            {"pair": "EURCNY", "trade_date": "2026-08-14", "rate": 8.30, "source": "欧洲央行"},
+            {"pair": "USDCNY", "trade_date": "2026-07-06", "rate": 7.15, "source": "欧洲央行"},
+            {"pair": "EURCNY", "trade_date": "2026-07-06", "rate": 8.30, "source": "欧洲央行"},
         ]
         with patch.object(fx_src, "fetch_frankfurter_range", return_value=fake):
-            out = fx_svc.persist_official_range(date(2026, 8, 14), date(2026, 8, 16))
+            out = fx_svc.persist_official_range(date(2026, 7, 6), date(2026, 7, 8))
         self.assertTrue(out["ok"])
         self.assertEqual(out["written"], 2)
-        days = {r["trade_date"] for r in query("SELECT trade_date FROM fx_daily WHERE pair='USDCNY'")}
-        self.assertEqual(days, {"2026-08-14"})
-        self.assertNotIn("2026-08-15", days)
-        self.assertNotIn("2026-08-16", days)
+        days = {r["trade_date"] for r in query(
+            "SELECT trade_date FROM fx_daily WHERE pair='USDCNY' AND trade_date BETWEEN '2026-07-06' AND '2026-07-08'")}
+        self.assertEqual(days, {"2026-07-06"})
+        self.assertNotIn("2026-07-07", days)
+        self.assertNotIn("2026-07-08", days)
 
     def test_official_not_overwritten_by_live_and_cnh_not_from_cny(self):
         fx_svc._upsert_official([
-            {"pair": "USDCNY", "trade_date": "2026-08-14", "rate": 7.15, "source": "欧洲央行"},
-            {"pair": "USDCNH", "trade_date": "2026-08-14", "rate": 7.20, "source": "欧洲央行"},
+            {"pair": "USDCNY", "trade_date": "2026-07-06", "rate": 7.15, "source": "欧洲央行"},
+            {"pair": "USDCNH", "trade_date": "2026-07-06", "rate": 7.20, "source": "欧洲央行"},
         ])
         fx_svc._upsert_official([
-            {"pair": "USDCNY", "trade_date": "2026-08-14", "rate": 9.99, "source": "新浪财经"},
+            {"pair": "USDCNY", "trade_date": "2026-07-06", "rate": 9.99, "source": "新浪财经"},
         ])
-        row = query("SELECT rate, source FROM fx_daily WHERE pair='USDCNY' AND trade_date='2026-08-14'")[0]
+        row = query("SELECT rate, source FROM fx_daily WHERE pair='USDCNY' AND trade_date='2026-07-06'")[0]
         self.assertAlmostEqual(row["rate"], 7.15)
         self.assertEqual(row["source"], "欧洲央行")
-        self.assertEqual(query("SELECT * FROM fx_daily WHERE pair='USDCNH'"), [])
+        self.assertEqual(query("SELECT * FROM fx_daily WHERE pair='USDCNH' AND trade_date='2026-07-06'"), [])
         n = fx_svc.persist_cnh_snapshot({})
         self.assertEqual(n, 0)
-        n = fx_svc.persist_cnh_snapshot({"USDCNH": {"rate": 7.21, "source": "新浪财经"}}, date(2026, 8, 15))
+        n = fx_svc.persist_cnh_snapshot({"USDCNH": {"rate": 7.21, "source": "新浪财经"}}, date(2026, 7, 11))
         self.assertEqual(n, 1)
-        cnh = query("SELECT rate, source FROM fx_daily WHERE pair='USDCNH'")[0]
+        cnh = query("SELECT rate, source FROM fx_daily WHERE pair='USDCNH' AND trade_date='2026-07-11'")[0]
         self.assertAlmostEqual(cnh["rate"], 7.21)
         self.assertEqual(cnh["source"], "新浪财经")
 
@@ -138,23 +150,28 @@ class FxPersistTests(unittest.TestCase):
         self.assertEqual(d["items"], [])
 
     def test_history_empty_reason(self):
-        d = fx_svc.get_history("USDCNY", "2026-01-01", "2026-01-10")
+        d = fx_svc.get_history("USDCNY", "2026-07-11", "2026-07-12")
         self.assertTrue(d["ok"])
         self.assertEqual(d["items"], [])
         self.assertIn("无点", d["empty_reason"])
 
     def test_snapshot_falls_back_to_local(self):
         fx_svc._upsert_official([
-            {"pair": "USDCNY", "trade_date": "2026-08-14", "rate": 7.15, "source": "欧洲央行"},
+            {"pair": "USDCNY", "trade_date": "2026-07-06", "rate": 7.15, "source": "欧洲央行"},
         ])
         with patch.object(fx_svc, "_fetch_live", return_value={}):
             cache.delete("fx:live")
             snap = fx_svc.get_snapshot()
         usd = next(x for x in snap["items"] if x["pair"] == "USDCNY")
-        self.assertAlmostEqual(usd["rate"], 7.15)
         self.assertTrue(snap["offline"])
+        self.assertIsNotNone(usd["rate"])
+        self.assertEqual(usd["rate"], usd["local_rate"])
         self.assertIn("不编造", snap["reason"])
         self.assertIn("live", snap["schedule"])
+        self.assertEqual(
+            query("SELECT rate FROM fx_daily WHERE pair='USDCNY' AND trade_date='2026-07-06'")[0]["rate"],
+            7.15,
+        )
 
     def test_prune_old(self):
         old = (date.today() - timedelta(days=500)).isoformat()

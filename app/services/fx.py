@@ -252,13 +252,26 @@ def pull_range(start: str = "", end: str = "") -> dict:
 
 
 def ensure_year_history() -> dict:
-    rows = query("SELECT COUNT(*) AS n FROM fx_daily WHERE source=?", (fx_src.ECB_SOURCE,))
+    """本地官方点过少、币种过少或最新日偏旧时回补近一年，不因单条测试残留而跳过。"""
+    rows = query(
+        """SELECT COUNT(*) AS n, COUNT(DISTINCT pair) AS pairs, MAX(trade_date) AS last
+           FROM fx_daily WHERE source=?""",
+        (fx_src.ECB_SOURCE,),
+    )
     n = rows[0]["n"] if rows else 0
-    if n > 0:
-        return {"ok": True, "skipped": True, "local_rows": n}
+    pairs = rows[0]["pairs"] if rows else 0
+    last = rows[0]["last"] if rows else None
+    stale = True
+    if last:
+        try:
+            stale = (_today() - date.fromisoformat(last)).days > 7
+        except ValueError:
+            stale = True
+    if n >= 200 and pairs >= 10 and not stale:
+        return {"ok": True, "skipped": True, "local_rows": n, "pairs": pairs}
     end = _today()
     start = end - timedelta(days=DEFAULT_HISTORY_DAYS)
-    log.info("本地无官方汇率，回补近一年 %s..%s", start, end)
+    log.info("回补近一年官方汇率 %s..%s（本地 %s 条/%s 币种）", start, end, n, pairs)
     return persist_official_range(start, end)
 
 
