@@ -17,6 +17,7 @@ TTL_REALTIME = 10
 TTL_INDEX = 60
 TTL_COMMODITY = 60
 TTL_GLOBAL_INDEX = 60
+TTL_FX = 60                 # 各国汇率即时快照
 TTL_NEWS = 60
 TTL_KLINE_INTRADAY = 300
 TTL_FUND_KLINE = 60         # 主力资金K：盘中需较新，历史靠本地库累积

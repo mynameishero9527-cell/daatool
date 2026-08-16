@@ -327,6 +327,7 @@ CREATE TABLE IF NOT EXISTS stock_ai_brief (
 -- 13.0.22：顶栏黄历补齐阳历农历与干支年月日时
 -- 13.0.23：方案 I/J、周线门、factor_daily 技术因子回放、本地模拟账本
 -- 13.0.24：黄历九宫补时辰吉凶、奇门遁甲、紫微流日示意、节气与节假日倒计时
+-- 13.0.25：全球指数下各国汇率；官方日线只落欧洲央行已公布点，不插值、不拿在岸冒充离岸
 -- intel_item_ai / hot_term_ai 表结构不变，失败仍不覆盖已保存结果
 
 CREATE TABLE IF NOT EXISTS knowledge_ai (
@@ -480,6 +481,16 @@ CREATE TABLE IF NOT EXISTS almanac_day (
     payload    TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+-- 13.0.25：各国汇率日线（1 外币兑人民币）。周末/假日无官方点则无行
+CREATE TABLE IF NOT EXISTS fx_daily (
+    pair        TEXT NOT NULL,
+    trade_date  TEXT NOT NULL,
+    rate        REAL NOT NULL,
+    source      TEXT NOT NULL,
+    PRIMARY KEY (pair, trade_date)
+);
+CREATE INDEX IF NOT EXISTS idx_fx_daily_date ON fx_daily(trade_date);
 """
 
 # 已有表的增量列迁移（幂等）

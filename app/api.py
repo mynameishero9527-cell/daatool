@@ -11,6 +11,7 @@ from .services import (
     ai, alerts, announcement, attribution, commodity, cycle, darkpool, finance,
     forecast, global_index, holders, hot_terms, intel_ai, kline, knowledge, macro, market, ranks, rating,
     intelpick, recommend, screener, sector, smartpick, stock_ai, stocklist, strategy, wuxing,
+    fx,
 )
 from .services import metrics as metrics_svc
 from .services import policy_archive
@@ -437,6 +438,24 @@ def global_indices():
 @router.get("/etfs")
 def etfs(filter: str = "all", page: int = 1, page_size: int = Query(20, le=50)):
     return global_index.get_etfs(filter, page, page_size)
+
+
+@router.get("/fx")
+def fx_snapshot():
+    """各国汇率即时快照 + 本地最近官方日。即时失败回退本地，不编造。"""
+    return fx.get_snapshot()
+
+
+@router.get("/fx/history")
+def fx_history(pair: str, start: str = "", end: str = ""):
+    return fx.get_history(pair, start, end)
+
+
+@router.post("/fx/pull")
+def fx_pull(payload: dict | None = Body(default=None)):
+    """按日期区间向欧洲央行补官方日线，单次最多 400 天。"""
+    body = payload or {}
+    return fx.pull_range(str(body.get("start") or ""), str(body.get("end") or ""))
 
 
 # ---------------- 个股推荐 ----------------

@@ -40,7 +40,7 @@ h1{font-size:22px;margin:0 0 8px} p{margin:8px 0} .muted{color:#8b9bb4;font-size
 </body></html>
 """
 
-app = FastAPI(title="A股量化工具", version="13.0.24", docs_url="/docs", redoc_url="/redoc")
+app = FastAPI(title="A股量化工具", version="13.0.25", docs_url="/docs", redoc_url="/redoc")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -145,6 +145,11 @@ def startup() -> None:
                 log.warning("宏观情报缓存失败: %s", exc3)
         except Exception as exc:  # noqa: BLE001
             log.warning("财报评级/板块资金落库跳过: %s", exc)
+        try:
+            from .services import fx as fx_svc
+            fx_svc.ensure_year_history()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("各国汇率近一年回补跳过: %s", exc)
     threading.Thread(target=bootstrap, daemon=True).start()
     # 4) 启动定时任务
     scheduler.start()

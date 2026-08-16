@@ -197,6 +197,7 @@ function reloadChartsForTheme() {
   if (activeTab === "dashboard") loaders.dashboard?.();
   if (activeTab === "sector") loaders.sector?.();
   if (activeTab === "commodity" && typeof ckState !== "undefined" && ckState.symbol) loadCommodityKline();
+  if (activeTab === "global" && typeof globalSub !== "undefined" && globalSub === "fx" && fxPair) loadFxHistory(fxPair);
 }
 function setFontScale(v) {
   uiPrefs.fontScale = clampFontScale(v);
@@ -4708,18 +4709,172 @@ async function loadCommodityKline() {
 let globalSub = "indices";
 let etfFilter = "all";
 let etfPage = 1;
+let fxPair = "USDCNY";
+let fxPullStart = "";
+let fxPullEnd = "";
+let fxChart = null;
 window.etfGo = (p) => { etfPage = p; loadGlobal(); };
 $("#globalTabs").addEventListener("click", (e) => {
   const btn = e.target.closest(".opt");
   if (!btn) return;
   globalSub = btn.dataset.sub;
   $$("#globalTabs .opt").forEach((b) => b.classList.toggle("active", b === btn));
+  const etfBox = $("#etfDetail");
+  if (etfBox && globalSub !== "etf") etfBox.style.display = "none";
   loadGlobal();
 });
+
+function fxDigits(v) {
+  const a = Math.abs(Number(v));
+  if (!Number.isFinite(a) || a === 0) return 4;
+  if (a >= 1) return 4;
+  if (a >= 0.1) return 5;
+  if (a >= 0.01) return 6;
+  return 7;
+}
+
+async function loadFxPage() {
+  const box = $("#globalContent");
+  fxChart = disposeChart(fxChart);
+  const keepStart = $("#fxStart")?.value || fxPullStart;
+  const keepEnd = $("#fxEnd")?.value || fxPullEnd;
+  try {
+    const d = await api("/api/fx");
+    const pad = (n) => String(n).padStart(2, "0");
+    const isoDay = (dt) => `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`;
+    const now = new Date();
+    const yearAgo = new Date(now.getTime());
+    yearAgo.setFullYear(now.getFullYear() - 1);
+    const startDef = keepStart || isoDay(yearAgo);
+    const endDef = keepEnd || isoDay(now);
+    const sch = d.schedule || {};
+    box.innerHTML = `
+      ${d.offline ? `<div class="offline-banner">${esc(d.reason || "即时汇率暂不可用，已回退本地日线")}</div>` : ""}
+      <div class="card">
+        <div class="card-title">各国汇率
+          <span class="muted">本地 ${d.local_rows || 0} 条 · 官方最新 ${esc(d.latest_official || "尚无")}</span>
+        </div>
+        <div class="cond-inline" style="margin-bottom:10px;gap:12px;flex-wrap:wrap">
+          <span><span class="g-label muted">开始</span>
+            <input type="date" id="fxStart" value="${escAttr(startDef)}"></span>
+          <span><span class="g-label muted">结束</span>
+            <input type="date" id="fxEnd" value="${escAttr(endDef)}"></span>
+          <button class="btn small" id="fxPullBtn">拉取区间</button>
+          <span class="muted" id="fxPullMsg"></span>
+        </div>
+        <div class="muted" style="margin-bottom:8px;font-size:calc(12px * var(--font-scale))">
+          ${esc(sch.live || "")} ${esc(sch.official || "")} ${esc(sch.manual || "")} ${esc(d.disclaimer || "")}
+        </div>
+        <table id="fxTable"><thead><tr>
+          <th>货币对</th><th>国家/地区</th><th>最新</th><th>涨跌</th><th>涨跌幅</th>
+          <th>来源</th><th>时间</th><th>本地日线</th>
+        </tr></thead><tbody>${(d.items || []).map((r) => {
+          const dig = r.digits || fxDigits(r.rate);
+          return `<tr data-pair="${escAttr(r.pair)}" class="${r.pair === fxPair ? "score-55" : ""}" style="cursor:pointer">
+            <td><b>${esc(r.pair)}</b> <span class="muted">${esc(r.name)}</span></td>
+            <td>${esc(r.country)}</td>
+            <td class="num">${pxHtml(r.rate, r.pct, dig)}</td>
+            <td class="num ${cls(r.change)}">${r.change == null ? "-" : sign(r.change) + fmt(r.change, dig)}</td>
+            <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
+            <td>${esc(r.source || "-")}${r.official ? "" : ' <span class="muted">非官方</span>'}</td>
+            <td>${esc(r.time || "-")}</td>
+            <td class="num">${r.local_date ? `${esc(r.local_date)} ${fmt(r.local_rate, dig)}` : "-"}</td>
+          </tr>`;
+        }).join("")}</tbody></table>
+        <div class="muted" style="margin-top:6px">点击行查看本地已保存走势。小币种报价为 1 外币兑人民币，不用 100 日元等柜台习惯换算。</div>
+      </div>
+      <div class="card">
+        <div class="card-title" id="fxChartTitle">汇率走势</div>
+        <div class="muted" id="fxChartNote" style="margin-bottom:8px"></div>
+        <div id="fxChart" style="height:320px"></div>
+      </div>`;
+    const tbl = $("#fxTable");
+    tbl?.addEventListener("click", (e) => {
+      const tr = e.target.closest("tr[data-pair]");
+      if (!tr) return;
+      fxPair = tr.dataset.pair;
+      $$("#fxTable tbody tr").forEach((row) => row.classList.toggle("score-55", row === tr));
+      loadFxHistory(fxPair);
+    });
+    $("#fxStart")?.addEventListener("change", () => { fxPullStart = $("#fxStart").value; });
+    $("#fxEnd")?.addEventListener("change", () => { fxPullEnd = $("#fxEnd").value; });
+    $("#fxPullBtn")?.addEventListener("click", pullFxRange);
+    await loadFxHistory(fxPair);
+  } catch (err) {
+    box.innerHTML = '<div class="empty">汇率加载失败</div>';
+    console.warn(err);
+  }
+}
+
+async function pullFxRange() {
+  const start = $("#fxStart")?.value || "";
+  const end = $("#fxEnd")?.value || "";
+  fxPullStart = start;
+  fxPullEnd = end;
+  const msg = $("#fxPullMsg");
+  if (msg) msg.textContent = "正在向欧洲央行拉取…";
+  try {
+    const d = await api("/api/fx/pull", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ start, end }),
+    });
+    if (!d.ok) {
+      if (msg) msg.textContent = d.error || "拉取失败";
+      return;
+    }
+    if (msg) msg.textContent = `写入 ${d.written || 0} 条 · ${d.days || 0} 个官方日${d.reason ? " · " + d.reason : ""}`;
+    await loadFxPage();
+    const after = $("#fxPullMsg");
+    if (after) after.textContent = `写入 ${d.written || 0} 条 · ${d.days || 0} 个官方日`;
+  } catch (err) {
+    if (msg) msg.textContent = "拉取失败";
+    console.warn(err);
+  }
+}
+
+async function loadFxHistory(pair) {
+  const start = $("#fxStart")?.value || fxPullStart || "";
+  const end = $("#fxEnd")?.value || fxPullEnd || "";
+  const title = $("#fxChartTitle");
+  const note = $("#fxChartNote");
+  const el = $("#fxChart");
+  if (!el) return;
+  try {
+    const q = new URLSearchParams({ pair: pair || fxPair, start, end });
+    const d = await api(`/api/fx/history?${q}`);
+    if (title) title.textContent = `${d.pair || pair} ${d.name || ""} · ${d.unit || ""}`;
+    if (note) note.textContent = d.empty_reason || d.disclaimer || "";
+    const dates = (d.items || []).map((r) => r.trade_date);
+    const vals = (d.items || []).map((r) => r.rate);
+    fxChart = disposeChart(fxChart);
+    fxChart = makeChart(el);
+    const pal = cp();
+    fxChart.setOption({
+      backgroundColor: "transparent", animation: false,
+      tooltip: { trigger: "axis", ...ttStyle() },
+      grid: { left: 56, right: 16, top: 16, bottom: 28 },
+      xAxis: { type: "category", data: dates, axisLine: { lineStyle: { color: pal.border } } },
+      yAxis: { scale: true, splitLine: { lineStyle: { color: pal.split } } },
+      series: [{
+        name: d.pair || pair, type: "line", data: vals, showSymbol: dates.length < 40,
+        lineStyle: { color: pal.accent, width: 2 },
+        itemStyle: { color: pal.accent },
+      }],
+    }, true);
+  } catch (err) {
+    if (note) note.textContent = "走势加载失败";
+    console.warn(err);
+  }
+}
 
 async function loadGlobal() {
   const box = $("#globalContent");
   try {
+    if (globalSub === "fx") {
+      await loadFxPage();
+      return;
+    }
     if (globalSub === "etf") {
       const d = await api(`/api/etfs?filter=${etfFilter}&page=${etfPage}&page_size=20`);
       box.innerHTML = `<div class="card">
