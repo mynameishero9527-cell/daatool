@@ -978,7 +978,9 @@ tr.score-95 td { background: rgba(255, 60, 60, .30); }
 .plan-card .plan-id {
   font-variant-numeric: tabular-nums; color: #ffd27a; margin-right: 4px;
 }
-.plan-card .plan-counts { margin-left: auto; color: var(--muted); font-size: calc(12px * var(--font-scale)); }
+.plan-card .plan-counts { color: var(--muted); font-size: calc(12px * var(--font-scale)); }
+.plan-card .plan-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.plan-card .js-plan-del[disabled] { opacity: .45; cursor: not-allowed; }
 .plan-card .plan-summary { color: var(--muted); font-size: calc(13px * var(--font-scale)); margin: 8px 0 6px 26px; }
 .plan-formula {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;

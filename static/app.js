@@ -6196,7 +6196,8 @@ function selectedStrategyIds(kind) {
   if (!box) return [];
   return [...box.querySelectorAll("input[type=checkbox][data-plan-id]")]
     .filter((el) => el.checked)
-    .map((el) => el.dataset.planId);
+    .map((el) => String(el.dataset.planId || "").trim().toUpperCase())
+    .filter(Boolean);
 }
 
 function renderStrategyExec(d) {
@@ -6209,9 +6210,11 @@ function renderStrategyExec(d) {
 
 function renderPlanList(box, plans, kind) {
   if (!box) return;
-  box.innerHTML = (plans || []).map((p) => {
+  const rows = (plans || []).filter((p) => p && p.id && !p.hidden);
+  box.innerHTML = rows.map((p) => {
     const on = !!p.enabled;
     const docs = [p.formula, p.extra_docs].filter(Boolean).join("\n\n");
+    const canDel = p.can_delete !== false && rows.length > 1;
     return `
       <div class="plan-card ${kind}${on ? " on" : ""}" data-plan-id="${esc(p.id)}" data-kind="${kind}">
         <div class="plan-head">
@@ -6220,12 +6223,16 @@ function renderPlanList(box, plans, kind) {
             <span class="plan-id">${kind === "buy" ? "买点" : "卖点"}方案 ${esc(p.id)}</span>${esc(p.name)}
             ${p.is_default ? '<span class="muted">默认</span>' : ""}
           </label>
-          <span class="plan-counts" data-plan-counts="${kind}-${esc(p.id)}">命中 ${p.count ?? 0}</span>
+          <span class="plan-actions">
+            <span class="plan-counts" data-plan-counts="${kind}-${esc(p.id)}">命中 ${p.count ?? 0}</span>
+            <button type="button" class="btn small ghost js-plan-del" data-plan-id="${esc(p.id)}" data-kind="${kind}"
+              ${canDel ? "" : "disabled"} title="${canDel ? "删除此方案" : "至少保留一个方案"}">删除</button>
+          </span>
         </div>
         <div class="plan-summary">${esc(p.summary || "")}</div>
         <div class="plan-formula">${esc(docs)}</div>
       </div>`;
-  }).join("") || '<div class="empty">暂无策略方案</div>';
+  }).join("") || '<div class="empty">暂无策略方案。点「恢复默认」加回。</div>';
 }
 
 function renderStrategyPlans(d) {
@@ -6277,19 +6284,30 @@ function bindStrategyChecks(root) {
     if (msg) msg.textContent = "已勾选，正在分别应用买点/卖点方案…";
     saveStrategySoon();
   });
+  root?.addEventListener("click", (e) => {
+    const btn = e.target.closest(".js-plan-del");
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (btn.disabled) return;
+    deleteStrategyPlan(btn.dataset.kind || "buy", btn.dataset.planId || "");
+  });
 }
 bindStrategyChecks($("#strategyPlansBuy"));
 bindStrategyChecks($("#strategyPlansSell"));
 
-const saveStrategySoon = (() => {
-  let t;
-  return () => {
-    clearTimeout(t);
-    t = setTimeout(() => saveStrategyPlans(), 450);
-  };
-})();
+let saveStrategyTimer = 0;
+function cancelStrategySave() {
+  clearTimeout(saveStrategyTimer);
+  saveStrategyTimer = 0;
+}
+function saveStrategySoon() {
+  cancelStrategySave();
+  saveStrategyTimer = setTimeout(() => saveStrategyPlans(), 450);
+}
 
 window.saveStrategyPlans = async (preset) => {
+  cancelStrategySave();
   const msg = $("#strategySaveMsg");
   const buyIds = preset && preset.buy_ids ? preset.buy_ids : selectedStrategyIds("buy");
   const sellIds = preset && preset.sell_ids ? preset.sell_ids : selectedStrategyIds("sell");
@@ -6313,8 +6331,72 @@ window.saveStrategyPlans = async (preset) => {
   }
 };
 
-$("#btnResetBuy")?.addEventListener("click", () => saveStrategyPlans({ buy_ids: ["A"], sell_ids: selectedStrategyIds("sell") }));
-$("#btnResetSell")?.addEventListener("click", () => saveStrategyPlans({ buy_ids: selectedStrategyIds("buy"), sell_ids: ["ST", "SO", "SR"] }));
+async function deleteStrategyPlan(kind, pid) {
+  const side = kind === "sell" ? "sell" : "buy";
+  const id = String(pid || "").trim().toUpperCase();
+  if (!id) return;
+  const box = side === "sell" ? $("#strategyPlansSell") : $("#strategyPlansBuy");
+  const visible = box ? box.querySelectorAll(".plan-card[data-plan-id]").length : 0;
+  if (visible <= 1) {
+    const msg = $("#strategySaveMsg");
+    if (msg) msg.textContent = "至少保留一个方案，不能全部删除。";
+    return;
+  }
+  if (!window.confirm(`确定删除${side === "sell" ? "卖点" : "买点"}方案 ${id}？恢复默认可加回。`)) return;
+  cancelStrategySave();
+  const msg = $("#strategySaveMsg");
+  if (msg) msg.textContent = "删除中…";
+  try {
+    const d = await api("/api/strategy/plan/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: side, id }),
+    });
+    if (!d.ok) {
+      if (msg) msg.textContent = d.error || "删除失败";
+      return;
+    }
+    strategyDirty = false;
+    strategyLoaded = true;
+    renderStrategyExec(d);
+    renderStrategyPlans(d);
+    if (msg) msg.textContent = `已删除${side === "sell" ? "卖点" : "买点"}方案 ${id}。`;
+    loadBuyPoints();
+    loadAlerts();
+  } catch (err) {
+    if (msg) msg.textContent = "删除失败：" + (err.message || err);
+  }
+}
+
+async function resetStrategySide(kind) {
+  const side = kind === "sell" ? "sell" : "buy";
+  cancelStrategySave();
+  const msg = $("#strategySaveMsg");
+  if (msg) msg.textContent = "恢复默认中…";
+  try {
+    const d = await api("/api/strategy/reset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: side }),
+    });
+    if (!d.ok) {
+      if (msg) msg.textContent = d.error || "恢复失败";
+      return;
+    }
+    strategyDirty = false;
+    strategyLoaded = true;
+    renderStrategyExec(d);
+    renderStrategyPlans(d);
+    if (msg) msg.textContent = side === "sell" ? "卖点已恢复默认方案。" : "买点已恢复默认选股方案A。";
+    loadBuyPoints();
+    loadAlerts();
+  } catch (err) {
+    if (msg) msg.textContent = "恢复失败：" + (err.message || err);
+  }
+}
+
+$("#btnResetBuy")?.addEventListener("click", () => resetStrategySide("buy"));
+$("#btnResetSell")?.addEventListener("click", () => resetStrategySide("sell"));
 
 let engineBlueprint = null;
 async function ensureEngineBlueprint(force) {

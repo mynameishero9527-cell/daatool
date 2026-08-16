@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>A股量化工具</title>
-<link rel="stylesheet" href="/static/style.css?v=13.0.40">
+<link rel="stylesheet" href="/static/style.css?v=13.0.41">
 <script>
 (function () {
   try {
@@ -737,14 +737,14 @@
       <div class="grid-2">
         <div class="card plan-col-buy">
           <div class="card-title">最佳买点策略
-            <span class="muted">红色 · 多方案并行 · 老股交叉命中 · 新股看评分评级</span>
+            <span class="muted">红色 · 可删除不用的方案 · 至少留一个 · 恢复默认会加回</span>
             <button class="btn ghost" type="button" id="btnResetBuy">买点恢复默认</button>
           </div>
           <div id="strategyPlansBuy"></div>
         </div>
         <div class="card plan-col-sell">
           <div class="card-title">最佳卖点策略
-            <span class="muted">绿色 · 多方案并行 · 老股交叉命中 · 新股看评分评级</span>
+            <span class="muted">绿色 · 可删除不用的方案 · 至少留一个 · 恢复默认会加回</span>
             <button class="btn ghost" type="button" id="btnResetSell">卖点恢复默认</button>
           </div>
           <div id="strategyPlansSell"></div>
@@ -849,6 +849,6 @@
   <div class="ctx-item" id="ctxKbRevert" style="display:none">↩ 还原内置解释</div>
 </div>
 
-<script src="/static/app.js?v=13.0.40"></script>
+<script src="/static/app.js?v=13.0.41"></script>
 </body>
 </html>

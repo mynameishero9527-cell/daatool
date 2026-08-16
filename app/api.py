@@ -122,6 +122,39 @@ def strategy_enable(payload: dict = Body(default={})):
     return cfg
 
 
+@router.post("/strategy/plan/delete")
+def strategy_plan_delete(payload: dict = Body(default={})):
+    """删除一侧买/卖点方案（软删除）。至少保留一个，避免窗口无策略。"""
+    body = payload or {}
+    out = strategy.delete_plan(str(body.get("kind") or "buy"), str(body.get("id") or body.get("plan_id") or ""))
+    if out.get("ok") and not out.get("already"):
+        try:
+            alerts.scan_all()
+        except Exception:  # noqa: BLE001
+            pass
+    cfg = strategy.get_config()
+    cfg.update(out)
+    return cfg
+
+
+@router.post("/strategy/reset")
+def strategy_reset(payload: dict = Body(default={})):
+    """恢复一侧默认方案，并把已删除方案加回列表。"""
+    body = payload or {}
+    kind = str(body.get("kind") or "").strip().lower()
+    if kind not in ("buy", "sell"):
+        return {"ok": False, "error": "请指定 buy 或 sell"}
+    strategy.reset_side(kind)
+    try:
+        alerts.scan_all()
+    except Exception:  # noqa: BLE001
+        pass
+    cfg = strategy.get_config()
+    cfg["ok"] = True
+    cfg["kind"] = kind
+    return cfg
+
+
 @router.get("/market/minute")
 def market_minute(code: str = "sh000001"):
     return kline.get_minute(market.normalize_code(code) or code)

@@ -130,12 +130,16 @@ class StrategyPointsTests(unittest.TestCase):
         set_meta_json(strategy.RULES_VER_KEY, strategy.RULES_VER)
         set_meta_json(strategy.META_KEY_BUY, ["BP"])
         set_meta_json(strategy.META_KEY_SELL, ["ST"])
+        set_meta_json(strategy.META_KEY_HIDDEN_BUY, [])
+        set_meta_json(strategy.META_KEY_HIDDEN_SELL, [])
 
     def tearDown(self):
         _purge(CODE_OK, CODE_RISK, CODE_HIGH)
         set_meta_json(strategy.RULES_VER_KEY, strategy.RULES_VER)
         set_meta_json(strategy.META_KEY_BUY, list(strategy.DEFAULT_BUY_IDS))
         set_meta_json(strategy.META_KEY_SELL, list(strategy.DEFAULT_SELL_IDS))
+        set_meta_json(strategy.META_KEY_HIDDEN_BUY, [])
+        set_meta_json(strategy.META_KEY_HIDDEN_SELL, [])
 
     def test_buy_and_sell_names_differ(self):
         buy_names = {p.name for p in strategy.BUY_PLANS.values() if p.id not in ("I", "J")}
@@ -152,6 +156,43 @@ class StrategyPointsTests(unittest.TestCase):
         self.assertEqual(strategy._normalize_ids(["A"], "sell"), ["ST"])
         self.assertEqual(strategy._normalize_ids(["E", "D"], "buy"), ["BT", "BD"])
         self.assertEqual(strategy._normalize_ids(["E", "D"], "sell"), ["SB", "SD"])
+
+    def test_delete_plan_keeps_last_and_reset_restores(self):
+        set_meta_json(strategy.META_KEY_BUY, ["A", "BP"])
+        gone = strategy.delete_plan("buy", "BP")
+        self.assertTrue(gone.get("ok"))
+        self.assertEqual(gone.get("removed"), "BP")
+        buy_ids = [p["id"] for p in strategy.catalog("buy")]
+        self.assertNotIn("BP", buy_ids)
+        self.assertIn("A", buy_ids)
+        self.assertEqual(strategy.get_enabled("buy"), ["A"])
+        for extra in ("BT", "BZ", "BD", "I", "J"):
+            self.assertTrue(strategy.delete_plan("buy", extra).get("ok"))
+        self.assertEqual([p["id"] for p in strategy.catalog("buy")], ["A"])
+        last = strategy.delete_plan("buy", "A")
+        self.assertFalse(last.get("ok"))
+        self.assertIn("至少", last.get("error") or "")
+        self.assertIn("A", [p["id"] for p in strategy.catalog("buy")])
+        bad = strategy.delete_plan("buy", "ZZ")
+        self.assertFalse(bad.get("ok"))
+        strategy.set_enabled(buy_ids=[])
+        self.assertEqual(strategy.get_enabled("buy"), ["A"])
+        self.assertNotIn("BP", strategy.get_enabled("buy"))
+        restored = strategy.reset_side("buy")
+        self.assertTrue(restored.get("ok"))
+        self.assertIn("BP", [p["id"] for p in strategy.catalog("buy")])
+        self.assertEqual(strategy.get_enabled("buy"), ["A"])
+        self.assertEqual(intelpick.get_page("up")["items"], [])
+
+    def test_delete_sell_does_not_touch_buy(self):
+        set_meta_json(strategy.META_KEY_BUY, ["A"])
+        set_meta_json(strategy.META_KEY_SELL, ["ST", "SO", "SR"])
+        out = strategy.delete_plan("sell", "SO")
+        self.assertTrue(out.get("ok"))
+        self.assertNotIn("SO", [p["id"] for p in strategy.catalog("sell")])
+        self.assertIn("A", [p["id"] for p in strategy.catalog("buy")])
+        self.assertEqual(strategy.get_enabled("buy"), ["A"])
+        self.assertEqual(strategy.get_hidden("buy"), [])
 
     def test_plan_a_first_version_and_fallback(self):
         set_meta_json(strategy.META_KEY_BUY, ["A"])

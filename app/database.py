@@ -343,6 +343,7 @@ CREATE TABLE IF NOT EXISTS stock_ai_brief (
 -- 13.0.38：个股分析机构持仓展示机构名称与持股比例，缺披露不编造
 -- 13.0.39：预测推荐同股去重；点击在单独 tab 看预测个股，不重复展示
 -- 13.0.40：最佳买点恢复第一版选股方案A（购买指数≥80且主力净流入）
+-- 13.0.41：买/卖点方案支持删除，恢复默认加回；勾空不复活已删方案
 -- intel_item_ai / hot_term_ai 表结构不变，失败仍不覆盖已保存结果
 
 CREATE TABLE IF NOT EXISTS knowledge_ai (

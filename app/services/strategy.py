@@ -20,8 +20,10 @@ from ..database import get_meta_json, query, set_meta_json
 META_KEY = "strategy_enabled"  # 兼容旧键：曾同时控制买/卖
 META_KEY_BUY = "strategy_enabled_buy"
 META_KEY_SELL = "strategy_enabled_sell"
+META_KEY_HIDDEN_BUY = "strategy_hidden_buy"
+META_KEY_HIDDEN_SELL = "strategy_hidden_sell"
 RULES_VER_KEY = "strategy_rules_ver"
-RULES_VER = "13.0.40"
+RULES_VER = "13.0.41"
 DEFAULT_BUY_IDS = ["A"]
 DEFAULT_SELL_IDS = ["ST", "SO", "SR"]
 DEFAULT_IDS = list(DEFAULT_BUY_IDS)  # 兼容旧测试/调用，仅表示买点默认
@@ -401,18 +403,80 @@ def _defaults(kind: str) -> list[str]:
     return list(DEFAULT_SELL_IDS if kind == "sell" else DEFAULT_BUY_IDS)
 
 
-def _normalize_ids(ids, kind: str = "buy") -> list[str]:
+def _hidden_key(kind: str) -> str:
+    return META_KEY_HIDDEN_SELL if kind == "sell" else META_KEY_HIDDEN_BUY
+
+
+def _enabled_key(kind: str) -> str:
+    return META_KEY_SELL if kind == "sell" else META_KEY_BUY
+
+
+def _norm_kind(kind: str) -> str:
+    return "sell" if str(kind or "").strip().lower() == "sell" else "buy"
+
+
+def _norm_pid(raw) -> str:
+    return str(raw or "").strip().upper()
+
+
+def get_hidden(kind: str = "buy") -> list[str]:
+    """用户删除的方案（软删除）。代码里的 SQL 方案还在，恢复默认会加回。"""
+    kind = _norm_kind(kind)
     catalog = catalog_map(kind)
-    legacy = _SELL_LEGACY if kind == "sell" else _BUY_LEGACY
-    if not isinstance(ids, (list, tuple)):
-        return _defaults(kind)
+    raw = get_meta_json(_hidden_key(kind), [])
+    if not isinstance(raw, (list, tuple)):
+        return []
     out = []
-    for raw in ids:
-        pid = str(raw or "").strip().upper()
-        pid = legacy.get(pid, pid)
+    for item in raw:
+        pid = _norm_pid(item)
         if pid in catalog and pid not in out:
             out.append(pid)
-    return out or _defaults(kind)
+    return out
+
+
+def set_hidden(kind: str, ids) -> list[str]:
+    kind = _norm_kind(kind)
+    catalog = catalog_map(kind)
+    out = []
+    for item in ids or []:
+        pid = _norm_pid(item)
+        if pid in catalog and pid not in out:
+            out.append(pid)
+    set_meta_json(_hidden_key(kind), out)
+    return out
+
+
+def visible_ids(kind: str = "buy") -> list[str]:
+    kind = _norm_kind(kind)
+    hidden = set(get_hidden(kind))
+    order = SELL_ORDER if kind == "sell" else BUY_ORDER
+    return [pid for pid in order if pid not in hidden]
+
+
+def _visible_defaults(kind: str, hidden: set[str] | None = None) -> list[str]:
+    kind = _norm_kind(kind)
+    hidden = set(hidden if hidden is not None else get_hidden(kind))
+    vis = [pid for pid in _defaults(kind) if pid not in hidden]
+    if vis:
+        return vis
+    remain = [pid for pid in (SELL_ORDER if kind == "sell" else BUY_ORDER) if pid not in hidden]
+    return remain[:1]
+
+
+def _normalize_ids(ids, kind: str = "buy") -> list[str]:
+    """只保留未删除的合法方案。勾空时回落到仍可见的默认，不把已删方案加回来。"""
+    kind = _norm_kind(kind)
+    catalog = catalog_map(kind)
+    legacy = _SELL_LEGACY if kind == "sell" else _BUY_LEGACY
+    hidden = set(get_hidden(kind))
+    if not isinstance(ids, (list, tuple)):
+        return _visible_defaults(kind, hidden)
+    out = []
+    for raw in ids:
+        pid = legacy.get(_norm_pid(raw), _norm_pid(raw))
+        if pid in catalog and pid not in hidden and pid not in out:
+            out.append(pid)
+    return out or _visible_defaults(kind, hidden)
 
 
 def _raw_id_list(raw) -> list[str] | None:
@@ -470,6 +534,49 @@ def set_enabled(ids=None, *, buy_ids=None, sell_ids=None) -> dict:
     if sell_ids is not None:
         set_meta_json(META_KEY_SELL, _normalize_ids(sell_ids, "sell"))
     return {"buy": get_enabled("buy"), "sell": get_enabled("sell")}
+
+
+def delete_plan(kind: str, pid: str) -> dict:
+    """软删除一侧方案：移出列表和启用集。至少保留一个，避免买/卖点窗口无策略。"""
+    kind = _norm_kind(kind)
+    pid = _norm_pid(pid)
+    catalog = catalog_map(kind)
+    if pid not in catalog:
+        return {"ok": False, "error": "方案不存在或已失效", "kind": kind, "id": pid}
+    hidden = get_hidden(kind)
+    visible = [p for p in (SELL_ORDER if kind == "sell" else BUY_ORDER) if p not in set(hidden)]
+    if pid not in visible:
+        return {
+            "ok": True, "already": True, "removed": pid, "kind": kind,
+            "hidden": hidden, "enabled": get_enabled(kind),
+        }
+    if len(visible) <= 1:
+        return {
+            "ok": False, "error": "至少保留一个方案，不能全部删除",
+            "kind": kind, "id": pid,
+        }
+    hidden = hidden + [pid]
+    set_hidden(kind, hidden)
+    enabled = [p for p in get_enabled(kind) if p != pid]
+    if not enabled:
+        enabled = _visible_defaults(kind, set(hidden))
+    set_meta_json(_enabled_key(kind), enabled)
+    return {
+        "ok": True, "removed": pid, "kind": kind,
+        "hidden": get_hidden(kind), "enabled": get_enabled(kind),
+    }
+
+
+def reset_side(kind: str) -> dict:
+    """恢复一侧默认方案，并把已删除的方案加回列表。"""
+    kind = _norm_kind(kind)
+    set_hidden(kind, [])
+    set_meta_json(_enabled_key(kind), list(_defaults(kind)))
+    return {
+        "ok": True, "kind": kind,
+        "enabled": get_enabled(kind),
+        "hidden": get_hidden(kind),
+    }
 
 
 def _where(fragment: str) -> str:
@@ -1135,8 +1242,10 @@ def catalog(kind: str = "buy") -> list[dict]:
     counts = plan_counts()
     enabled = set(get_enabled(kind))
     defaults = set(_defaults(kind))
-    order = SELL_ORDER if kind == "sell" else BUY_ORDER
+    hidden = set(get_hidden(kind))
+    order = [pid for pid in (SELL_ORDER if kind == "sell" else BUY_ORDER) if pid not in hidden]
     catalog = catalog_map(kind)
+    can_delete = len(order) > 1
     rows = []
     for pid in order:
         p = catalog[pid]
@@ -1158,6 +1267,8 @@ def catalog(kind: str = "buy") -> list[dict]:
             "buy_count": c.get("buy", 0),
             "sell_count": c.get("sell", 0),
             "caption": plan_caption(pid, kind),
+            "hidden": False,
+            "can_delete": can_delete,
         })
     return rows
 
@@ -1175,6 +1286,8 @@ def get_config() -> dict:
         "buy_plans": catalog("buy"),
         "sell_plans": catalog("sell"),
         "plans": catalog("buy"),
+        "buy_hidden": get_hidden("buy"),
+        "sell_hidden": get_hidden("sell"),
         "executing": {
             "buy": buy_exe,
             "sell": sell_exe,
@@ -1188,5 +1301,6 @@ def get_config() -> dict:
             "卖点默认「高位止盈 + 超买回吐 + 资金出逃避险」，老股须交叉命中至少 "
             f"{MIN_PLAN_HITS} 个方案。"
             "空列表不拿无流入观察池凑数。"
+            "方案支持删除（至少留一个）；恢复默认会把已删方案加回。"
         ),
     }
