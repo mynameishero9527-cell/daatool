@@ -372,6 +372,11 @@ def _persist(code: str, payload: dict) -> None:
         "INSERT OR REPLACE INTO stock_holders(code, payload, fetched_at) VALUES(?,?,?)",
         (code, json.dumps(payload, ensure_ascii=False), payload.get("fetched_at") or _now()),
     )
+    try:
+        from . import holder_feature
+        holder_feature.upsert_from_payload(code, payload)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("持股特征落库失败 %s: %s", code, exc)
 
 
 def get_holders(code: str) -> dict:

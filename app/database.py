@@ -325,6 +325,7 @@ CREATE TABLE IF NOT EXISTS stock_ai_brief (
 -- 13.0.20：切换日期时同步更新干支/黄道等，并写入本地 almanac_day
 -- 13.0.21：个股主力资金K多源补历史并定时同步到本地 stock_fund_daily
 -- 13.0.22：顶栏黄历补齐阳历农历与干支年月日时
+-- 13.0.23：方案 I/J、周线门、factor_daily 技术因子回放、本地模拟账本
 -- intel_item_ai / hot_term_ai 表结构不变，失败仍不覆盖已保存结果
 
 CREATE TABLE IF NOT EXISTS knowledge_ai (
@@ -431,6 +432,46 @@ CREATE TABLE IF NOT EXISTS signal_task (
 );
 CREATE INDEX IF NOT EXISTS idx_signal_task_open ON signal_task(status, asof);
 CREATE INDEX IF NOT EXISTS idx_signal_task_code ON signal_task(code, asof);
+
+-- 13.0.23：方案 I/J 特征（只从已缓存 stock_holders 物化，不猜户数）
+CREATE TABLE IF NOT EXISTS holder_feature (
+    code TEXT PRIMARY KEY,
+    asof TEXT,
+    holders_qoq REAL,
+    institution_ratio REAL,
+    institution_count INTEGER,
+    unlock_date TEXT,
+    unlock_float_ratio REAL,
+    unlock_days_to INTEGER,
+    last_unlock_date TEXT,
+    last_unlock_days_ago INTEGER,
+    has_institution INTEGER DEFAULT 0
+);
+
+-- 13.0.23：按日因子，第 t 日只用当日及以前的日 K
+CREATE TABLE IF NOT EXISTS factor_daily (
+    code TEXT NOT NULL,
+    date TEXT NOT NULL,
+    ma5 REAL, ma10 REAL, ma20 REAL, macd_bar REAL, rsi14 REAL,
+    bias20 REAL, pos60 REAL, vol_ratio REAL,
+    PRIMARY KEY (code, date)
+);
+CREATE INDEX IF NOT EXISTS idx_factor_daily_date ON factor_daily(date);
+
+-- 13.0.23：本地模拟账本（默认关，T+1，不接券商）
+CREATE TABLE IF NOT EXISTS paper_lot (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT NOT NULL,
+    name TEXT,
+    side TEXT NOT NULL,
+    qty REAL,
+    price REAL,
+    asof TEXT NOT NULL,
+    created_at TEXT,
+    status TEXT,
+    note TEXT,
+    linked_id INTEGER
+);
 
 -- 13.0.20：黄历按日缓存（始终重算后再写入，库内不是黄道/干支的权威源）
 CREATE TABLE IF NOT EXISTS almanac_day (

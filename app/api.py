@@ -14,7 +14,7 @@ from .services import (
 )
 from .services import metrics as metrics_svc
 from .services import policy_archive
-from .services import engine, engine_blueprint
+from .services import backtest, engine, engine_blueprint, factor_frame, paper
 from .database import query as db_query
 
 router = APIRouter(prefix="/api")
@@ -776,6 +776,45 @@ def engine_snapshot_get():
 @router.get("/engine/tasks")
 def engine_tasks_get(side: str = "", status: str = "", limit: int = Query(80, le=200)):
     return engine.list_signal_tasks(side, status, limit)
+
+
+@router.post("/engine/build-factors")
+def engine_build_factors(payload: dict = Body(default={})):
+    """手动生成 factor_daily。只用已落库日 K，不打行情 HTTP。"""
+    max_codes = (payload or {}).get("max_codes")
+    try:
+        max_codes = int(max_codes) if max_codes else None
+    except (TypeError, ValueError):
+        max_codes = None
+    return factor_frame.build_all(max_codes)
+
+
+@router.get("/backtest/factor")
+def backtest_factor_get(start: str = "", end: str = "", fees: int = 1, max_codes: int = Query(80, le=200)):
+    return backtest.run_factor_backtest(start, end, bool(fees), max_codes)
+
+
+@router.get("/backtest/status")
+def backtest_status_get():
+    return {"ok": True, **backtest.factor_status()}
+
+
+@router.get("/paper/lots")
+def paper_lots_get(limit: int = Query(80, le=200)):
+    return paper.list_lots(limit)
+
+
+@router.post("/paper/fill")
+def paper_fill_post(payload: dict = Body(default={})):
+    body = payload or {}
+    return paper.fill(
+        body.get("code") or "",
+        body.get("side") or "buy",
+        body.get("qty") or 100,
+        body.get("price"),
+        body.get("name") or "",
+        body.get("asof"),
+    )
 
 
 @router.get("/intelpick")

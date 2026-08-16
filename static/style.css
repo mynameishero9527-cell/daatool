@@ -1227,6 +1227,7 @@ span.ai-flag, .hot-ai-flag { cursor: default; }
   font-size: calc(12px * var(--font-scale)); color: var(--muted); margin: 2px 0 4px;
 }
 .signal-levels b { color: var(--text); font-weight: 600; }
+#spPortfolio { flex-wrap: wrap; }
 .engine-live {
   margin-top: 10px; padding: 10px 12px; border: 1px dashed var(--border);
   border-radius: 8px; font-size: calc(12px * var(--font-scale)); line-height: 1.6;

@@ -1,6 +1,6 @@
 """策略引擎蓝图：13.0 已落地采集→快照；本模块仍提供只读设计对象给设置页。"""
 
-VERSION = "13.0.0"
+VERSION = "13.0.23"
 STATUS = "live"
 
 DOMAINS = [
@@ -18,7 +18,7 @@ DOMAINS = [
     {"id": "announce", "name": "公司公告", "from": "公告接口", "on": True},
     {"id": "commodity", "name": "大宗商品", "from": "商品+关联个股", "on": True},
     {"id": "global", "name": "全球指数", "from": "外盘指数缓存", "on": True},
-    {"id": "strategy_hit", "name": "买/卖方案命中", "from": "选股策略 A–H", "on": True},
+    {"id": "strategy_hit", "name": "买/卖方案命中", "from": "选股策略 A–J（I/J 默认关）", "on": True},
     {"id": "holders", "name": "股东结构", "from": "有则用，缺则缺", "on": False},
 ]
 
@@ -89,7 +89,7 @@ SMARTPICK_TABS = [
         "id": "verify",
         "name": "信号验证",
         "live": True,
-        "blurb": "跟踪命中后的真实后续日 K（+1/+5 日）。回测需按日因子表，当前入口关闭。",
+        "blurb": "跟踪命中后的真实后续日 K（+1/+5/+20 日）。有 factor_daily 才开放技术因子回放；A–H 历史重放仍关闭。",
         "empty": "尚无信号任务。先跑引擎或打开买点窗产生命中。",
         "jumps": [{"tab": "settings", "view": "engine", "label": "打开策略引擎配置"}],
     },
@@ -105,6 +105,9 @@ RULES = [
     "跟踪收益只用后续日 K，无下一根为空白不是 0%",
     "同日高低触及止盈止损记 ambiguous，不选边",
     "全部结论为量化参考，不构成投资建议",
+    "方案 I/J 只用已缓存持股，缺则零命中，不猜户数",
+    "周线门缺数据跳过，不当成失败",
+    "A–H 历史重放缺 metrics_daily 保持关闭；有 factor_daily 只开放技术因子回放",
 ]
 
 FLOW = [
@@ -113,7 +116,7 @@ FLOW = [
     {"step": "3 分析", "text": "规则计算体制、轮动、催化、个股向量、买/卖信号包"},
     {"step": "4 快照", "text": "按交易日落盘，供策略选股与其它入口消费"},
     {"step": "5 消费", "text": "综合分=向量加权；命中页=信号包；催化页=Brief；缺快照则回退现场计算"},
-    {"step": "6 验证", "text": "signal_task 用后续日 K 跟踪；无 factor_daily 不开放回测"},
+    {"step": "6 验证", "text": "signal_task 用后续日 K 跟踪；有 factor_daily 才开放技术因子回放，A–H 重放仍关"},
 ]
 
 
@@ -146,7 +149,7 @@ def blueprint() -> dict:
         "run": run,
         "config": cfg,
         "title": "策略引擎配置",
-        "subtitle": "已落地采集→快照→信号任务。默认关闭自动拍；未启用时策略选股仍现场计算。",
+        "subtitle": "已落地采集→快照→信号任务、方案 I/J、周线门、按日因子回放与模拟账本。默认关闭自动拍与模拟盘。",
         "doc": "需求优化文档13.0.md",
         "domains": domains,
         "weights": weights,
@@ -156,5 +159,5 @@ def blueprint() -> dict:
         "smartpick_tabs": SMARTPICK_TABS,
         "rules": RULES,
         "flow": FLOW,
-        "note": "启用后交易日 15:50 日终拍；盘中增量需另开开关。手动跑一次可不启用。回测仍关闭（缺 factor_daily）。",
+        "note": "启用后交易日 15:50 日终拍；盘中增量需另开开关。I/J、按日因子、模拟账本默认关。A–H 历史重放缺 metrics_daily 仍关闭。",
     }

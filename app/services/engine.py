@@ -87,6 +87,9 @@ def default_config() -> dict:
             "smartpick_signals": True,
             "smartpick_catalyst": True,
         },
+        "week_gate": True,
+        "build_factor_daily": False,
+        "paper_enabled": False,
     }
 
 
@@ -111,6 +114,12 @@ def get_config() -> dict:
                         pass
         if isinstance(raw.get("consume"), dict):
             out["consume"].update({k: bool(v) for k, v in raw["consume"].items() if k in out["consume"]})
+        if "week_gate" in raw:
+            out["week_gate"] = bool(raw["week_gate"])
+        if "build_factor_daily" in raw:
+            out["build_factor_daily"] = bool(raw["build_factor_daily"])
+        if "paper_enabled" in raw:
+            out["paper_enabled"] = bool(raw["paper_enabled"])
     return out
 
 
@@ -138,6 +147,12 @@ def save_config(payload: dict) -> dict:
         for k, v in body["consume"].items():
             if k in cur["consume"]:
                 cur["consume"][k] = bool(v)
+    if "week_gate" in body:
+        cur["week_gate"] = bool(body["week_gate"])
+    if "build_factor_daily" in body:
+        cur["build_factor_daily"] = bool(body["build_factor_daily"])
+    if "paper_enabled" in body:
+        cur["paper_enabled"] = bool(body["paper_enabled"])
     set_meta_json(META_KEY, cur)
     return {"ok": True, **cur}
 
@@ -487,6 +502,11 @@ def run_engine(kind: str = "manual") -> dict:
     regime = market_regime()
     rotation = sector_rotation() if domains.get("industry", {}).get("available") else []
     cats = macro_catalysts(14) if any(domains.get(k, {}).get("available") for k in ("policy", "hot_terms", "calendar")) else []
+    try:
+        from . import holder_feature
+        holder_feature.refresh_all_features()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("持股特征刷新失败: %s", exc)
     hits_buy = strategy_svc.collect_hits("buy") if domains.get("strategy_hit", {}).get("available") else []
     hits_sell = strategy_svc.collect_hits("sell") if domains.get("strategy_hit", {}).get("available") else []
     buy_map: dict[str, list[str]] = {}
@@ -639,10 +659,19 @@ def run_engine(kind: str = "manual") -> dict:
     )
     n_tasks = upsert_signal_tasks(asof, run_id, hits_buy, hits_sell)
     track_open_tasks()
+    factor_info = None
+    if cfg.get("build_factor_daily") and kind != "intraday":
+        try:
+            from . import factor_frame
+            factor_info = factor_frame.build_all()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("按日因子生成失败: %s", exc)
+            factor_info = {"ok": False, "error": str(exc)[:200]}
     return {
         "ok": True, "status": status, "run_id": run_id, "asof": asof,
         "stocks": len(stock_rows), "buy_hits": len(hits_buy), "sell_hits": len(hits_sell),
         "tasks": n_tasks, "missing": missing, "note": note, "regime": regime.get("label"),
+        "factor": factor_info,
         "domains": domains,
     }
 
@@ -731,6 +760,8 @@ def get_signals(side: str = "buy", limit: int = 40) -> dict:
             "code": r["code"], "name": r["name"], "price": r["price"], "pct": r["pct"],
             "industry": r.get("industry") or "", "score": r.get("score"),
             "plan_id": ",".join(plan_ids),
+            "hit_count": len(plan_ids),
+            "plan_labels": [strategy_svc.plan_caption(p, side) for p in plan_ids if p],
             "reason": r.get("reason_bits") or "",
             "d_buy": r.get("d_buy"), "d_macro": r.get("d_macro"),
         })
@@ -883,15 +914,24 @@ def list_signal_tasks(side: str = "", status: str = "", limit: int = 80) -> dict
     rows = query(
         f"SELECT * FROM signal_task WHERE {' AND '.join(where)} "
         "ORDER BY asof DESC, id DESC LIMIT ?", (*params, max(10, min(int(limit or 80), 200))))
-    factor_n = _count("SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name='factor_daily'")
-    has_factor = False
-    if factor_n:
-        has_factor = _count("SELECT COUNT(*) AS n FROM factor_daily") > 0
+    from . import backtest as backtest_svc
+    from . import paper as paper_svc
+    fst = backtest_svc.factor_status()
     return {
         "ok": True, "items": rows, "count": len(rows),
-        "backtest_open": False,
-        "backtest_reason": "缺少按日因子表 factor_daily，回测入口关闭，避免用最新截面做假回测。当前仅跟踪命中后的真实后续 K 线。",
-        "has_factor_daily": has_factor,
+        "backtest_open": bool(fst.get("open")),
+        "backtest_kind": "factor" if fst.get("open") else None,
+        "backtest_reason": (
+            "已有 factor_daily，可做技术因子回放（不是方案 A–H）。A–H 重放仍关闭：缺少 metrics_daily。"
+            if fst.get("open") else
+            (fst.get("reason") or "缺少按日因子表 factor_daily，回测入口关闭，避免用最新截面做假回测。")
+        ),
+        "ah_replay_open": False,
+        "ah_replay_reason": backtest_svc.AH_REPLAY_REASON,
+        "factor_rule": fst.get("rule") or "",
+        "has_factor_daily": bool(fst.get("open")),
+        "factor_rows": fst.get("rows") or 0,
+        "paper": paper_svc.status(),
         "note": "跟踪收益仅用命中日之后的日 K。无下一根显示为空，不是 0%。高低同日触碰记 ambiguous。",
         "disclaimer": "量化参考，不构成投资建议",
     }
@@ -928,6 +968,7 @@ def attach_signal_levels(items: list[dict], side: str, asof: str | None = None) 
             r["task_status"] = "preview"
             r["ret_1"] = None
             r["ret_5"] = None
+            r["ret_20"] = None
             continue
         r["entry_px"] = t.get("entry_px")
         r["stop_px"] = t.get("stop_px")

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>A股量化工具</title>
-<link rel="stylesheet" href="/static/style.css?v=13.0.22">
+<link rel="stylesheet" href="/static/style.css?v=13.0.23">
 <script>
 (function () {
   try {
@@ -508,6 +508,13 @@
       <div class="muted" style="margin-bottom:6px">权重（只影响综合分，合计会归一）</div>
       <div id="spWeights" class="sp-weights"></div>
       <div class="muted" id="spFinNote" style="margin-top:8px;font-size:12px"></div>
+      <div class="cond-inline" id="spPortfolio" style="margin-top:10px;gap:16px">
+        <span class="g-label muted">研究组合</span>
+        <label class="muted"><input type="checkbox" id="spPortOn"> 等权后切仓位上限</label>
+        <label class="muted"><input type="checkbox" id="spPortDropSell" checked> 剔除卖点池</label>
+        <label class="muted"><input type="checkbox" id="spPortDropUnlock"> 剔除未来10日大解禁</label>
+        <label class="muted"><input type="checkbox" id="spMinHits"> 至少命中 2 个买点方案</label>
+      </div>
     </div>
     <div class="card">
       <div class="card-title">选股结果 <span class="muted" id="spCount"></span></div>
@@ -740,8 +747,12 @@
         <div class="cond-inline" style="margin-top:12px;gap:16px;align-items:center">
           <label class="muted"><input type="checkbox" id="engineEnabled"> 启用引擎（日终 15:50 自动拍）</label>
           <label class="muted"><input type="checkbox" id="engineIntraday"> 盘中 10 分钟增量拍</label>
+          <label class="muted"><input type="checkbox" id="engineWeekGate" checked> 周线门（买点周线 MA5≥MA20，缺周线跳过）</label>
+          <label class="muted"><input type="checkbox" id="engineBuildFactor"> 生成按日因子（默认关，避免盘中全市场重算）</label>
+          <label class="muted"><input type="checkbox" id="enginePaper"> 本地模拟账本（T+1，默认关，不接下单）</label>
           <button class="btn" type="button" id="engineRunBtn" onclick="runEngineOnce()">跑一次引擎</button>
           <button class="btn ghost" type="button" onclick="saveEngineConfig()">保存配置</button>
+          <button class="btn ghost" type="button" id="engineFactorBtn" onclick="buildFactorDaily()">生成按日因子</button>
         </div>
         <div class="muted" id="engineSaveMsg" style="margin-top:8px"></div>
         <div id="engineLiveStatus" class="engine-live"></div>
@@ -822,6 +833,6 @@
   <div class="ctx-item" id="ctxKbRevert" style="display:none">↩ 还原内置解释</div>
 </div>
 
-<script src="/static/app.js?v=13.0.22"></script>
+<script src="/static/app.js?v=13.0.23"></script>
 </body>
 </html>

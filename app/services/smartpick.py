@@ -69,6 +69,14 @@ def _today() -> str:
     return datetime.now(_TZ).strftime("%Y-%m-%d")
 
 
+def _paper_on() -> bool:
+    try:
+        from . import engine as engine_svc
+        return bool(engine_svc.get_config().get("paper_enabled"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def get_policy() -> dict:
     raw = get_meta_json("smartpick_ai_policy", {}) or {}
     out = dict(DEFAULT_POLICY)
@@ -130,6 +138,7 @@ def meta() -> dict:
         "finance_graded": st.get("graded", 0),
         "finance_universe": st.get("universe", 0),
         "finance_distribution": st.get("distribution") or {},
+        "paper_enabled": _paper_on(),
     }
 
 
@@ -407,10 +416,39 @@ def run(payload: dict) -> dict:
     items.sort(key=lambda x: x.get("smart_score") or 0, reverse=True)
     items = items[:100]
     from . import finance as finance_svc
+    from . import strategy as strategy_svc
     from . import wuxing
     wuxing.tags_for_list(items)
     finance_svc.attach_grades(items)
     metrics_svc.attach_flow_list(items)
+    hit_map: dict[str, list[str]] = {}
+    try:
+        for h in strategy_svc.collect_hits("buy", limit=80):
+            code = h.get("code")
+            if code:
+                hit_map[code] = list(h.get("plans") or [])
+    except Exception as exc:  # noqa: BLE001
+        log.warning("选股命中标签失败: %s", exc)
+    for r in items:
+        plans = hit_map.get(r.get("code") or "") or []
+        r["hit_count"] = len(plans)
+        r["plan_labels"] = [strategy_svc.plan_caption(p, "buy") for p in plans]
+    min_hits = 0
+    try:
+        min_hits = int((payload.get("portfolio") or {}).get("min_hit_count") or 0)
+    except (TypeError, ValueError):
+        min_hits = 0
+    if min_hits >= 2:
+        items = [r for r in items if int(r.get("hit_count") or 0) >= min_hits]
+    port_meta = None
+    port_cfg = payload.get("portfolio") or {}
+    if port_cfg.get("enabled"):
+        from . import portfolio as portfolio_svc
+        items, port_meta = portfolio_svc.constrain(
+            items,
+            drop_sell=bool(port_cfg.get("drop_sell", True)),
+            drop_unlock=bool(port_cfg.get("drop_unlock", False)),
+        )
 
     st = finance_svc.stats()
     local = (f"策略「{tpl['name']}」命中 {len(items)} 只。"
@@ -418,6 +456,10 @@ def run(payload: dict) -> dict:
              + f" 财报已评级 {st.get('graded', 0)}/{st.get('universe', 0)}。"
              + (" 综合分来自引擎快照，不构成投资建议。" if score_source == "engine"
                 else " 综合分为本地加权，不构成投资建议。"))
+    if min_hits >= 2:
+        local += f" 已筛至少命中 {min_hits} 个买点方案。"
+    if port_meta and port_meta.get("notes"):
+        local += " " + "；".join(port_meta["notes"]) + "。"
     if not items and hard.get("need_finance"):
         local += " 当前绩优硬性条件要求已评级，覆盖率低时结果可能为空，可改「均衡综合」或先重建财报。"
 
@@ -436,4 +478,6 @@ def run(payload: dict) -> dict:
         "finance_universe": st.get("universe", 0),
         "score_source": score_source,
         "engine": engine_meta,
+        "portfolio": port_meta,
+        "paper_enabled": _paper_on(),
     }

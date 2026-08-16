@@ -228,6 +228,7 @@ function signalLevelsHtml(r) {
     <span>止损 <b>${fmt(r.stop_px)}</b></span>
     <span>+1日 ${retTxt(r.ret_1)}</span>
     <span>+5日 ${retTxt(r.ret_5)}</span>
+    <span>+20日 ${retTxt(r.ret_20)}</span>
   </div>`;
 }
 function signalContextHtml(r) {
@@ -5689,6 +5690,9 @@ function collectEngineConfig() {
   return {
     enabled: !!$("#engineEnabled")?.checked,
     intraday: !!$("#engineIntraday")?.checked,
+    week_gate: !!$("#engineWeekGate")?.checked,
+    build_factor_daily: !!$("#engineBuildFactor")?.checked,
+    paper_enabled: !!$("#enginePaper")?.checked,
     domains,
     weights,
     consume: {
@@ -5717,6 +5721,27 @@ window.saveEngineConfig = async () => {
     loadEngineBlueprint();
   } catch (err) {
     if (msg) msg.textContent = "保存失败：" + (err.message || err);
+  }
+};
+
+window.buildFactorDaily = async () => {
+  const msg = $("#engineSaveMsg");
+  const btn = $("#engineFactorBtn");
+  if (msg) msg.textContent = "正在用已落库日 K 生成 factor_daily（不用未来 bar）…";
+  if (btn) btn.disabled = true;
+  try {
+    const d = await api("/api/engine/build-factors", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    if (msg) msg.textContent = d.ok
+      ? `按日因子已写入 ${d.codes || 0} 只 / ${d.rows || 0} 行。信号验证页可做技术因子回放（不是方案 A–H）。`
+      : (`生成失败：${d.error || "未知错误"}`);
+  } catch (err) {
+    if (msg) msg.textContent = "生成失败：" + (err.message || err);
+  } finally {
+    if (btn) btn.disabled = false;
   }
 };
 
@@ -5768,6 +5793,13 @@ async function loadEngineBlueprint() {
   if (en) en.checked = !!d.enabled;
   const intra = $("#engineIntraday");
   if (intra) intra.checked = !!d.intraday;
+  const cfg = d.config || {};
+  const wg = $("#engineWeekGate");
+  if (wg) wg.checked = cfg.week_gate !== false;
+  const bf = $("#engineBuildFactor");
+  if (bf) bf.checked = !!cfg.build_factor_daily;
+  const pp = $("#enginePaper");
+  if (pp) pp.checked = !!cfg.paper_enabled;
   const intro = $("#engineIntro");
   if (intro) {
     intro.innerHTML = `${esc(d.subtitle || "")} 详细逻辑见仓库 <b>${esc(d.doc || "需求优化文档13.0.md")}</b>。${esc(d.note || "")}`;
@@ -6229,15 +6261,21 @@ async function renderSmartpickEnginePane(bp) {
       const d = await api("/api/engine/tasks?limit=80");
       const items = d.items || [];
       const retTxt = (v) => (v == null || v === "") ? "—" : pct(v);
+      const btOpen = !!d.backtest_open;
+      const paper = d.paper || {};
       box.innerHTML = `
         <div class="card">
           <div class="card-title">信号验证 <span class="muted">${items.length} 条任务</span></div>
           <div class="muted" style="margin-bottom:8px">${esc(d.note || tab.blurb || "")}</div>
-          <button class="btn" type="button" disabled title="${esc(d.backtest_reason || "")}">日K回测（关闭）</button>
+          <button class="btn" type="button" ${btOpen ? "" : "disabled"}
+            title="${esc(d.backtest_reason || "")}"
+            onclick="loadFactorBacktest()">${btOpen ? "技术因子回放" : "日K回测（关闭）"}</button>
           <div class="muted" style="margin:8px 0 12px">${esc(d.backtest_reason || "缺少按日因子表，回测入口关闭。")}</div>
+          <div class="muted" style="margin:0 0 12px">${esc(d.ah_replay_reason || "")}</div>
+          <div id="spBacktestBox"></div>
           ${items.length ? `<table><thead><tr>
             <th>日期</th><th>名称</th><th>方向</th><th>方案</th><th>入场</th><th>止盈</th><th>止损</th>
-            <th>状态</th><th>+1日</th><th>+5日</th>
+            <th>状态</th><th>+1日</th><th>+5日</th><th>+20日</th>
           </tr></thead><tbody>${items.map((r) => `
             <tr data-code="${esc(r.code)}" onclick="openStock('${esc(r.code)}','${esc(r.name || "")}')">
               <td>${esc(r.asof || "")}</td>
@@ -6250,9 +6288,14 @@ async function renderSmartpickEnginePane(bp) {
               <td><span class="task-st ${esc(r.status || "")}">${esc(r.status || "")}</span></td>
               <td class="num">${retTxt(r.ret_1)}</td>
               <td class="num">${retTxt(r.ret_5)}</td>
+              <td class="num">${retTxt(r.ret_20)}</td>
             </tr>`).join("")}</tbody></table>` : `<div class="empty">${esc(d.empty_reason || tab.empty || "尚无信号任务")}</div>`}
+          <div class="card-title" style="margin-top:16px">模拟账本 <span class="muted">${paper.enabled ? "已启用" : "默认关闭"}</span></div>
+          <div class="muted">${esc(paper.note || "")}</div>
+          <div id="spPaperBox" class="muted" style="margin-top:8px"></div>
           <div class="jumps" style="margin-top:12px">${spEngineJumps(tab)}</div>
         </div>`;
+      if (paper.enabled) loadPaperLots();
       return;
     }
     box.innerHTML = spEngineEmpty(tab);
@@ -6260,6 +6303,75 @@ async function renderSmartpickEnginePane(bp) {
     box.innerHTML = `<div class="card"><div class="empty">加载失败：${esc(err.message || err)}</div></div>`;
   }
 }
+
+window.loadFactorBacktest = async () => {
+  const box = $("#spBacktestBox");
+  if (!box) return;
+  box.innerHTML = '<div class="empty">正在用 factor_daily 回放（不是方案 A–H）…</div>';
+  try {
+    const d = await api("/api/backtest/factor?fees=1&max_codes=80");
+    if (!d.open) {
+      box.innerHTML = `<div class="empty">${esc(d.reason || "回测入口关闭")}</div>`;
+      return;
+    }
+    const s = d.summary || {};
+    const trades = d.trades || [];
+    box.innerHTML = `
+      <div class="muted" style="white-space:pre-wrap;margin-bottom:8px">${esc(d.rule || "")}</div>
+      <div class="muted">样本 ${s.sample || 0} · 成交 ${s.closed || 0} · 平均收益 ${s.avg_ret_pct == null ? "—" : pct(s.avg_ret_pct)}
+        · +1日 ${s.avg_ret_1 == null ? "—" : pct(s.avg_ret_1)} · +5日 ${s.avg_ret_5 == null ? "—" : pct(s.avg_ret_5)}
+        · +20日 ${s.avg_ret_20 == null ? "—" : pct(s.avg_ret_20)}</div>
+      <div class="muted">${esc(s.sharpe_note || "")} ${esc(d.fill_note || "")} ${esc(d.disclaimer || "")}</div>
+      ${trades.length ? `<table><thead><tr>
+        <th>代码</th><th>信号日</th><th>入场日</th><th>出场日</th><th>状态</th><th>收益</th><th>撮合</th>
+      </tr></thead><tbody>${trades.slice(0, 40).map((t) => `
+        <tr><td>${esc(t.code || "")}</td><td>${esc(t.signal_date || "")}</td>
+          <td>${esc(t.entry_date || "")}</td><td>${esc(t.exit_date || "")}</td>
+          <td>${esc(t.status || "")}</td><td class="num">${t.ret_pct == null ? "—" : pct(t.ret_pct)}</td>
+          <td>${esc(t.fill || "")}</td></tr>`).join("")}</tbody></table>` : '<div class="empty">区间内无成交</div>'}`;
+  } catch (err) {
+    box.innerHTML = `<div class="empty">回放失败：${esc(err.message || err)}</div>`;
+  }
+};
+
+window.loadPaperLots = async () => {
+  const box = $("#spPaperBox");
+  if (!box) return;
+  try {
+    const d = await api("/api/paper/lots?limit=40");
+    const items = d.items || [];
+    box.innerHTML = items.length
+      ? `<table><thead><tr><th>日期</th><th>方向</th><th>名称</th><th>价格</th><th>状态</th></tr></thead><tbody>
+         ${items.map((r) => `<tr><td>${esc(r.asof || "")}</td><td>${esc(r.side || "")}</td>
+           <td>${esc(r.name || "")} <span class="muted">${esc(r.code || "")}</span></td>
+           <td class="num">${fmt(r.price)}</td><td>${esc(r.status || "")}</td></tr>`).join("")}</tbody></table>`
+      : '<div class="empty">尚无模拟成交</div>';
+  } catch (err) {
+    box.innerHTML = `<div class="empty">加载失败：${esc(err.message || err)}</div>`;
+  }
+};
+
+window.paperFill = async (code, name, side, ev) => {
+  if (ev) ev.stopPropagation();
+  try {
+    const d = await api("/api/paper/fill", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code, name, side: side || "buy", qty: 100 }),
+    });
+    const box = $("#spLocal");
+    if (box) {
+      box.style.display = "";
+      box.textContent = d.ok ? (d.note || "已记模拟成交") : (d.error || "记帐失败");
+    }
+  } catch (err) {
+    const box = $("#spLocal");
+    if (box) {
+      box.style.display = "";
+      box.textContent = "模拟记帐失败：" + (err.message || err);
+    }
+  }
+};
 
 window.showEngineBoard = async (board) => {
   const box = $("#spCatStocks");
@@ -6376,23 +6488,27 @@ function renderSpResult(d) {
     box.innerHTML = "";
   }
   const items = d.items || [];
+  const paperOn = !!d.paper_enabled;
   $("#spTable").innerHTML = items.length ? `<table><thead><tr>
     <th>#</th><th>名称</th><th>财报</th><th>行业</th><th>现价</th><th>涨跌幅</th><th>综合分</th>
-    <th>购买指数</th><th>量比</th>${flowMetricHeaders()}<th>提示</th><th>本地理由</th>
+    <th>购买指数</th><th>命中</th><th>建议仓</th><th>量比</th>${flowMetricHeaders()}<th>提示</th><th>本地理由</th>${paperOn ? "<th>模拟</th>" : ""}
   </tr></thead><tbody>${items.map((r, i) => `
     <tr class="${scoreRowClass(r.smart_score || r.score)}" data-code="${r.code}" data-name="${esc(r.name)}" onclick="openStock('${r.code}','${esc(r.name)}')">
       <td>${i + 1}</td><td>${esc(r.name)} <span class="muted">${r.code}</span></td>
       <td>${finBadge(r)}</td>
-      <td>${esc(r.industry || "-")}</td>
+      <td>${esc(r.industry || "-")}${r.industry_unconstrained ? '<span class="muted"> 无行业</span>' : ""}</td>
       <td class="num">${pxHtml(r.price, r.pct)}</td>
       <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
       <td class="num"><b>${fmt(r.smart_score, 1)}</b></td>
       <td class="num">${r.buy_index != null ? `<b>${fmt(r.buy_index, 0)}</b>` : "-"}</td>
+      <td class="num">${r.hit_count || 0}</td>
+      <td class="num">${r.suggest_weight_pct != null ? (r.suggest_weight_pct + "%") : "—"}</td>
       <td class="num">${fmt(r.volume_ratio)}</td>${flowMetricCells(r)}
       <td><span class="badge ${r.advice === "增持" ? "advice-buy" : r.advice === "减持" ? "advice-sell" : "advice-hold"}" style="font-size:calc(11px * var(--font-scale));padding:2px 7px">${esc(r.advice || "-")}</span></td>
-      <td class="desc-hl" style="white-space:normal;min-width:200px">${esc(r.local_reason || "")}</td>
+      <td class="desc-hl" style="white-space:normal;min-width:200px">${esc(r.local_reason || "")}${r.plan_labels && r.plan_labels.length ? " · " + esc(r.plan_labels.join("、")) : ""}</td>
+      ${paperOn ? `<td><button class="btn small ghost" type="button" onclick="paperFill('${esc(r.code)}','${esc(r.name)}','buy',event)">模拟买入</button></td>` : ""}
     </tr>`).join("")}</tbody></table>
-    <div class="muted" style="margin-top:6px;font-size:calc(12px * var(--font-scale))">${FLOW_NOTE} 综合分为本地加权，不构成投资建议。</div>`
+    <div class="muted" style="margin-top:6px;font-size:calc(12px * var(--font-scale))">${FLOW_NOTE} 综合分为本地加权，不构成投资建议。建议仓为研究约束，不是实盘。</div>`
     : `<div class="empty">${esc(d.local_summary || "无命中个股")}</div>`;
   if (d.usage) {
     const el = $("#spAiUsage");
@@ -6419,6 +6535,12 @@ window.runSmartpick = async () => {
         weights: spState.weights,
         ranges: readSpRanges(),
         semantic: ($("#spSemantic")?.value || "").trim(),
+        portfolio: {
+          enabled: !!$("#spPortOn")?.checked,
+          drop_sell: !!$("#spPortDropSell")?.checked,
+          drop_unlock: !!$("#spPortDropUnlock")?.checked,
+          min_hit_count: $("#spMinHits")?.checked ? 2 : 0,
+        },
       }),
     });
     renderSpResult(d);
@@ -6627,6 +6749,7 @@ async function loadBuyPoints() {
           <span class="m">购买指数 <b>${fmt(r.buy_index, 0)}</b></span>
           ${adviceBadge(r)}
         </div>
+        ${signalLevelsHtml(r)}
         <div class="flash-advice">${esc(r.advice_summary || r.advice || r.op_advice || r.hit_action || "暂无操作建议")}</div>
       </div>`).join("")}</div>`;
     syncWatchButtons();

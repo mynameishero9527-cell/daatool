@@ -220,15 +220,72 @@ _reg(Plan(
     sell_order="m.bias20 DESC",
 ))
 
+_reg(Plan(
+    id="I",
+    name="筹码集中 / 户数扩散",
+    summary="只用已缓存持股。户数环比下降且当期有机构披露为买；户数明显扩散为卖。缺缓存零命中，不猜户数。",
+    buy_formula=(
+        "holders_qoq < 0  ∧  当期有机构占比或机构家数披露  ∧  main_net_in > 0  ∧  非 ST\n"
+        "机构无上期序列，不编造「机构占流通上升 / 家数增加」，只要求当期有披露。\n"
+        "数据仅来自已打开持股页缓存的 stock_holders，不扫全市场 HTTP。"
+    ),
+    sell_formula=(
+        "holders_qoq ≥ 5（户数环比明显上升） ∧ 当期有机构披露\n"
+        "无机构上期，不编造「机构占比下降」。"
+    ),
+    buy_where=(
+        "s.main_net_in > 0 AND EXISTS ("
+        "SELECT 1 FROM holder_feature h WHERE h.code=m.code "
+        "AND h.holders_qoq IS NOT NULL AND h.holders_qoq < 0 AND h.has_institution=1)"
+    ),
+    sell_where=(
+        "EXISTS (SELECT 1 FROM holder_feature h WHERE h.code=m.code "
+        "AND h.holders_qoq IS NOT NULL AND h.holders_qoq >= 5 AND h.has_institution=1)"
+    ),
+    buy_action="筹码趋向集中·可跟踪",
+    sell_action="户数明显扩散·回避",
+    extra_docs="缺持股/解禁缓存则该股不命中。禁止用十大股东名单猜户数。",
+))
+
+_reg(Plan(
+    id="J",
+    name="解禁避让 / 解禁后回流",
+    summary="未来10个工作日大解禁且位置偏高为卖；解禁已过≥5个工作日且资金回流为严买。无解禁数据不买不卖。",
+    buy_formula=(
+        "最近一次解禁已过 ≥ 5 个工作日（周末已剔除，法定节假日未内置）\n"
+        "∧ 当日主力净流入 > 0（无解禁后区间资金序列，不编造多日资金）\n"
+        "∧ BuyIndex ≥ 65"
+    ),
+    sell_formula=(
+        "未来 10 个工作日内存在解禁  ∧  解禁占流通 ≥ 3%  ∧  pos60 ≥ 0.6"
+    ),
+    buy_where=(
+        "s.main_net_in > 0 AND m.buy_index >= 65 AND EXISTS ("
+        "SELECT 1 FROM holder_feature h WHERE h.code=m.code "
+        "AND h.last_unlock_days_ago IS NOT NULL AND h.last_unlock_days_ago >= 5)"
+    ),
+    sell_where=(
+        "m.pos60 >= 0.6 AND EXISTS ("
+        "SELECT 1 FROM holder_feature h WHERE h.code=m.code "
+        "AND h.unlock_days_to IS NOT NULL AND h.unlock_days_to BETWEEN 0 AND 10 "
+        "AND h.unlock_float_ratio IS NOT NULL AND h.unlock_float_ratio >= 3)"
+    ),
+    buy_action="解禁后回流·严观察",
+    sell_action="临近大解禁·避让",
+    extra_docs="工作日口径剔除周末，无官方节假日表。无解禁列表则零命中。",
+))
+
 PLAN_ORDER = list(PLANS.keys())
 
 BUY_TITLE = {
     "A": "购买指数高位", "B": "企稳四闸门", "C": "超跌RSI反弹", "D": "暗中吸筹",
     "E": "均线多头金叉", "F": "低位放量回补", "G": "量能回踩均线", "H": "乖离率超卖",
+    "I": "筹码集中", "J": "解禁后回流",
 }
 SELL_TITLE = {
     "A": "购买指数低位/过热兑现", "B": "高位闸门失效", "C": "RSI超买高乖离", "D": "暗中派发",
     "E": "均线破坏", "F": "高位过热兑现", "G": "放量高乖离减仓", "H": "乖离率超买",
+    "I": "户数扩散", "J": "解禁避让",
 }
 BUY_SUMMARY = {
     "A": "购买指数≥80 且主力净流入，现行买点主规则。",
@@ -239,6 +296,8 @@ BUY_SUMMARY = {
     "F": "中低位购买指数尚可且放量净流入。",
     "G": "站上 MA20 后缩量回踩，MACD 柱仍红。",
     "H": "相对 MA20 负乖离较大且仍有资金回流。",
+    "I": "户数环比下降且当期有机构披露、主力净流入。默认关闭。",
+    "J": "解禁已过≥5 个工作日、当日净流入、购买指数≥65。默认关闭。",
 }
 SELL_SUMMARY = {
     "A": "购买指数≤30，或主力大幅净流出叠加情绪过热。",
@@ -249,6 +308,8 @@ SELL_SUMMARY = {
     "F": "走到 60 日高位，情绪过热或资金流出则兑现。",
     "G": "放量、高乖离、情绪偏热，减仓防回吐。",
     "H": "正乖离过大叠加 RSI 超买，注意均值回归。",
+    "I": "户数环比≥5% 且当期有机构披露。默认关闭。",
+    "J": "未来10个工作日解禁占流通≥3% 且 pos60≥0.6。默认关闭。",
 }
 
 
@@ -402,11 +463,22 @@ def _fair_take(items: list[dict], enabled: list[str], limit: int) -> list[dict]:
     return out
 
 
+def _week_gate_on() -> bool:
+    try:
+        from . import engine as engine_svc
+        return bool(engine_svc.get_config().get("week_gate", True))
+    except Exception:  # noqa: BLE001
+        return True
+
+
 def collect_hits(kind: str, enabled: list[str] | None = None, limit: int = PER_PLAN_CAP) -> list[dict]:
     """启用方案并集。买点只跑买点规则，卖点只跑卖点规则，互不混用。"""
     if kind not in ("buy", "sell"):
         raise ValueError("kind must be buy or sell")
     enabled = enabled if enabled is not None else get_enabled(kind)
+    if any(p in enabled for p in ("I", "J")):
+        from . import holder_feature
+        holder_feature.refresh_all_features()
     bucket: dict[str, dict] = {}
     for pid in enabled:
         plan = PLANS.get(pid)
@@ -417,6 +489,9 @@ def collect_hits(kind: str, enabled: list[str] | None = None, limit: int = PER_P
         for row in _fetch(fragment, order):
             _merge(bucket, row, pid)
     items = _annotate(_sort_hits(list(bucket.values()), kind), kind)
+    if kind == "buy":
+        from . import week_gate
+        items = week_gate.apply_buy_gate(items, enabled=_week_gate_on())
     return _fair_take(items, enabled, limit)
 
 
@@ -480,6 +555,8 @@ def _hit_note(enabled: list[str], kind: str) -> str:
 
 
 def plan_counts() -> dict[str, dict[str, int]]:
+    from . import holder_feature
+    holder_feature.ensure_tables()
     out = {}
     for pid, plan in PLANS.items():
         out[pid] = {"buy": _count(plan.buy_where), "sell": _count(plan.sell_where)}
@@ -541,7 +618,7 @@ def catalog(kind: str = "buy") -> list[dict]:
             "formula": p.buy_formula if kind == "buy" else p.sell_formula,
             "buy_formula": p.buy_formula,
             "sell_formula": p.sell_formula,
-            "extra_docs": p.extra_docs if kind == "buy" and pid in ("A", "B", "D") else "",
+            "extra_docs": p.extra_docs if kind == "buy" and pid in ("A", "B", "D", "I", "J") else (p.extra_docs if pid in ("I", "J") else ""),
             "action": p.buy_action if kind == "buy" else p.sell_action,
             "enabled": p.id in enabled,
             "is_default": p.id == "A",
