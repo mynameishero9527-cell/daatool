@@ -1,4 +1,4 @@
-"""13.0.42：对子/连号/吉利价特征；缺K线不编近期低点。"""
+"""13.0.42 / 13.0.44：对子/连号/吉利价特征；贴水 8% 扫全池；缺K线不编近期低点。"""
 from __future__ import annotations
 
 import unittest
@@ -46,6 +46,9 @@ class LuckyPriceTests(unittest.TestCase):
         near = lucky_price.annotate(6.66, 6.66)
         self.assertTrue(near["lucky_low"])
         self.assertIn("对子", near["lucky_tags"])
+        still_near = lucky_price.annotate(5.50, 5.20)
+        self.assertTrue(still_near["lucky_low"])
+        self.assertIn("吉利", still_near["lucky_tags"])
         far = lucky_price.annotate(8.00, 6.66)
         self.assertFalse(far["lucky_low"])
         no_low = lucky_price.annotate(6.66, None)
@@ -92,6 +95,19 @@ class LuckyLowStrategyTests(unittest.TestCase):
         )
         hits = strategy.collect_hits("buy", enabled=["BZ"], limit=80, use_week_gate=False)
         self.assertNotIn(CODE_OK, {r["code"] for r in hits})
+
+    def test_mid_rank_lucky_low_not_capped(self):
+        """购买指数只排中游时，也不能被每方案 80 条截掉。"""
+        _seed(
+            CODE_OK, name="中游吉利", price=5.50, buy_index=51.2, stabilize_score=None,
+            pos60=0.22, main_net_in=800, pct=0.4, rsi14=42,
+        )
+        _seed_lucky_low_kline(CODE_OK, n=20, px=5.20)
+        hits = strategy.collect_hits("buy", enabled=["BZ"], limit=80, use_week_gate=False)
+        row = next((r for r in hits if r["code"] == CODE_OK), None)
+        self.assertIsNotNone(row)
+        self.assertTrue(row.get("lucky_low"))
+        self.assertIn("BZ", row.get("plans") or [])
 
     def test_plan_a_not_opened_by_lucky_alone(self):
         _seed(

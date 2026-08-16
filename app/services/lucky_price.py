@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from ..database import query
 
-NEAR_PCT = 0.02
+NEAR_PCT = 0.08
 LOOKBACK_BARS = 40
 MIN_BARS = 10
 LUCKY_EXACT = {
@@ -23,7 +23,7 @@ DOC = (
     "吉利价特征（真实现价 + 日K最低价，缺K线不编低点）："
     "对子如 6.66/12.12；连号如 1.23/12.34；"
     "吉利如 8.88/16.88/5.20/13.14 及含 168/888 的口彩。"
-    "现价贴着该近期低点（不超过 2%）才算「吉利低点」。"
+    "现价仍贴着该近期低点（不超过 8%）才算「吉利低点」。"
 )
 
 

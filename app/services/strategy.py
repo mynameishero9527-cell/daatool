@@ -24,7 +24,7 @@ META_KEY_SELL = "strategy_enabled_sell"
 META_KEY_HIDDEN_BUY = "strategy_hidden_buy"
 META_KEY_HIDDEN_SELL = "strategy_hidden_sell"
 RULES_VER_KEY = "strategy_rules_ver"
-RULES_VER = "13.0.42"
+RULES_VER = "13.0.44"
 DEFAULT_BUY_IDS = ["A"]
 DEFAULT_SELL_IDS = ["ST", "SO", "SR"]
 DEFAULT_IDS = list(DEFAULT_BUY_IDS)  # 兼容旧测试/调用，仅表示买点默认
@@ -47,6 +47,7 @@ GOOD_GRADES = ("A", "B")
 WEAK_GRADES = ("C", "D")
 NAME_OK = "s.name NOT LIKE '%ST%' AND s.name NOT LIKE '%退%'"
 PER_PLAN_CAP = 80
+LUCKY_POOL_CAP = 2500
 _TZ = ZoneInfo("Asia/Shanghai")
 _EMPTY_BUY_TAIL = (
     "最佳买点按选股方案A：购买指数与主力净流入。无流入的观察池不凑数。"
@@ -206,7 +207,7 @@ _reg_buy(SidePlan(
         "路径1：stabilize_score ≥ 65  ∧  当日及5日主力净流入不差\n"
         "∧  pos60 ≤ 0.42  ∧  BuyIndex ≥ 55\n"
         "∧  RSI 有值则 ≥ 32（已离开极端超卖） ∧  5日跌幅 > −10%\n"
-        "路径2：近20/60日真实最低价为对子/连号/吉利数字  ∧  现价不超过该低点2%\n"
+        "路径2：近40日真实最低价为对子/连号/吉利数字  ∧  现价不超过该低点8%\n"
         "∧  主力净流入>0  ∧  BuyIndex≥50  ∧  pos60≤0.55  ∧  当日>−5%"
     ),
     where=(
@@ -592,6 +593,13 @@ def _fetch(where_fragment: str, order: str, limit: int = PER_PLAN_CAP) -> list[d
     return query(sql, (max(1, min(int(limit or PER_PLAN_CAP), PER_PLAN_CAP)),))
 
 
+def _fetch_pool(where_fragment: str, order: str, limit: int = LUCKY_POOL_CAP) -> list[dict]:
+    """吉利低点要扫够候选，不被每方案 80 条上限截掉。"""
+    sql = _SELECT.format(where=_where(where_fragment), order=order)
+    cap = max(PER_PLAN_CAP, min(int(limit or LUCKY_POOL_CAP), LUCKY_POOL_CAP))
+    return query(sql, (cap,))
+
+
 def _count(where_fragment: str) -> int:
     rows = query(
         "SELECT COUNT(*) AS n FROM stock_metrics m "
@@ -720,7 +728,7 @@ def _merge_lucky_low_hits(bucket: dict[str, dict], enabled: list[str]) -> None:
     targets = [pid for pid in enabled if pid and pid != "A"]
     if not targets:
         return
-    rows = _fetch(
+    rows = _fetch_pool(
         f"{_BUY_SAFE} AND s.main_net_in > 0 AND m.buy_index >= 50 "
         "AND (m.pos60 IS NULL OR m.pos60 <= 0.55)",
         "m.buy_index DESC",

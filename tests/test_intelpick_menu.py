@@ -48,6 +48,12 @@ class IntelpickMenuTests(unittest.TestCase):
         self.assertIn('let intelpickPage = "home"', js)
         self.assertIn('intelpickPage === "forecast"', js)
         self.assertNotIn('intelpickSub === "forecast"', js)
+        from app.database import init_db
+        from app.services import forecast_rec
+        init_db()
+        empty = forecast_rec.list_page(batch_no="NO-SUCH-BATCH").get("empty_reason") or ""
+        self.assertIn("主页", empty)
+        self.assertNotIn("本页黄历", empty)
 
 
 if __name__ == "__main__":
