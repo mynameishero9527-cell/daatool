@@ -240,8 +240,9 @@ function signalContextHtml(r) {
   return `<div class="signal-extra">
     <span>现价 ${pxHtml(r.price, r.pct)}</span>
     <span class="${cls(r.pct)}">${pct(r.pct)}</span>
-    <span>板块 ${esc(board)}</span>
+    <span>财报评级 ${finBadge(r)}</span>
     <span>五行 ${wx}</span>
+    <span>板块 ${esc(board)}</span>
     <span>个股热度 <b>${esc(heat)}</b></span>
     <span>板块热度 <b>${esc(sec)}</b></span>
   </div>${signalLevelsHtml(r)}`;
@@ -7326,6 +7327,9 @@ async function loadBuyPoints() {
           <span class="m ${cls(r.pct)}">${pct(r.pct)}</span>
           <span class="m">量比 <b>${fmt(r.volume_ratio)}</b></span>
           <span class="m">购买指数 <b>${fmt(r.buy_index, 0)}</b></span>
+          <span class="m">财报评级 ${finBadge(r)}</span>
+          <span class="m">五行 ${wxBadges(r.wuxing) || "—"}</span>
+          <span class="m">板块 ${esc(r.board_text || r.industry || "—")}</span>
           ${adviceBadge(r)}
         </div>
         ${signalLevelsHtml(r)}

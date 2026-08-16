@@ -1145,6 +1145,8 @@ tr.score-95 td { background: rgba(255, 60, 60, .30); }
   margin-top: 6px; font-size: calc(12px * var(--font-scale)); color: var(--muted);
 }
 .flash-metrics .m b { color: var(--text); font-variant-numeric: tabular-nums; }
+.flash-metrics .fin-badge, .flash-metrics .wx-badge,
+.signal-extra .fin-badge, .signal-extra .wx-badge { vertical-align: middle; }
 .flash-advice {
   margin-top: 6px; font-size: calc(12px * var(--font-scale)); line-height: 1.55;
   color: var(--text); white-space: normal;

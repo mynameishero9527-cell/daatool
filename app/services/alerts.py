@@ -288,8 +288,9 @@ def _advice_summary(r: dict, kind: str, buy_lv: str, buy_act: str, op: str) -> s
     else:
         extra = hit or f"{buy_lv}，{buy_act}"
         op_line = f"操作建议：以「{op}」为主。{extra}。"
+    fin = (r.get("finance_grade") or "").strip() or "—"
     bits = [x for x in (picked + "。" if picked else "", op_line,
-                        f"所属板块「{board}」，五行属{wx}。",
+                        f"所属板块「{board}」，五行属{wx}，财报评级 {fin}。",
                         f"个股热度 {heat_txt}，板块热度 {sec_txt}。",
                         "，".join(x for x in (pos_txt, flow_txt, vol) if x) + "。",
                         "仅供量化参考，不构成投资建议。") if x]

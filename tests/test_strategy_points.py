@@ -143,6 +143,23 @@ class StrategyPointsTests(unittest.TestCase):
         hits = strategy.collect_hits("sell", enabled=["ST"], limit=80)
         self.assertNotIn(CODE_RISK, {r["code"] for r in hits})
 
+    def test_decorate_exposes_finance_and_wuxing(self):
+        from app.services import alerts
+        _seed(CODE_OK, name="潜力股")
+        rows = [{
+            "code": CODE_OK, "name": "潜力股", "industry": "电子",
+            "buy_index": 76, "sentiment": 58, "main_net_in": 3000,
+            "volume_ratio": 1.3, "price": 10, "pct": 1.2,
+        }]
+        alerts._decorate_buy_rows(rows, "buy")
+        self.assertIn("finance_grade", rows[0])
+        self.assertNotEqual(rows[0].get("finance_grade"), "A")
+        self.assertIsInstance(rows[0].get("wuxing"), list)
+        self.assertTrue(rows[0]["wuxing"])
+        summary = rows[0].get("advice_summary") or ""
+        self.assertIn("财报评级", summary)
+        self.assertIn("五行", summary)
+
     def test_empty_sell_has_reason(self):
         rows, src, note = strategy.collect_sell_points(8)
         if not rows:
