@@ -6252,8 +6252,8 @@ window.saveStrategyPlans = async (preset) => {
   }
 };
 
-$("#btnResetBuy")?.addEventListener("click", () => saveStrategyPlans({ buy_ids: ["BP"], sell_ids: selectedStrategyIds("sell") }));
-$("#btnResetSell")?.addEventListener("click", () => saveStrategyPlans({ buy_ids: selectedStrategyIds("buy"), sell_ids: ["ST"] }));
+$("#btnResetBuy")?.addEventListener("click", () => saveStrategyPlans({ buy_ids: ["BP", "BT", "BZ"], sell_ids: selectedStrategyIds("sell") }));
+$("#btnResetSell")?.addEventListener("click", () => saveStrategyPlans({ buy_ids: selectedStrategyIds("buy"), sell_ids: ["ST", "SO", "SR"] }));
 
 let engineBlueprint = null;
 async function ensureEngineBlueprint(force) {
@@ -7327,6 +7327,8 @@ async function loadBuyPoints() {
           <span class="m ${cls(r.pct)}">${pct(r.pct)}</span>
           <span class="m">量比 <b>${fmt(r.volume_ratio)}</b></span>
           <span class="m">购买指数 <b>${fmt(r.buy_index, 0)}</b></span>
+          ${r.half_range_pct != null ? `<span class="m">半年振幅 <b>${fmt(r.half_range_pct, 0)}%</b></span>` : ""}
+          ${r.half_pos != null ? `<span class="m">半年位置 <b>${fmt(r.half_pos * 100, 0)}%</b></span>` : ""}
           <span class="m">财报评级 ${finBadge(r)}</span>
           <span class="m">五行 ${wxBadges(r.wuxing) || "—"}</span>
           <span class="m">板块 ${esc(r.board_text || r.industry || "—")}</span>

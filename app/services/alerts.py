@@ -27,20 +27,36 @@ def _flow_yi(v) -> str:
     return f"{n:.2f} 亿"
 
 
+def _half_txt(r: dict) -> str:
+    rng = r.get("half_range_pct")
+    pos = r.get("half_pos")
+    bars = r.get("half_bars")
+    bits = []
+    if bars:
+        bits.append(f"近半年{int(bars)}根日K")
+    if rng is not None:
+        bits.append(f"振幅 {rng:.0f}%")
+    if pos is not None:
+        bits.append(f"位置 {pos * 100:.0f}%")
+    return "，".join(bits)
+
+
 def _scan_buy_points() -> None:
     from . import strategy as strategy_svc
     enabled = strategy_svc.get_enabled("buy")
     cap = min(18, max(5, 3 * max(1, len(enabled))))
-    rows = strategy_svc.collect_hits("buy", enabled, limit=cap)
+    rows, _src, _note = strategy_svc.collect_buy_points(limit=cap)
     for r in rows:
         picked = r.get("picked_text") or "由买点策略选出"
         bi = r.get("buy_index")
         bi_txt = f"{bi:.0f}" if bi is not None else "-"
         pos = r.get("pos60")
         pos_txt = f"{pos * 100:.0f}% 分位" if pos is not None else "—"
+        half = _half_txt(r)
+        extra = f"，{half}" if half else ""
         _add("buy_point",
              f"{r['name']}（{r['code']}）{picked}，{r.get('hit_action') or '策略买点'}，购买指数 {bi_txt}",
-             f"{picked}；主力净流入 {_flow_yi(r.get('main_net_in'))}，60日区间 {pos_txt}",
+             f"{picked}；主力净流入 {_flow_yi(r.get('main_net_in'))}，60日区间 {pos_txt}{extra}",
              r.get("plan_id") or "")
 
 
@@ -55,9 +71,11 @@ def _scan_sell_points() -> None:
         bi_txt = f"{bi:.0f}" if bi is not None else "-"
         extra = "，情绪过热注意兑现" if (r.get("sentiment") or 0) >= 80 else ""
         net = r.get("main_net_in") or 0
+        half = _half_txt(r)
+        half_bit = f"，{half}" if half else ""
         _add("sell_point",
              f"{r['name']}（{r['code']}）{picked}，{r.get('hit_action') or '策略卖点'}{extra}，购买指数 {bi_txt}",
-             f"{picked}；主力净流{'入' if net > 0 else '出'} {_flow_yi(net)}",
+             f"{picked}；主力净流{'入' if net > 0 else '出'} {_flow_yi(net)}{half_bit}",
              r.get("plan_id") or "")
 
 
@@ -274,6 +292,7 @@ def _advice_summary(r: dict, kind: str, buy_lv: str, buy_act: str, op: str) -> s
     sec_txt = f"{sec_hot:.1f}（{sec_lv}）" if sec_hot is not None else "—"
     pos = r.get("pos60")
     pos_txt = f"60日位置 {pos * 100:.0f}% 分位" if pos is not None else ""
+    half = _half_txt(r)
     net = r.get("main_net_in")
     if net is None:
         flow_txt = ""
@@ -292,7 +311,7 @@ def _advice_summary(r: dict, kind: str, buy_lv: str, buy_act: str, op: str) -> s
     bits = [x for x in (picked + "。" if picked else "", op_line,
                         f"所属板块「{board}」，五行属{wx}，财报评级 {fin}。",
                         f"个股热度 {heat_txt}，板块热度 {sec_txt}。",
-                        "，".join(x for x in (pos_txt, flow_txt, vol) if x) + "。",
+                        "，".join(x for x in (pos_txt, half, flow_txt, vol) if x) + "。",
                         "仅供量化参考，不构成投资建议。") if x]
     return "".join(bits)
 
@@ -300,8 +319,8 @@ def _advice_summary(r: dict, kind: str, buy_lv: str, buy_act: str, op: str) -> s
 def get_buy_points(limit: int = 8) -> dict:
     """实时最佳买点（供全局弹窗）。空结果必须带回原因，避免窗口空白。
 
-    按设置中启用的买点方案并行取并集。只保留有潜力结构的命中，
-    不再回退观察池或降低门槛凑数。
+    须同时命中至少 2 个启用买点方案，并结合近半年真实日K与当前价位。
+    只保留有潜力结构的命中，不再回退观察池或降低门槛凑数。
     """
     from . import strategy as strategy_svc
 

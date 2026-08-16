@@ -1,6 +1,7 @@
-"""13.0.29：买点潜力结构 / 卖点止盈避险。不共用方案名，不回退观察池。"""
+"""13.0.31：买/卖点须命中≥2个方案，并结合近半年真实日K。不回退观察池。"""
 from __future__ import annotations
 
+from datetime import timedelta
 import unittest
 
 from unittest.mock import patch
@@ -20,6 +21,7 @@ def _purge(*codes: str) -> None:
             "DELETE FROM stock_snapshot WHERE code=?",
             "DELETE FROM stock_metrics WHERE code=?",
             "DELETE FROM stock_list WHERE code=?",
+            "DELETE FROM daily_kline WHERE code=?",
         ):
             execute(sql, (code,))
 
@@ -76,6 +78,35 @@ def _seed(code: str, *, name="测", **kw) -> None:
     )
 
 
+def _seed_half_kline(code: str, *, n=80, first=8.5, last=10.0, low=8.0, high=12.0) -> None:
+    """写入真实 OHLC 日K，不用涨跌幅编造。"""
+    end = strategy._shanghai_today()
+    days = []
+    d = end
+    while len(days) < n:
+        if d.weekday() < 5:
+            days.append(d)
+        d -= timedelta(days=1)
+    days.reverse()
+    execute("DELETE FROM daily_kline WHERE code=?", (code,))
+    for i, day in enumerate(days):
+        t = i / max(1, n - 1)
+        close = first + (last - first) * t
+        hi = close + 0.25
+        lo = close - 0.25
+        if i == 0:
+            lo = low
+        if i == n - 1:
+            hi = max(high, close)
+        if hi < lo:
+            hi, lo = lo, hi
+        execute(
+            "INSERT OR REPLACE INTO daily_kline(code,date,open,close,high,low,volume)"
+            " VALUES(?,?,?,?,?,?,?)",
+            (code, day.isoformat(), close, close, hi, lo, 1000 + i),
+        )
+
+
 class StrategyPointsTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -83,13 +114,15 @@ class StrategyPointsTests(unittest.TestCase):
 
     def setUp(self):
         _purge(CODE_OK, CODE_RISK, CODE_HIGH)
+        set_meta_json(strategy.RULES_VER_KEY, strategy.RULES_VER)
         set_meta_json(strategy.META_KEY_BUY, ["BP"])
         set_meta_json(strategy.META_KEY_SELL, ["ST"])
 
     def tearDown(self):
         _purge(CODE_OK, CODE_RISK, CODE_HIGH)
-        set_meta_json(strategy.META_KEY_BUY, ["BP"])
-        set_meta_json(strategy.META_KEY_SELL, ["ST"])
+        set_meta_json(strategy.RULES_VER_KEY, strategy.RULES_VER)
+        set_meta_json(strategy.META_KEY_BUY, list(strategy.DEFAULT_BUY_IDS))
+        set_meta_json(strategy.META_KEY_SELL, list(strategy.DEFAULT_SELL_IDS))
 
     def test_buy_and_sell_names_differ(self):
         buy_names = {p.name for p in strategy.BUY_PLANS.values() if p.id not in ("I", "J")}
@@ -166,6 +199,101 @@ class StrategyPointsTests(unittest.TestCase):
             self.assertEqual(src, "empty")
             self.assertTrue(note)
         self.assertEqual(intelpick.get_page("up")["items"], [])
+
+    def test_one_plan_enabled_not_recommended(self):
+        _seed(CODE_OK, name="潜力股")
+        _seed_half_kline(CODE_OK)
+        rows, src, note = strategy.collect_buy_points(8)
+        self.assertEqual(rows, [])
+        self.assertEqual(src, "empty")
+        self.assertIn("至少 2 个方案", note)
+        self.assertIn("观察池", note)
+
+    def test_single_plan_hit_not_recommended(self):
+        set_meta_json(strategy.META_KEY_BUY, ["BP", "BT", "BZ"])
+        _seed(CODE_OK, name="仅主升", ma_bull=0, pullback_shrink=0, pct=3.0, pos60=0.50)
+        _seed_half_kline(CODE_OK)
+        self.assertTrue(self._matches("buy", "BP", CODE_OK))
+        self.assertFalse(self._matches("buy", "BT", CODE_OK))
+        self.assertFalse(self._matches("buy", "BZ", CODE_OK))
+        rows, src, note = strategy.collect_buy_points(8)
+        self.assertNotIn(CODE_OK, {r["code"] for r in rows})
+        if not rows:
+            self.assertEqual(src, "empty")
+            self.assertIn("至少 2 个方案", note)
+
+    def test_multi_hit_with_half_kline_recommended(self):
+        set_meta_json(strategy.META_KEY_BUY, ["BP", "BT", "BZ"])
+        _seed(CODE_OK, name="潜力股", buy_index=99.5, macd_bar=9.5)
+        _seed_half_kline(CODE_OK)
+        self.assertTrue(self._matches("buy", "BP", CODE_OK))
+        self.assertTrue(self._matches("buy", "BT", CODE_OK))
+        rows, src, note = strategy.collect_buy_points(40)
+        codes = {r["code"] for r in rows}
+        self.assertIn(CODE_OK, codes)
+        self.assertEqual(src, "hit")
+        hit = next(r for r in rows if r["code"] == CODE_OK)
+        self.assertGreaterEqual(len(hit.get("plans") or []), 2)
+        self.assertGreaterEqual(hit.get("half_bars") or 0, 60)
+        self.assertIsNotNone(hit.get("half_pos"))
+        self.assertIsNotNone(hit.get("half_range_pct"))
+        self.assertIn("近半年", note)
+
+    def test_missing_kline_dropped(self):
+        set_meta_json(strategy.META_KEY_BUY, ["BP", "BT", "BZ"])
+        _seed(CODE_OK, name="潜力股")
+        self.assertTrue(self._matches("buy", "BP", CODE_OK))
+        self.assertTrue(self._matches("buy", "BT", CODE_OK))
+        rows, src, note = strategy.collect_buy_points(8)
+        self.assertNotIn(CODE_OK, {r["code"] for r in rows})
+        if not rows:
+            self.assertEqual(src, "empty")
+            self.assertIn("日K", note)
+
+    def test_no_invent_kline_from_pct(self):
+        set_meta_json(strategy.META_KEY_BUY, ["BP", "BT", "BZ"])
+        _seed(CODE_OK, name="潜力股", pct_d20=18, pct_d60=30)
+        rows, src, _note = strategy.collect_buy_points(8)
+        self.assertNotIn(CODE_OK, {r["code"] for r in rows})
+        stats = strategy.half_year_stats([CODE_OK])
+        self.assertNotIn(CODE_OK, stats)
+
+    def test_sell_multi_hit_with_half_kline(self):
+        set_meta_json(strategy.META_KEY_SELL, ["ST", "SO", "SR"])
+        _seed(CODE_HIGH, name="高位股", pos60=0.99, rsi14=92, bias20=18, sentiment=88, main_net_in=-200)
+        _seed_half_kline(CODE_HIGH, first=7.2, last=10.0, low=7.0, high=10.3)
+        self.assertTrue(self._matches("sell", "ST", CODE_HIGH))
+        self.assertTrue(self._matches("sell", "SO", CODE_HIGH))
+        rows, src, _note = strategy.collect_sell_points(40)
+        self.assertIn(CODE_HIGH, {r["code"] for r in rows})
+        self.assertEqual(src, "hit")
+        hit = next(r for r in rows if r["code"] == CODE_HIGH)
+        self.assertGreaterEqual(len(hit.get("plans") or []), 2)
+        self.assertGreaterEqual(hit.get("half_pos") or 0, 0.68)
+
+    def test_upgrade_old_single_default(self):
+        set_meta_json(strategy.META_KEY_BUY, ["BP"])
+        set_meta_json(strategy.META_KEY_SELL, ["ST"])
+        set_meta_json(strategy.RULES_VER_KEY, "13.0.30")
+        strategy.ensure_multi_plan_defaults()
+        self.assertEqual(strategy.get_enabled("buy"), ["BP", "BT", "BZ"])
+        self.assertEqual(strategy.get_enabled("sell"), ["ST", "SO", "SR"])
+
+    def test_upgrade_keeps_custom(self):
+        set_meta_json(strategy.META_KEY_BUY, ["BP", "BD"])
+        set_meta_json(strategy.META_KEY_SELL, ["ST", "SB"])
+        set_meta_json(strategy.RULES_VER_KEY, "13.0.30")
+        strategy.ensure_multi_plan_defaults()
+        self.assertEqual(strategy.get_enabled("buy"), ["BP", "BD"])
+        self.assertEqual(strategy.get_enabled("sell"), ["ST", "SB"])
+
+    def test_collect_hits_min_hits_keeps_single_for_engine(self):
+        _seed(CODE_OK, name="潜力股")
+        one = strategy.collect_hits("buy", enabled=["BP"], limit=80, min_hits=1)
+        two = strategy.collect_hits("buy", enabled=["BP"], limit=80, min_hits=2)
+        self.assertNotIn(CODE_OK, {r["code"] for r in two})
+        if any(r["code"] == CODE_OK for r in one):
+            self.assertEqual(len(next(r for r in one if r["code"] == CODE_OK)["plans"]), 1)
 
 
 if __name__ == "__main__":
