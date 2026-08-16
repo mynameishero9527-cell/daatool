@@ -10,6 +10,7 @@ from datetime import date
 
 from . import sina
 from .base import tracked_get
+from .sina import _HQ_HEADERS
 
 log = logging.getLogger("fx")
 
@@ -20,6 +21,10 @@ ECB_SOURCE = "欧洲央行"
 _TIME_RE = re.compile(r"^\d{1,2}:\d{2}(:\d{2})?$")
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _FRANKFURTER = "https://api.frankfurter.app/{start}..{end}?from=CNY&to={to}"
+_SINA_DAY_KLINE = (
+    "https://vip.stock.finance.sina.com.cn/forex/api/jsonp.php/var%20_=/"
+    "NewForexService.getDayKLine?symbol={symbol}"
+)
 _EM_ULIST = (
     "https://push2delay.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2"
     "&secids={secids}&fields=f2,f3,f4,f12,f14,f18"
@@ -190,6 +195,62 @@ def parse_frankfurter_cny_timeseries(payload: dict, currencies: list[str]) -> li
             })
     out.sort(key=lambda r: (r["pair"], r["trade_date"]))
     return out
+
+
+def parse_sina_fx_day_kline(text: str) -> list[dict]:
+    """新浪外汇日K。字段为 date,open,low,high,close；空包或 data is empty 返回 []。"""
+    raw = text or ""
+    if "data is empty" in raw:
+        return []
+    m = re.search(r'var _=\("([^"]*)"\)', raw)
+    if not m:
+        return []
+    out: list[dict] = []
+    for part in m.group(1).split("|"):
+        cols = [c.strip() for c in part.split(",")]
+        if len(cols) < 5 or not _looks_date(cols[0]):
+            continue
+        open_, low, high, close = _f(cols[1]), _f(cols[2]), _f(cols[3]), _f(cols[4])
+        if not _plausible_rate(close):
+            continue
+        if low is not None and high is not None and low > high:
+            low, high = high, low
+        out.append({
+            "trade_date": cols[0][:10],
+            "rate": close,
+            "open": open_,
+            "high": high,
+            "low": low,
+            "source": SINA_SOURCE,
+        })
+    return out
+
+
+def sina_kline_symbol(pair: str) -> str:
+    """日K符号为 fx_s + 货币对大写，如 fx_sUSDCNY。"""
+    p = (pair or "").strip().upper()
+    return f"fx_s{p}" if p else ""
+
+
+def fetch_sina_fx_history(pair: str, start: date | None = None, end: date | None = None) -> list[dict]:
+    """新浪人民币汇率日K（全历史回包后按区间过滤，不插值）。"""
+    symbol = sina_kline_symbol(pair)
+    if not symbol:
+        return []
+    resp = tracked_get(
+        SINA_SOURCE,
+        _SINA_DAY_KLINE.format(symbol=symbol),
+        headers=_HQ_HEADERS,
+        timeout=20.0,
+    )
+    rows = parse_sina_fx_day_kline(resp.text)
+    if start:
+        rows = [r for r in rows if r["trade_date"] >= start.isoformat()]
+    if end:
+        rows = [r for r in rows if r["trade_date"] <= end.isoformat()]
+    for r in rows:
+        r["pair"] = (pair or "").strip().upper()
+    return rows
 
 
 def fetch_frankfurter_range(start: date, end: date, currencies: list[str]) -> list[dict]:

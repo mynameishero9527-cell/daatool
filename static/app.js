@@ -4713,6 +4713,8 @@ let fxPair = "USDCNY";
 let fxPullStart = "";
 let fxPullEnd = "";
 let fxChart = null;
+let fxBusy = false;
+let fxLastPullMsg = "";
 window.etfGo = (p) => { etfPage = p; loadGlobal(); };
 $("#globalTabs").addEventListener("click", (e) => {
   const btn = e.target.closest(".opt");
@@ -4733,34 +4735,55 @@ function fxDigits(v) {
   return 7;
 }
 
+function fxIsoDay(dt) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`;
+}
+function fxDefaultRange() {
+  const now = new Date();
+  const yearAgo = new Date(now.getTime());
+  yearAgo.setFullYear(now.getFullYear() - 1);
+  return { start: fxIsoDay(yearAgo), end: fxIsoDay(now) };
+}
+function fxPullSummary(d) {
+  if (!d) return "";
+  if (!d.ok) return d.error || "拉取失败";
+  const bits = [
+    `本地 ${d.local_rows || 0} 条`,
+    `官方写入 ${d.official_written || 0}`,
+    `新浪补缺 ${d.market_written || 0}`,
+    `当日即时 ${d.live_written || 0}`,
+  ];
+  if (d.usdcny_days) bits.push(`美元/人民币 ${d.usdcny_days} 日（${d.usdcny_first || ""}～${d.usdcny_last || ""}）`);
+  if (d.latest_official) bits.push(`官方最新 ${d.latest_official}`);
+  if (d.latest_any && d.latest_any !== d.latest_official) bits.push(`行情最新 ${d.latest_any}`);
+  if (d.reason) bits.push(d.reason);
+  return bits.join(" · ");
+}
+
 async function loadFxPage() {
   const box = $("#globalContent");
   fxChart = disposeChart(fxChart);
-  const keepStart = $("#fxStart")?.value || fxPullStart;
-  const keepEnd = $("#fxEnd")?.value || fxPullEnd;
+  const def = fxDefaultRange();
+  const keepStart = $("#fxStart")?.value || fxPullStart || def.start;
+  const keepEnd = $("#fxEnd")?.value || fxPullEnd || def.end;
   try {
-    const d = await api("/api/fx");
-    const pad = (n) => String(n).padStart(2, "0");
-    const isoDay = (dt) => `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`;
-    const now = new Date();
-    const yearAgo = new Date(now.getTime());
-    yearAgo.setFullYear(now.getFullYear() - 1);
-    const startDef = keepStart || isoDay(yearAgo);
-    const endDef = keepEnd || isoDay(now);
+    const d = await api(`/api/fx?_=${Date.now()}`);
     const sch = d.schedule || {};
     box.innerHTML = `
       ${d.offline ? `<div class="offline-banner">${esc(d.reason || "即时汇率暂不可用，已回退本地日线")}</div>` : ""}
       <div class="card">
         <div class="card-title">各国汇率
-          <span class="muted">本地 ${d.local_rows || 0} 条 · 官方最新 ${esc(d.latest_official || "尚无")}</span>
+          <span class="muted" id="fxLocalMeta">本地 ${d.local_rows || 0} 条 · 官方最新 ${esc(d.latest_official || "尚无")}${d.latest_any && d.latest_any !== d.latest_official ? ` · 行情最新 ${esc(d.latest_any)}` : ""}</span>
         </div>
         <div class="cond-inline" style="margin-bottom:10px;gap:12px;flex-wrap:wrap">
           <span><span class="g-label muted">开始</span>
-            <input type="date" id="fxStart" value="${escAttr(startDef)}"></span>
+            <input type="date" id="fxStart" value="${escAttr(keepStart)}"></span>
           <span><span class="g-label muted">结束</span>
-            <input type="date" id="fxEnd" value="${escAttr(endDef)}"></span>
-          <button class="btn small" id="fxPullBtn">拉取区间</button>
-          <span class="muted" id="fxPullMsg"></span>
+            <input type="date" id="fxEnd" value="${escAttr(keepEnd)}"></span>
+          <button class="btn small" id="fxYearBtn">拉取近一年</button>
+          <button class="btn small ghost" id="fxPullBtn">拉取区间</button>
+          <span class="muted" id="fxPullMsg">${esc(fxLastPullMsg)}</span>
         </div>
         <div class="muted" style="margin-bottom:8px;font-size:calc(12px * var(--font-scale))">
           ${esc(sch.live || "")} ${esc(sch.official || "")} ${esc(sch.manual || "")} ${esc(d.disclaimer || "")}
@@ -4770,6 +4793,9 @@ async function loadFxPage() {
           <th>来源</th><th>时间</th><th>本地日线</th>
         </tr></thead><tbody>${(d.items || []).map((r) => {
           const dig = r.digits || fxDigits(r.rate);
+          const days = r.local_days ? `${r.local_days}日` : "";
+          const span = r.local_first && r.local_date && r.local_first !== r.local_date
+            ? `${r.local_first}～` : "";
           return `<tr data-pair="${escAttr(r.pair)}" class="${r.pair === fxPair ? "score-55" : ""}" style="cursor:pointer">
             <td><b>${esc(r.pair)}</b> <span class="muted">${esc(r.name)}</span></td>
             <td>${esc(r.country)}</td>
@@ -4778,10 +4804,10 @@ async function loadFxPage() {
             <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
             <td>${esc(r.source || "-")}${r.official ? "" : ' <span class="muted">非官方</span>'}</td>
             <td>${esc(r.time || "-")}</td>
-            <td class="num">${r.local_date ? `${esc(r.local_date)} ${fmt(r.local_rate, dig)}` : "-"}</td>
+            <td class="num">${r.local_date ? `${days} ${span}${esc(r.local_date)} ${fmt(r.local_rate, dig)}` : "-"}</td>
           </tr>`;
         }).join("")}</tbody></table>
-        <div class="muted" style="margin-top:6px">点击行查看本地已保存走势。小币种报价为 1 外币兑人民币，不用 100 日元等柜台习惯换算。</div>
+        <div class="muted" style="margin-top:6px">点击行查看本地已保存走势。本地日线列显示已落库天数；小币种为 1 外币兑人民币。</div>
       </div>
       <div class="card">
         <div class="card-title" id="fxChartTitle">汇率走势</div>
@@ -4798,7 +4824,8 @@ async function loadFxPage() {
     });
     $("#fxStart")?.addEventListener("change", () => { fxPullStart = $("#fxStart").value; });
     $("#fxEnd")?.addEventListener("change", () => { fxPullEnd = $("#fxEnd").value; });
-    $("#fxPullBtn")?.addEventListener("click", pullFxRange);
+    $("#fxPullBtn")?.addEventListener("click", () => pullFxRange(false));
+    $("#fxYearBtn")?.addEventListener("click", () => pullFxRange(true));
     await loadFxHistory(fxPair);
   } catch (err) {
     box.innerHTML = '<div class="empty">汇率加载失败</div>';
@@ -4806,45 +4833,65 @@ async function loadFxPage() {
   }
 }
 
-async function pullFxRange() {
-  const start = $("#fxStart")?.value || "";
-  const end = $("#fxEnd")?.value || "";
+async function pullFxRange(yearPreset) {
+  if (fxBusy) return;
+  const def = fxDefaultRange();
+  if (yearPreset) {
+    fxPullStart = def.start;
+    fxPullEnd = def.end;
+    if ($("#fxStart")) $("#fxStart").value = def.start;
+    if ($("#fxEnd")) $("#fxEnd").value = def.end;
+  }
+  const start = $("#fxStart")?.value || fxPullStart || "";
+  const end = $("#fxEnd")?.value || fxPullEnd || "";
   fxPullStart = start;
   fxPullEnd = end;
   const msg = $("#fxPullMsg");
-  if (msg) msg.textContent = "正在向欧洲央行拉取…";
+  fxBusy = true;
+  fxLastPullMsg = yearPreset ? "正在拉取近一年人民币汇率（欧洲央行+新浪日K）…" : "正在按区间拉取人民币汇率…";
+  if (msg) msg.textContent = fxLastPullMsg;
   try {
+    const body = yearPreset ? { preset: "year" } : { start, end };
     const d = await api("/api/fx/pull", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ start, end }),
+      body: JSON.stringify(body),
     });
+    fxLastPullMsg = fxPullSummary(d);
     if (!d.ok) {
-      if (msg) msg.textContent = d.error || "拉取失败";
+      if (msg) msg.textContent = fxLastPullMsg;
       return;
     }
-    if (msg) msg.textContent = `写入 ${d.written || 0} 条 · ${d.days || 0} 个官方日${d.reason ? " · " + d.reason : ""}`;
     await loadFxPage();
     const after = $("#fxPullMsg");
-    if (after) after.textContent = `写入 ${d.written || 0} 条 · ${d.days || 0} 个官方日`;
+    if (after) after.textContent = fxLastPullMsg;
   } catch (err) {
-    if (msg) msg.textContent = "拉取失败";
+    fxLastPullMsg = "拉取失败，请稍后重试";
+    if (msg) msg.textContent = fxLastPullMsg;
     console.warn(err);
+  } finally {
+    fxBusy = false;
   }
 }
 
 async function loadFxHistory(pair) {
-  const start = $("#fxStart")?.value || fxPullStart || "";
-  const end = $("#fxEnd")?.value || fxPullEnd || "";
+  const def = fxDefaultRange();
+  const start = $("#fxStart")?.value || fxPullStart || def.start;
+  const end = $("#fxEnd")?.value || fxPullEnd || def.end;
   const title = $("#fxChartTitle");
   const note = $("#fxChartNote");
   const el = $("#fxChart");
   if (!el) return;
   try {
-    const q = new URLSearchParams({ pair: pair || fxPair, start, end });
+    const q = new URLSearchParams({ pair: pair || fxPair, start, end, _: String(Date.now()) });
     const d = await api(`/api/fx/history?${q}`);
-    if (title) title.textContent = `${d.pair || pair} ${d.name || ""} · ${d.unit || ""}`;
-    if (note) note.textContent = d.empty_reason || d.disclaimer || "";
+    const n = (d.items || []).length;
+    if (title) title.textContent = `${d.pair || pair} ${d.name || ""} · ${d.unit || ""} · ${n} 个交易日`;
+    if (note) {
+      note.textContent = n
+        ? `${d.start || start}～${d.end || end} 已落库 ${n} 日。${d.disclaimer || ""}`
+        : (d.empty_reason || d.disclaimer || "");
+    }
     const dates = (d.items || []).map((r) => r.trade_date);
     const vals = (d.items || []).map((r) => r.rate);
     fxChart = disposeChart(fxChart);
@@ -4872,6 +4919,8 @@ async function loadGlobal() {
   const box = $("#globalContent");
   try {
     if (globalSub === "fx") {
+      if (fxBusy) return;
+      if ($("#fxTable")) return;
       await loadFxPage();
       return;
     }

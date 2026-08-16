@@ -328,6 +328,7 @@ CREATE TABLE IF NOT EXISTS stock_ai_brief (
 -- 13.0.23：方案 I/J、周线门、factor_daily 技术因子回放、本地模拟账本
 -- 13.0.24：黄历九宫补时辰吉凶、奇门遁甲、紫微流日示意、节气与节假日倒计时
 -- 13.0.25：全球指数下各国汇率；官方日线只落欧洲央行已公布点，不插值、不拿在岸冒充离岸
+-- 13.0.26：手动拉取近一年同时写新浪人民币日K补缺，已有官方价不覆盖；拉取后回写本地天数
 -- intel_item_ai / hot_term_ai 表结构不变，失败仍不覆盖已保存结果
 
 CREATE TABLE IF NOT EXISTS knowledge_ai (

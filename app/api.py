@@ -452,10 +452,15 @@ def fx_history(pair: str, start: str = "", end: str = ""):
 
 
 @router.post("/fx/pull")
-def fx_pull(payload: dict | None = Body(default=None)):
-    """按日期区间向欧洲央行补官方日线，单次最多 400 天。"""
+def fx_pull(payload: dict | None = Body(default=None),
+            start: str = "", end: str = "", preset: str = ""):
+    """按日期区间拉取人民币汇率：欧洲央行定盘 + 新浪日K补缺，单次最多 400 天。"""
     body = payload or {}
-    return fx.pull_range(str(body.get("start") or ""), str(body.get("end") or ""))
+    return fx.pull_range(
+        str(body.get("start") or start or ""),
+        str(body.get("end") or end or ""),
+        str(body.get("preset") or preset or ""),
+    )
 
 
 # ---------------- 个股推荐 ----------------

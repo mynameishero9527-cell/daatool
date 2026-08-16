@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, time as dtime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -58,14 +59,14 @@ SCHEDULE = {
     "live": "每 5 分钟拉一次新浪/东财即时价（外汇约北京时间周日 22:00 至周五 22:00；周末无新价不编造）",
     "official": "每个工作日 23:30（北京时间）写入欧洲央行参考价，对应约欧洲中部时间 16:00 公布的当日定盘",
     "year": "每周日 03:50 回补近一年缺口；首次启动若本地为空会自动拉近 365 天",
-    "manual": "支持按日期区间手动拉取，单次最多 400 天；只写入官方已公布的交易日",
-    "retain": "本地保留约 400 个自然日，更早的官方日线会清理",
+    "manual": "「拉取近一年」或按日期区间：先写欧洲央行定盘，再用新浪人民币日K补缺口；已有官方价不被行情覆盖",
+    "retain": "本地保留约 400 个自然日，更早的日线会清理",
 }
 
 DISCLAIMER = (
     "官方日线来自欧洲央行参考价（Frankfurter 转发），不是银行买卖价或中间价。"
-    "周末与欧央行假日无点，不插值。离岸人民币仅各大行情平台即时价，不用在岸价冒充。"
-    "汇率仅供对照，不构成投资建议。"
+    "周末与欧央行假日无官方点，不插值；可用新浪已公布的人民币日K补缺。"
+    "离岸人民币不用在岸价冒充。汇率仅供对照，不构成投资建议。"
 )
 
 
@@ -154,6 +155,14 @@ def _local_latest() -> dict[str, dict]:
     return {r["pair"]: r for r in rows}
 
 
+def _pair_stats() -> dict[str, dict]:
+    rows = query(
+        """SELECT pair, COUNT(*) AS n, MIN(trade_date) AS first, MAX(trade_date) AS last
+           FROM fx_daily GROUP BY pair"""
+    )
+    return {r["pair"]: r for r in rows}
+
+
 def _upsert_official(rows: list[dict]) -> int:
     """只写入真实官方点。已有欧洲央行价不被即时源覆盖。"""
     if not rows:
@@ -190,6 +199,42 @@ def _upsert_official(rows: list[dict]) -> int:
     return len(batch)
 
 
+def _upsert_market(rows: list[dict]) -> int:
+    """行情日K补缺：已有欧洲央行价的日期不覆盖。"""
+    if not rows:
+        return 0
+    existing = {
+        (r["pair"], r["trade_date"]): r["source"]
+        for r in query("SELECT pair, trade_date, source FROM fx_daily")
+    }
+    batch = []
+    for r in rows:
+        pair = r.get("pair")
+        day = r.get("trade_date")
+        rate = r.get("rate")
+        source = r.get("source") or fx_src.SINA_SOURCE
+        if not pair or not day or rate is None:
+            continue
+        if source == fx_src.ECB_SOURCE:
+            continue
+        prev_src = existing.get((pair, day))
+        if prev_src == fx_src.ECB_SOURCE:
+            continue
+        batch.append((pair, day, float(rate), source))
+        existing[(pair, day)] = source
+    if not batch:
+        return 0
+    executemany(
+        """INSERT INTO fx_daily(pair, trade_date, rate, source)
+           VALUES(?,?,?,?)
+           ON CONFLICT(pair, trade_date) DO UPDATE SET
+             rate=excluded.rate, source=excluded.source
+           WHERE fx_daily.source != '欧洲央行'""",
+        batch,
+    )
+    return len(batch)
+
+
 def persist_cnh_snapshot(quotes: dict[str, dict], day: date | None = None) -> int:
     """离岸人民币只在拿到真实即时价时记当日点，不用 USDCNY 冒充。"""
     q = quotes.get("USDCNH") or {}
@@ -206,6 +251,63 @@ def persist_cnh_snapshot(quotes: dict[str, dict], day: date | None = None) -> in
         ("USDCNH", trade_date, float(rate), source),
     )
     return 1
+
+
+def persist_live_daily(quotes: dict[str, dict], day: date | None = None) -> int:
+    """把当日真实即时价记为行情日点（周末无官方定盘时本地日线才能更新）。"""
+    if not quotes:
+        return 0
+    trade_date = (day or _today()).isoformat()
+    rows = []
+    for pair, q in quotes.items():
+        if not q or q.get("rate") is None or not q.get("source"):
+            continue
+        if q.get("source") == fx_src.ECB_SOURCE:
+            continue
+        rows.append({
+            "pair": pair,
+            "trade_date": trade_date,
+            "rate": q["rate"],
+            "source": q["source"],
+        })
+    n = _upsert_market(rows)
+    if n:
+        cache.delete("fx:live")
+    return n
+
+
+def persist_sina_history(start: date, end: date) -> dict:
+    """按目录逐对拉新浪人民币日K，只补官方空缺日。"""
+    pairs = [row[0] for row in FX_CATALOG]
+    written = 0
+    fetched = 0
+    errors: list[str] = []
+
+    def one(pair: str) -> tuple[str, list[dict], str]:
+        try:
+            rows = fx_src.fetch_sina_fx_history(pair, start, end)
+            return pair, rows, ""
+        except Exception as exc:  # noqa: BLE001
+            return pair, [], str(exc)[:120]
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futs = [pool.submit(one, p) for p in pairs]
+        for fut in as_completed(futs):
+            pair, rows, err = fut.result()
+            fetched += len(rows)
+            if err:
+                errors.append(f"{pair}:{err}")
+                log.warning("新浪汇率日K失败 %s: %s", pair, err)
+                continue
+            written += _upsert_market(rows)
+    if written:
+        cache.delete("fx:live")
+    return {
+        "written": written,
+        "fetched": fetched,
+        "errors": errors[:8],
+        "source": fx_src.SINA_SOURCE,
+    }
 
 
 def prune_old(keep_days: int = KEEP_DAYS) -> int:
@@ -238,17 +340,56 @@ def persist_official_range(start: date, end: date) -> dict:
     }
 
 
-def pull_range(start: str = "", end: str = "") -> dict:
+def pull_range(start: str = "", end: str = "", preset: str = "") -> dict:
+    if (preset or "").strip().lower() == "year":
+        start, end = "", ""
     rng, err = resolve_range(start, end)
     if rng is None:
-        return {"ok": False, "error": err, "written": 0}
+        return {"ok": False, "error": err, "written": 0, "official_written": 0, "market_written": 0}
     s, e = rng
-    out = persist_official_range(s, e)
+    official = persist_official_range(s, e)
+    market = persist_sina_history(s, e)
     live = _fetch_live()
-    cnh = persist_cnh_snapshot(live, e) if e >= _today() else 0
-    out["cnh_written"] = cnh
-    out["disclaimer"] = DISCLAIMER
-    return out
+    live_n = persist_live_daily(live, e) if e >= _today() else 0
+    prune_old()
+    cache.delete("fx:live")
+    stats = _pair_stats()
+    latest_any = query("SELECT MAX(trade_date) AS d FROM fx_daily")
+    latest_off = query("SELECT MAX(trade_date) AS d FROM fx_daily WHERE source=?", (fx_src.ECB_SOURCE,))
+    local_n = query("SELECT COUNT(*) AS n FROM fx_daily")
+    official_n = official.get("written") or 0
+    market_n = market.get("written") or 0
+    written = official_n + market_n + live_n
+    ok = bool(official.get("ok") or market_n or live_n)
+    reason = official.get("reason") or official.get("error") or ""
+    if not official.get("ok") and (market_n or live_n):
+        reason = (official.get("error") or "欧洲央行暂不可用") + "；已用新浪人民币日K/即时价补本地"
+    elif official.get("ok") and market_n == 0 and live_n == 0 and official_n:
+        reason = reason or "官方区间已在本地，无新缺口"
+    usd = stats.get("USDCNY") or {}
+    return {
+        "ok": ok,
+        "error": "" if ok else (official.get("error") or err or "拉取失败"),
+        "written": written,
+        "official_written": official_n,
+        "market_written": market_n,
+        "live_written": live_n,
+        "days": official.get("days") or 0,
+        "start": s.isoformat(),
+        "end": e.isoformat(),
+        "source": "欧洲央行+新浪财经",
+        "reason": reason,
+        "local_rows": local_n[0]["n"] if local_n else 0,
+        "latest_official": (latest_off[0]["d"] if latest_off else None),
+        "latest_any": (latest_any[0]["d"] if latest_any else None),
+        "usdcny_days": usd.get("n") or 0,
+        "usdcny_first": usd.get("first"),
+        "usdcny_last": usd.get("last"),
+        "pairs": {p: {"days": st["n"], "first": st["first"], "last": st["last"]} for p, st in stats.items()},
+        "market_errors": market.get("errors") or [],
+        "disclaimer": DISCLAIMER,
+        "cnh_written": live_n,
+    }
 
 
 def ensure_year_history() -> dict:
@@ -269,10 +410,8 @@ def ensure_year_history() -> dict:
             stale = True
     if n >= 200 and pairs >= 10 and not stale:
         return {"ok": True, "skipped": True, "local_rows": n, "pairs": pairs}
-    end = _today()
-    start = end - timedelta(days=DEFAULT_HISTORY_DAYS)
-    log.info("回补近一年官方汇率 %s..%s（本地 %s 条/%s 币种）", start, end, n, pairs)
-    return persist_official_range(start, end)
+    log.info("回补近一年人民币汇率（本地 %s 条/%s 币种）", n, pairs)
+    return pull_range(preset="year")
 
 
 def persist_recent_official(days: int = 14) -> dict:
@@ -328,7 +467,7 @@ def _scale_em_quote(pair: str, quote: dict) -> dict:
 def refresh_live() -> dict[str, dict]:
     data = _fetch_live()
     if data:
-        persist_cnh_snapshot(data)
+        persist_live_daily(data)
     cache.delete("fx:live")
     return data
 
@@ -382,15 +521,30 @@ def get_snapshot() -> dict:
         }
 
     payload = cached("fx:live", TTL_FX, loader)
+    items = [dict(x) for x in (payload.get("items") or [])]
+    stats = _pair_stats()
+    local = _local_latest()
+    for it in items:
+        st = stats.get(it["pair"]) or {}
+        loc = local.get(it["pair"]) or {}
+        it["local_days"] = st.get("n") or 0
+        it["local_first"] = st.get("first")
+        if loc:
+            it["local_date"] = loc.get("trade_date")
+            it["local_rate"] = loc.get("rate")
+            it["local_source"] = loc.get("source")
     local_n = query("SELECT COUNT(*) AS n FROM fx_daily")
     latest = query("SELECT MAX(trade_date) AS d FROM fx_daily WHERE source=?", (fx_src.ECB_SOURCE,))
+    latest_any = query("SELECT MAX(trade_date) AS d FROM fx_daily")
     return {
         **payload,
+        "items": items,
         "catalog": catalog_public(),
         "schedule": SCHEDULE,
         "disclaimer": DISCLAIMER,
         "local_rows": local_n[0]["n"] if local_n else 0,
         "latest_official": (latest[0]["d"] if latest else None),
+        "latest_any": (latest_any[0]["d"] if latest_any else None),
         "keep_days": KEEP_DAYS,
         "max_pull_days": MAX_PULL_DAYS,
     }
@@ -412,7 +566,7 @@ def get_history(pair: str, start: str = "", end: str = "") -> dict:
     )
     reason = ""
     if not rows:
-        reason = "本地该区间无点。周末/假日欧洲央行不公布；可点「拉取区间」向官方源补数，不会插值编造"
+        reason = "本地该区间无点。周末/假日欧洲央行不公布；可点「拉取近一年」用官方定盘+新浪人民币日K补数，不会插值编造"
     return {
         "ok": True,
         "pair": meta[0],
@@ -436,15 +590,16 @@ def job_snapshot() -> dict:
 
 def job_daily() -> dict:
     out = persist_recent_official(14)
+    end = _today()
+    market = persist_sina_history(end - timedelta(days=14), end)
     live = _fetch_live()
-    out["cnh_written"] = persist_cnh_snapshot(live)
+    out["market_written"] = market.get("written") or 0
+    out["live_written"] = persist_live_daily(live)
     return out
 
 
 def job_year() -> dict:
-    end = _today()
-    start = end - timedelta(days=DEFAULT_HISTORY_DAYS)
-    return persist_official_range(start, end)
+    return pull_range(preset="year")
 
 
 def fx_session_open(now: datetime | None = None) -> bool:

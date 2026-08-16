@@ -1,4 +1,4 @@
-"""13.0.25：各国汇率解析与落库。不插值周末，不拿在岸价冒充离岸。"""
+"""13.0.25/13.0.26：各国汇率解析与落库。不插值周末，不拿在岸价冒充离岸。"""
 from __future__ import annotations
 
 import unittest
@@ -69,6 +69,23 @@ class FxParseTests(unittest.TestCase):
         self.assertEqual(usd["source"], "欧洲央行")
         self.assertEqual(fx_src.parse_frankfurter_cny_timeseries({}, ["USD"]), [])
         self.assertEqual(fx_src.parse_frankfurter_cny_timeseries({"rates": None}, ["USD"]), [])
+
+    def test_sina_kline_empty_not_invented(self):
+        self.assertEqual(fx_src.parse_sina_fx_day_kline(""), [])
+        self.assertEqual(fx_src.parse_sina_fx_day_kline('var _=({"msg":"data is empty"});'), [])
+        self.assertEqual(fx_src.sina_kline_symbol("usdCny"), "fx_sUSDCNY")
+
+    def test_sina_kline_ohlc_close(self):
+        text = (
+            '/*x*/ var _=("2026-08-13,6.7436,6.7313,6.7501,6.7501,'
+            '|2026-08-14,6.7434,6.7301,6.7472,6.7463,");'
+        )
+        rows = fx_src.parse_sina_fx_day_kline(text)
+        self.assertEqual([r["trade_date"] for r in rows], ["2026-08-13", "2026-08-14"])
+        self.assertAlmostEqual(rows[1]["rate"], 6.7463)
+        self.assertAlmostEqual(rows[1]["low"], 6.7301)
+        self.assertAlmostEqual(rows[1]["high"], 6.7472)
+        self.assertEqual(rows[1]["source"], "新浪财经")
 
 
 # 落在保留窗口内，避免被 prune_old(400) 清掉；周末 07-11/12 用来确认不插值
@@ -193,6 +210,36 @@ class FxPersistTests(unittest.TestCase):
         self.assertTrue(fx_svc.fx_session_open(sun_night))
         self.assertFalse(fx_svc.fx_session_open(fri_late))
         self.assertTrue(fx_svc.fx_session_open(wed))
+
+    def test_market_fills_gap_not_ecb(self):
+        fx_svc._upsert_official([
+            {"pair": "USDCNY", "trade_date": "2026-07-06", "rate": 7.15, "source": "欧洲央行"},
+        ])
+        n = fx_svc._upsert_market([
+            {"pair": "USDCNY", "trade_date": "2026-07-06", "rate": 9.99, "source": "新浪财经"},
+            {"pair": "USDCNY", "trade_date": "2026-07-07", "rate": 7.16, "source": "新浪财经"},
+        ])
+        self.assertEqual(n, 1)
+        keep = query("SELECT rate, source FROM fx_daily WHERE pair='USDCNY' AND trade_date='2026-07-06'")[0]
+        self.assertAlmostEqual(keep["rate"], 7.15)
+        self.assertEqual(keep["source"], "欧洲央行")
+        fill = query("SELECT rate, source FROM fx_daily WHERE pair='USDCNY' AND trade_date='2026-07-07'")[0]
+        self.assertAlmostEqual(fill["rate"], 7.16)
+        self.assertEqual(fill["source"], "新浪财经")
+
+    def test_pull_year_uses_market_when_official_stale(self):
+        with patch.object(fx_svc, "persist_official_range", return_value={
+            "ok": True, "written": 0, "days": 0, "reason": "已有官方点",
+        }), patch.object(fx_svc, "persist_sina_history", return_value={
+            "written": 12, "fetched": 12, "errors": [],
+        }), patch.object(fx_svc, "_fetch_live", return_value={
+            "USDCNY": {"rate": 6.73, "source": "新浪财经"},
+        }), patch.object(fx_svc, "persist_live_daily", return_value=1):
+            out = fx_svc.pull_range(preset="year")
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["market_written"], 12)
+        self.assertEqual(out["live_written"], 1)
+        self.assertGreaterEqual(out["written"], 13)
 
     def test_intelpick_still_empty(self):
         up = intelpick.get_page("up")
