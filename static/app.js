@@ -631,14 +631,15 @@ function renderAlmanacPickTable(stocks) {
   if (!stocks || !stocks.length) return "";
   return `<table><thead><tr>
     <th>名称</th><th>代码</th><th>现价</th><th>行业</th><th>五行</th>
-    <th>涨跌幅</th><th>购买指数</th><th>综合评分</th><th>策略</th>
+    <th>财报</th><th>涨跌幅</th><th>购买指数</th><th>综合评分</th><th>策略</th>
   </tr></thead><tbody>${stocks.map((r) => `
     <tr data-code="${r.code}" data-name="${esc(r.name)}" onclick="openStock('${r.code}','${esc(r.name)}')">
-      <td>${esc(r.name)}</td>
+      <td>${esc(r.name)}${r.from_yao ? '<span class="muted"> 爻号</span>' : ""}</td>
       <td class="muted">${esc(r.code)}</td>
       <td class="num">${r.price == null ? "-" : pxHtml(r.price, r.pct)}</td>
       <td class="muted">${esc(r.industry || "-")}</td>
       <td>${wxBadges(r.wuxing)}${(r.wx_state || []).length ? ` <span class="muted">${esc((r.wx_state || []).join(" "))}</span>` : ""}</td>
+      <td>${esc(r.finance_grade || "—")}</td>
       <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
       <td class="num">${r.buy_index != null ? fmt(r.buy_index, 0) : "-"}</td>
       <td class="num"><b>${r.score != null ? fmt(r.score, 1) : "-"}</b></td>
@@ -659,7 +660,11 @@ function renderDivineBox(d) {
     <div class="gua-board">${lines}</div>
     <div class="kv"><span class="k">本卦</span><span><b>${ben.num || ""} ${esc(ben.name || "")}</b>　${esc(ben.brief || "")}</span></div>
     ${bian ? `<div class="kv"><span class="k">变卦</span><span><b>${bian.num || ""} ${esc(bian.name || "")}</b>　${esc(bian.brief || "")}</span></div>` : '<div class="muted">无动爻，不变卦</div>'}
-    <div class="muted">爻数 ${esc((d.yao_digits || []).join(""))} · 钱数 ${esc((d.bit_digits || []).join(""))} · 排列 ${d.candidate_count || 0} 个号码 · 本地匹配 ${d.matched_count || 0} 只 · 未匹配不显示</div>
+    <div class="muted">本卦/变卦五行 ${esc((d.gua_wuxing || []).join("、") || "—")}
+      · 热门板块 ${esc((d.hot_industries || []).join("、") || "无")}
+      · 财报 ${esc((d.good_grades || ["A", "B"]).join("/"))}
+      · 综合评分≥${d.min_score || 65}</div>
+    <div class="muted">爻数 ${esc((d.yao_digits || []).join(""))} · 钱数 ${esc((d.bit_digits || []).join(""))} · 排列 ${d.candidate_count || 0} 个号码 · 号码对照 ${d.digit_matched_count || 0} 只 · 展示 ${d.matched_count || 0} 只 · 未评级不伪造</div>
     ${stocks.length ? renderAlmanacPickTable(stocks) : `<div class="empty">${esc(d.empty_reason || "无匹配个股")}</div>`}
     <div class="muted" style="font-size:calc(11px * var(--font-scale));margin-top:4px">${esc(d.note || "")}</div>`;
 }
@@ -833,12 +838,12 @@ async function loadDashAlmanac(forceDate) {
         <div id="almanacLiuren"></div>
       </div>
       <div class="almanac-block">
-        <div class="card-title" style="margin:10px 0 6px">卜卦与奇门预测 <span class="muted">民俗推算 · 个股只显示本地已匹配</span></div>
+        <div class="card-title" style="margin:10px 0 6px">卜卦与奇门预测 <span class="muted">民俗推算 · 卦象五行对热门板块 · 财报好+高分</span></div>
         <div class="almanac-actions">
           <button type="button" class="btn small" id="almanacDivineBtn">易经卜卦</button>
           <button type="button" class="btn small" id="almanacQimenPickBtn">奇门遁甲预测</button>
         </div>
-        <div id="almanacDivineBox" class="muted" style="margin-top:8px">点「易经卜卦」用三钱法连卜六次；号码对不上本地代码则不显示个股。</div>
+        <div id="almanacDivineBox" class="muted" style="margin-top:8px">点「易经卜卦」用三钱法连卜六次；按卦象五行匹配当前热门板块中财报评级好、综合评分较高的本地个股，号码对不上或不达标的不显示。</div>
         <div id="almanacQimenPickBox" class="muted" style="margin-top:8px">点「奇门遁甲预测」按当前时辰起盘，旺相五行加高分策略最多推荐 50 只。</div>
       </div>
       <div class="almanac-block cal-box">

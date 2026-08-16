@@ -1,7 +1,8 @@
 """易经八卦与六爻卜卦（民俗推算）。
 
 日课用梅花易数：上卦取年+月+日，下卦再加时辰，动爻取总和。
-卜卦按钮用三钱法连卜六次，六爻数字做排列后只匹配本地已有代码。
+卜卦按钮用三钱法连卜六次：卦象推五行，再匹配当前热门板块里
+财报评级好、综合评分较高的本地个股。号码对照只作对照，不编造代码。
 不是官方周易断事，不构成投资建议。
 """
 from __future__ import annotations
@@ -94,6 +95,11 @@ HEX_BY_TRI = {(u, l): {"num": n, "name": name, "upper": u, "lower": l, "brief": 
 YAO_NAME = {6: "老阴", 7: "少阳", 8: "少阴", 9: "老阳"}
 
 NOTE = "易经为民俗文化参考，卦辞是简述不是官方断语，不构成投资建议。"
+HOT_MIN = 5.0
+MIN_SCORE = 65.0
+GOOD_GRADES = ("A", "B")
+STOCK_LIMIT = 30
+_POOL = 400
 
 
 def _mei_tri(n: int) -> str:
@@ -247,6 +253,137 @@ def match_stock_codes(digits_list: list[str]) -> list[dict]:
     return out
 
 
+def gua_elements(gua: dict | None) -> list[str]:
+    """本卦/变卦上下卦推五行，去重保序。"""
+    from .wuxing import WUXING
+    els: list[str] = []
+    gua = gua or {}
+    for key in ("upper_wx", "lower_wx"):
+        w = gua.get(key)
+        if w in WUXING and w not in els:
+            els.append(w)
+    for pack in (gua.get("ben"), gua.get("bian")):
+        if not isinstance(pack, dict):
+            continue
+        for tri in (pack.get("upper"), pack.get("lower")):
+            w = TRI_WX.get(tri or "")
+            if w in WUXING and w not in els:
+                els.append(w)
+    return els
+
+
+def industry_heat_map() -> dict:
+    from . import sector
+    return sector.industry_heat_map()
+
+
+def _load_board_rows(industries: list[str]) -> list[dict]:
+    if not industries:
+        return []
+    ph = ",".join("?" * len(industries))
+    return query(
+        f"SELECT s.*, l.industry, m.buy_index, m.sentiment AS senti, "
+        f"m.dark_power, m.stabilize_score "
+        f"FROM stock_snapshot s "
+        f"JOIN stock_list l ON l.code=s.code "
+        f"LEFT JOIN stock_metrics m ON m.code=s.code "
+        f"WHERE s.price IS NOT NULL AND s.pct IS NOT NULL "
+        f"AND s.name NOT LIKE '%ST%' AND s.name NOT LIKE '%退%' "
+        f"AND l.industry IN ({ph}) "
+        f"ORDER BY COALESCE(m.buy_index, 50) DESC, COALESCE(s.pct_d5, 0) DESC "
+        f"LIMIT {_POOL}",
+        tuple(industries),
+    ) or []
+
+
+def pick_quality_stocks(
+    gua: dict,
+    digit_rows: list[dict] | None = None,
+    *,
+    backfill: bool = True,
+) -> dict:
+    """卦象五行 → 当前热门板块 → 财报 A/B + 综合评分较高。不编造个股，未评级不伪造 A。"""
+    from . import finance as finance_svc
+    from . import rating
+    from . import wuxing
+
+    elements = gua_elements(gua)
+    wx_inds = wuxing.industries_for(elements)
+    heat = industry_heat_map()
+    hot_inds = [i for i in wx_inds if (heat.get(i) or -999) >= HOT_MIN]
+    yao_codes = {r.get("code") for r in (digit_rows or []) if r.get("code")}
+    context = {
+        "gua_wuxing": elements,
+        "wx_industries": wx_inds,
+        "hot_industries": hot_inds,
+        "hot_min": HOT_MIN,
+        "min_score": MIN_SCORE,
+        "good_grades": list(GOOD_GRADES),
+    }
+    if not elements:
+        return {**context, "stocks": [], "empty_reason": "卦象未能推出五行，不编造个股。"}
+    if not wx_inds:
+        return {**context, "stocks": [], "empty_reason": "卦象五行没有对应到本地行业词表，不编造板块个股。"}
+    if not hot_inds:
+        return {
+            **context, "stocks": [],
+            "empty_reason": (
+                f"卦象五行{'、'.join(elements)}对应的行业里，当前没有热度≥{HOT_MIN:.0f}的热门板块，"
+                "不拿冷门板块凑数。"
+            ),
+        }
+    rows = _load_board_rows(hot_inds)
+    wuxing.tags_for_list(rows)
+    finance_svc.attach_grades(rows)
+    favor = set(elements)
+    picked = []
+    for r in rows:
+        tags = [t for t in (r.get("wuxing") or []) if t in wuxing.WUXING]
+        if not favor.intersection(tags):
+            continue
+        grade = (r.get("finance_grade") or "").strip()
+        if grade not in GOOD_GRADES:
+            continue
+        score, advice = rating.quick_score(r)
+        if score < MIN_SCORE or advice == "减持":
+            continue
+        picked.append({
+            "code": r["code"],
+            "name": r.get("name") or "",
+            "industry": r.get("industry") or "",
+            "price": r.get("price"),
+            "pct": r.get("pct"),
+            "volume_ratio": r.get("volume_ratio"),
+            "buy_index": r.get("buy_index"),
+            "main_net_in": r.get("main_net_in"),
+            "wuxing": tags,
+            "finance_grade": grade,
+            "score": score,
+            "advice": advice,
+            "from_yao": r["code"] in yao_codes,
+            "sector_hot": heat.get(r.get("industry") or ""),
+            "digits": (r["code"][2:] if len(r.get("code") or "") >= 8 else r.get("code") or ""),
+        })
+    picked.sort(key=lambda x: (
+        0 if x["from_yao"] else 1,
+        0 if x["finance_grade"] == "A" else 1,
+        -(x["score"] or 0),
+        -(x["buy_index"] or 0),
+    ))
+    stocks = picked[:STOCK_LIMIT]
+    if backfill and stocks:
+        from . import kline as kline_svc
+        kline_svc.backfill_daily_real([s["code"] for s in stocks], count=180, limit=min(16, len(stocks)))
+    empty = ""
+    if not stocks:
+        empty = (
+            f"卦象五行{'、'.join(elements)}的热门板块（{'、'.join(hot_inds)}）里，"
+            f"没有同时达到财报评级 {'/'.join(GOOD_GRADES)}、综合评分≥{MIN_SCORE:.0f} 且策略非减持的个股。"
+            "未评级不显示、不伪造 A。"
+        )
+    return {**context, "stocks": stocks, "empty_reason": empty}
+
+
 def for_datetime(d: date, hour: int) -> dict:
     """梅花易数日课：有农历用农历年，否则只用公历年月日，不猜农历。"""
     lunar = solar_to_lunar(d)
@@ -291,10 +428,18 @@ def plates_for_day(d: date) -> list[dict]:
     return [for_datetime(d, h) for h in hours]
 
 
-def result_from_yaos(yaos: list[dict], d: date | None = None, hour: int | None = None) -> dict:
+def result_from_yaos(
+    yaos: list[dict],
+    d: date | None = None,
+    hour: int | None = None,
+    *,
+    backfill: bool = True,
+) -> dict:
     gua = hexagram_from_yaos(yaos)
     pack = codes_from_yaos(yaos)
-    stocks = match_stock_codes(pack["candidates"])
+    digit_rows = match_stock_codes(pack["candidates"])
+    picked = pick_quality_stocks(gua if gua.get("ok") else {}, digit_rows, backfill=backfill)
+    stocks = picked.get("stocks") or []
     lines = []
     for i, y in enumerate(yaos, 1):
         lines.append({
@@ -313,24 +458,36 @@ def result_from_yaos(yaos: list[dict], d: date | None = None, hour: int | None =
         "hour": hour,
         "yaos": lines,
         "gua": gua,
+        "gua_wuxing": picked.get("gua_wuxing") or [],
+        "hot_industries": picked.get("hot_industries") or [],
+        "wx_industries": picked.get("wx_industries") or [],
         "yao_digits": pack["yao_digits"],
         "bit_digits": pack["bit_digits"],
         "candidate_count": pack["candidate_count"],
+        "digit_matched_count": len(digit_rows),
         "matched_count": len(stocks),
-        "unmatched_count": max(0, pack["candidate_count"] - len(stocks)),
+        "unmatched_count": max(0, pack["candidate_count"] - len(digit_rows)),
         "stocks": stocks,
-        "empty_reason": "" if stocks else "六个爻数排列后的号码在本地股票列表没有对应代码，未匹配的不显示。",
-        "method": "三钱法连卜六次（自下而上）。6老阴、7少阳、8少阴、9老阳；老阴老阳为动爻。六位数字取爻数(6-9)与三钱正反(0-7)两组，做全排列后只对照本地代码。",
+        "min_score": MIN_SCORE,
+        "good_grades": list(GOOD_GRADES),
+        "empty_reason": picked.get("empty_reason") or (
+            "" if stocks else "卦象五行对应的热门板块里没有同时达到财报评级与综合评分门槛的个股，未匹配的不显示。"
+        ),
+        "method": (
+            "三钱法连卜六次（自下而上）。6老阴、7少阳、8少阴、9老阳；老阴老阳为动爻。"
+            "本卦/变卦上下卦推五行，再匹配当前热门板块中财报评级 A/B、综合评分较高的本地个股。"
+            "六位数字仍对照本地代码，对不上的不生成个股；日K不足会补真实K线，不编造。"
+        ),
         "note": NOTE,
     }
 
 
-def cast_six(d: date | None = None, hour: int | None = None, rng=None) -> dict:
+def cast_six(d: date | None = None, hour: int | None = None, rng=None, backfill: bool = True) -> dict:
     yaos = [one_yao(rng) for _ in range(6)]
-    return result_from_yaos(yaos, d, hour)
+    return result_from_yaos(yaos, d, hour, backfill=backfill)
 
 
-def divination(day: str = "", hour: int | None = None, rng=None) -> dict:
+def divination(day: str = "", hour: int | None = None, rng=None, backfill: bool = True) -> dict:
     d = resolve_almanac_date(day) if (day or "").strip() else None
     if (day or "").strip() and d is None:
         return {"ok": False, "error": "日期格式无效，请用 YYYY-MM-DD", "stocks": []}
@@ -340,4 +497,4 @@ def divination(day: str = "", hour: int | None = None, rng=None) -> dict:
             hh = int(hour) % 24
         except (TypeError, ValueError):
             return {"ok": False, "error": "时辰小时无效", "stocks": []}
-    return cast_six(d, hh, rng)
+    return cast_six(d, hh, rng, backfill=backfill)

@@ -245,21 +245,8 @@ def _sector_hot_level(score) -> str:
 
 
 def _sector_heat_map() -> dict:
-    rows = query(
-        """SELECT l.industry AS name,
-                  ROUND(AVG(s.pct), 2) AS pct,
-                  ROUND(AVG(s.pct_d5), 2) AS d5,
-                  ROUND(SUM(s.main_net_in) / 10000.0, 1) AS net_in_yi
-           FROM stock_snapshot s JOIN stock_list l ON l.code = s.code
-           WHERE l.industry != '' AND s.pct IS NOT NULL
-           GROUP BY l.industry"""
-    )
-    out = {}
-    for r in rows:
-        out[r["name"]] = round(
-            (r["pct"] or 0) * 3 + (r["d5"] or 0) * 1.5
-            + min(max((r["net_in_yi"] or 0), -20), 20), 1)
-    return out
+    from . import sector as sector_svc
+    return sector_svc.industry_heat_map()
 
 
 def _attach_board_heat(rows: list[dict]) -> None:

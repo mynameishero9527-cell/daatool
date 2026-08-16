@@ -133,6 +133,25 @@ def get_sector_stocks(dim: str, name: str, limit: int = 30) -> list[dict]:
 
 # ---------------- 板块推荐（FR8-06-1） ----------------
 
+def industry_heat_map() -> dict:
+    """行业热度：当日涨跌×3 + 5日×1.5 + 主力净流入（亿元，截断±20）。"""
+    rows = query(
+        """SELECT l.industry AS name,
+                  ROUND(AVG(s.pct), 2) AS pct,
+                  ROUND(AVG(s.pct_d5), 2) AS d5,
+                  ROUND(SUM(s.main_net_in) / 10000.0, 1) AS net_in_yi
+           FROM stock_snapshot s JOIN stock_list l ON l.code = s.code
+           WHERE l.industry != '' AND s.pct IS NOT NULL
+           GROUP BY l.industry"""
+    )
+    out = {}
+    for r in rows:
+        out[r["name"]] = round(
+            (r["pct"] or 0) * 3 + (r["d5"] or 0) * 1.5
+            + min(max((r["net_in_yi"] or 0), -20), 20), 1)
+    return out
+
+
 def get_sector_recommend(top_n: int = 10, stocks_per: int = 5) -> list[dict]:
     """强势板块 TOP10 + 每板块推荐个股 TOP5。"""
     def loader():
