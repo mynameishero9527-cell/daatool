@@ -170,6 +170,11 @@ class StrategyPointsTests(unittest.TestCase):
         start = js.index("async function refreshStrategyPoints")
         end = js.index("$(\"#btnRefreshBuy\")", start)
         self.assertNotIn("loadAlerts()", js[start:end])
+        self.assertIn("const POINTS_LIMIT = 20", js)
+        self.assertIn("POINTS_FREQ_DEFAULT = 10", js)
+        self.assertIn('id="pointsRefreshFreq"', html)
+        from app.services import alerts
+        self.assertEqual(alerts.POINTS_LIMIT, 20)
 
     def test_points_cache_and_light_config(self):
         from app.services import alerts

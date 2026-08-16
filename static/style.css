@@ -1122,7 +1122,11 @@ tr.score-95 td { background: rgba(255, 60, 60, .30); }
 }
 .buy-flash-head:active { cursor: grabbing; }
 .buy-flash-title { font-size: calc(15px * var(--font-scale)); font-weight: 600; color: var(--text); }
-.buy-flash-note { display: none; }
+.buy-flash-note {
+  font-size: calc(12px * var(--font-scale));
+  color: var(--muted);
+  padding: 0 12px 6px;
+}
 .buy-flash-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 0 8px 8px; }
 .buy-flash-body .empty { padding: 18px 0; }
 .buy-flash-body .plan-picked { margin: 4px 0 0; gap: 3px; }

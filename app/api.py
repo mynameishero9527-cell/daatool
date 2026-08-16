@@ -91,12 +91,12 @@ def get_alerts(limit: int = Query(50, le=100)):
 
 
 @router.get("/alerts/buy-points")
-def alerts_buy_points(limit: int = Query(12, le=40), fresh: bool = False):
+def alerts_buy_points(limit: int = Query(20, ge=3, le=40), fresh: bool = False):
     return alerts.get_buy_points(limit, backfill=False, fresh=fresh)
 
 
 @router.get("/alerts/sell-points")
-def alerts_sell_points(limit: int = Query(12, le=40), fresh: bool = False):
+def alerts_sell_points(limit: int = Query(20, ge=3, le=40), fresh: bool = False):
     return alerts.get_sell_points(limit, backfill=False, fresh=fresh)
 
 

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>A股量化工具</title>
-<link rel="stylesheet" href="/static/style.css?v=13.0.46">
+<link rel="stylesheet" href="/static/style.css?v=13.0.47">
 <script>
 (function () {
   try {
@@ -746,6 +746,16 @@
         </div>
         <div id="strategyExecBody" class="strategy-exec">加载中…</div>
       </div>
+      <div class="card">
+        <div class="card-title">买/卖点自动更新
+          <span class="muted">推荐各 20 条 · 到期重算名单与评论 · 默认 10 分钟</span>
+        </div>
+        <div class="cond-inline" style="gap:12px;flex-wrap:wrap;align-items:center">
+          <span class="g-label muted">更新频率</span>
+          <span class="btn-group" id="pointsRefreshFreq"></span>
+          <span class="muted" id="pointsRefreshHint"></span>
+        </div>
+      </div>
       <div class="grid-2">
         <div class="card plan-col-buy">
           <div class="card-title">最佳买点策略
@@ -837,7 +847,7 @@
       <button class="btn small ghost" type="button" id="buyFlashMin" title="缩小">—</button>
     </span>
   </div>
-  <div id="buyFlashNote" class="buy-flash-note" style="display:none"></div>
+  <div id="buyFlashNote" class="buy-flash-note"></div>
   <div id="buyFlashBody" class="buy-flash-body"><div class="empty">加载中…</div></div>
 </div>
 <button type="button" id="buyFlashFab" class="buy-flash-logo kind-buy" style="display:none" title="打开最佳买点">
@@ -868,6 +878,6 @@
   <div class="ctx-item" id="ctxKbRevert" style="display:none">↩ 还原内置解释</div>
 </div>
 
-<script src="/static/app.js?v=13.0.46"></script>
+<script src="/static/app.js?v=13.0.47"></script>
 </body>
 </html>

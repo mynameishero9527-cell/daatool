@@ -45,6 +45,7 @@ TYPE_NAMES = {
     "buy_point": "买点关注", "sell_point": "卖点警示", "index_move": "大盘异动",
     "fund_switch": "高低切换", "rotation": "板块轮动",
 }
+POINTS_LIMIT = 20
 
 
 def _add(alert_type: str, title: str, detail: str = "", plan_id: str = "") -> None:
@@ -74,7 +75,7 @@ def _half_txt(r: dict) -> str:
 def _scan_buy_points() -> None:
     from . import strategy as strategy_svc
     enabled = strategy_svc.get_enabled("buy")
-    cap = min(18, max(5, 3 * max(1, len(enabled))))
+    cap = POINTS_LIMIT
     rows, _src, _note = strategy_svc.collect_buy_points(limit=cap)
     for r in rows:
         picked = r.get("picked_text") or "由买点策略选出"
@@ -93,7 +94,7 @@ def _scan_buy_points() -> None:
 def _scan_sell_points() -> None:
     from . import strategy as strategy_svc
     enabled = strategy_svc.get_enabled("sell")
-    cap = min(18, max(5, 3 * max(1, len(enabled))))
+    cap = POINTS_LIMIT
     rows, _src, _note = strategy_svc.collect_sell_points(limit=cap)
     for r in rows:
         picked = r.get("picked_text") or "由卖点策略选出"
@@ -348,7 +349,7 @@ def _advice_summary(r: dict, kind: str, buy_lv: str, buy_act: str, op: str) -> s
     return "".join(bits)
 
 
-def get_buy_points(limit: int = 8, backfill: bool = False, fresh: bool = False) -> dict:
+def get_buy_points(limit: int = POINTS_LIMIT, backfill: bool = False, fresh: bool = False) -> dict:
     """实时最佳买点（供全局弹窗）。空结果必须带回原因，避免窗口空白。
 
     默认选股方案A：购买指数≥80且主力净流入>0。无流入观察池不凑数。
@@ -356,7 +357,7 @@ def get_buy_points(limit: int = 8, backfill: bool = False, fresh: bool = False) 
     """
     from . import strategy as strategy_svc
 
-    limit = max(3, min(int(limit or 12), 40))
+    limit = max(3, min(int(limit or POINTS_LIMIT), 40))
     enabled = strategy_svc.get_enabled("buy")
     if not fresh:
         cached = _points_cache_get("buy", enabled, limit)
@@ -397,11 +398,11 @@ def get_buy_points(limit: int = 8, backfill: bool = False, fresh: bool = False) 
     return _points_cache_put("buy", enabled, limit, out)
 
 
-def get_sell_points(limit: int = 12, backfill: bool = False, fresh: bool = False) -> dict:
+def get_sell_points(limit: int = POINTS_LIMIT, backfill: bool = False, fresh: bool = False) -> dict:
     """实时最佳卖点。空结果必须带回原因。每条标明选出方案。"""
     from . import strategy as strategy_svc
 
-    limit = max(3, min(int(limit or 12), 40))
+    limit = max(3, min(int(limit or POINTS_LIMIT), 40))
     enabled = strategy_svc.get_enabled("sell")
     if not fresh:
         cached = _points_cache_get("sell", enabled, limit)

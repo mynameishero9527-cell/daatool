@@ -1076,14 +1076,60 @@ function bindAlertDock() {
   });
 }
 
+const POINTS_LIMIT = 20;
+const POINTS_FREQ_OPTS = [1, 5, 10, 15, 30, 60];
+const POINTS_FREQ_KEY = "daatool_points_refresh_min";
+const POINTS_FREQ_DEFAULT = 10;
 let strategyRefreshBusy = false;
+let pointsRefreshMin = POINTS_FREQ_DEFAULT;
+let pointsRefreshTimer = 0;
+let pointsLastAt = "";
+function readPointsRefreshMin() {
+  try {
+    const n = Number(localStorage.getItem(POINTS_FREQ_KEY) || POINTS_FREQ_DEFAULT);
+    if (POINTS_FREQ_OPTS.includes(n)) return n;
+  } catch { /* ignore */ }
+  return POINTS_FREQ_DEFAULT;
+}
+function pointsFreqLabel(min) {
+  return Number(min) >= 60 ? `${Number(min) / 60}小时` : `${min}分钟`;
+}
+function paintPointsRefreshFreq() {
+  const box = $("#pointsRefreshFreq");
+  if (box) {
+    box.innerHTML = POINTS_FREQ_OPTS.map((m) =>
+      `<button type="button" class="opt ${m === pointsRefreshMin ? "active" : ""}" data-min="${m}">${pointsFreqLabel(m)}</button>`
+    ).join("");
+  }
+  const hint = $("#pointsRefreshHint");
+  if (hint) {
+    const last = pointsLastAt ? `上次更新 ${pointsLastAt}` : "尚未自动更新";
+    hint.textContent = `买/卖点各 ${POINTS_LIMIT} 条 · 每${pointsFreqLabel(pointsRefreshMin)}重算评论 · ${last}`;
+  }
+}
+function schedulePointsRefresh() {
+  if (pointsRefreshTimer) clearInterval(pointsRefreshTimer);
+  const ms = Math.max(1, Number(pointsRefreshMin) || POINTS_FREQ_DEFAULT) * 60 * 1000;
+  pointsRefreshTimer = setInterval(() => {
+    if (strategyRefreshBusy || buyPointsInFlight) return;
+    loadBuyPoints({ fresh: true, auto: true });
+  }, ms);
+}
+function setPointsRefreshMin(min) {
+  const n = Number(min);
+  pointsRefreshMin = POINTS_FREQ_OPTS.includes(n) ? n : POINTS_FREQ_DEFAULT;
+  try { localStorage.setItem(POINTS_FREQ_KEY, String(pointsRefreshMin)); } catch { /* ignore */ }
+  paintPointsRefreshFreq();
+  schedulePointsRefresh();
+}
+pointsRefreshMin = readPointsRefreshMin();
 async function loadAlerts() {
   if (strategyRefreshBusy) return;
   try {
     const [d, buyLive, sellLive] = await Promise.all([
       api("/api/alerts"),
-      api("/api/alerts/buy-points?limit=16").catch(() => ({ items: [] })),
-      api("/api/alerts/sell-points?limit=16").catch(() => ({ items: [] })),
+      api(`/api/alerts/buy-points?limit=${POINTS_LIMIT}`).catch(() => ({ items: [] })),
+      api(`/api/alerts/sell-points?limit=${POINTS_LIMIT}`).catch(() => ({ items: [] })),
     ]);
     const items = d.items || [];
     const liveBuys = buyLive.items || [];
@@ -6256,6 +6302,7 @@ function patchStrategyCounts(d) {
 }
 
 async function loadStrategyPage(force) {
+  paintPointsRefreshFreq();
   const box = $("#strategyPlansBuy");
   if (!box) return;
   try {
@@ -7491,17 +7538,22 @@ async function _loadBuyPoints(opts) {
   try {
     const fresh = opts && opts.fresh ? "&fresh=1" : "";
     const path = kind === "sell"
-      ? `/api/alerts/sell-points?limit=16${fresh}`
-      : `/api/alerts/buy-points?limit=16${fresh}`;
+      ? `/api/alerts/sell-points?limit=${POINTS_LIMIT}${fresh}`
+      : `/api/alerts/buy-points?limit=${POINTS_LIMIT}${fresh}`;
     const d = await api(path);
     const items = d.items || [];
     const source = d.source || "";
     const note = d.note || "";
-    if (countEl) countEl.textContent = `${items.length} 只`;
-    if (noteEl) {
-      noteEl.textContent = "";
-      noteEl.style.display = "none";
+    const now = new Date();
+    pointsLastAt = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+    if (countEl) {
+      countEl.textContent = `${items.length} 只 · 每${pointsFreqLabel(pointsRefreshMin)}更新`;
     }
+    if (noteEl) {
+      noteEl.textContent = `评论已于 ${pointsLastAt} 更新 · 每${pointsFreqLabel(pointsRefreshMin)}自动重算`;
+      noteEl.style.display = "";
+    }
+    paintPointsRefreshFreq();
     if (badge) {
       badge.textContent = String(items.length);
       badge.style.display = "";
@@ -7944,10 +7996,13 @@ schedule("global", loadGlobal, 60000);
 schedule("recommend", loadRecommend, 60000);
 schedule("ranks", loadRanks, 60000);
 schedule("smartpick", loadAlerts, 10000);
-setInterval(() => {
-  if (strategyRefreshBusy || buyPointsInFlight) return;
-  loadBuyPoints();
-}, 15000);
+paintPointsRefreshFreq();
+schedulePointsRefresh();
+$("#pointsRefreshFreq")?.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-min]");
+  if (!btn) return;
+  setPointsRefreshMin(btn.dataset.min);
+});
 schedule("settings", loadSettings, 10000);
 setInterval(loadSettingsHealthOnly, 30000);
 async function loadSettingsHealthOnly() {
