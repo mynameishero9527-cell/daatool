@@ -988,6 +988,7 @@ tr.score-95 td { background: rgba(255, 60, 60, .30); }
   background: var(--bg); border: 1px solid var(--border);
   border-radius: 6px; padding: 8px 10px; margin: 6px 0 0 26px; color: #c9d6e8;
 }
+.plan-title-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .plan-col-buy { border-color: rgba(255,82,82,.4); }
 .plan-col-sell { border-color: rgba(38,194,129,.4); }
 .plan-card.buy.on { border-color: var(--up); box-shadow: inset 0 0 0 1px rgba(255,82,82,.28); }

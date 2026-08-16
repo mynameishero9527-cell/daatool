@@ -153,6 +153,19 @@ class StrategyPointsTests(unittest.TestCase):
         self.assertIn("高位止盈", sell_names)
         self.assertEqual(strategy.BUY_PLANS["BZ"].name, "方案B-企稳趋势")
 
+    def test_settings_has_buy_sell_refresh_buttons(self):
+        from pathlib import Path
+        root = Path(__file__).resolve().parents[1]
+        html = (root / "static" / "index.html").read_text(encoding="utf-8")
+        js = (root / "static" / "app.js").read_text(encoding="utf-8")
+        self.assertIn('id="btnRefreshBuy"', html)
+        self.assertIn('id="btnRefreshSell"', html)
+        self.assertIn("刷新买点", html)
+        self.assertIn("刷新卖点", html)
+        self.assertIn("async function refreshStrategyPoints", js)
+        self.assertIn("applyPendingStrategy", js)
+        self.assertIn('id="buyFlashRefresh"', html)
+
     def test_legacy_a_maps_separately(self):
         self.assertEqual(strategy._normalize_ids(["A"], "buy"), ["A"])
         self.assertEqual(strategy._normalize_ids(["A"], "sell"), ["ST"])

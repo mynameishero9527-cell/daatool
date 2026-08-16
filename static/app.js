@@ -6398,6 +6398,54 @@ async function resetStrategySide(kind) {
 $("#btnResetBuy")?.addEventListener("click", () => resetStrategySide("buy"));
 $("#btnResetSell")?.addEventListener("click", () => resetStrategySide("sell"));
 
+let strategyRefreshBusy = false;
+function showBuyFlashKind(kind) {
+  buyFlashKind = kind === "sell" ? "sell" : "buy";
+  $$("#buyFlashKind .opt").forEach((b) => b.classList.toggle("active", (b.dataset.kind || "buy") === buyFlashKind));
+  setBuyFlashCollapsed(false);
+}
+async function applyPendingStrategy() {
+  if (saveStrategyTimer || strategyDirty) {
+    await saveStrategyPlans();
+  }
+}
+async function refreshStrategyPoints(kind) {
+  const side = kind === "sell" ? "sell" : "buy";
+  const btn = side === "sell" ? $("#btnRefreshSell") : $("#btnRefreshBuy");
+  const msg = $("#strategySaveMsg");
+  if (strategyRefreshBusy) return;
+  strategyRefreshBusy = true;
+  const prev = btn ? btn.textContent : "";
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "刷新中…";
+  }
+  if (msg) msg.textContent = side === "sell" ? "正在按当前卖点方案刷新推荐…" : "正在按当前买点方案刷新推荐…";
+  try {
+    await applyPendingStrategy();
+    showBuyFlashKind(side);
+    const body = $("#buyFlashBody");
+    if (body) body.innerHTML = '<div class="empty">刷新中…</div>';
+    await loadBuyPoints();
+    loadAlerts();
+    if (msg) {
+      msg.textContent = side === "sell"
+        ? "已按当前卖点方案刷新最佳卖点推荐。"
+        : "已按当前买点方案刷新最佳买点推荐。";
+    }
+  } catch (err) {
+    if (msg) msg.textContent = "刷新失败：" + (err.message || err);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = prev || (side === "sell" ? "刷新卖点" : "刷新买点");
+    }
+    strategyRefreshBusy = false;
+  }
+}
+$("#btnRefreshBuy")?.addEventListener("click", () => refreshStrategyPoints("buy"));
+$("#btnRefreshSell")?.addEventListener("click", () => refreshStrategyPoints("sell"));
+
 let engineBlueprint = null;
 async function ensureEngineBlueprint(force) {
   if (!force && engineBlueprint) return engineBlueprint;
@@ -7498,6 +7546,10 @@ function bindBuyFlash() {
     buyFlashKind = btn.dataset.kind === "sell" ? "sell" : "buy";
     $$("#buyFlashKind .opt").forEach((b) => b.classList.toggle("active", b === btn));
     loadBuyPoints();
+  });
+  $("#buyFlashRefresh")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    refreshStrategyPoints(buyFlashKind === "sell" ? "sell" : "buy");
   });
   $("#buyFlashMin")?.addEventListener("click", (e) => {
     e.stopPropagation();
