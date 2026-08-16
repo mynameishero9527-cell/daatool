@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from ..database import get_meta_json, query, set_meta_json
+from . import lucky_price
 
 META_KEY = "strategy_enabled"  # 兼容旧键：曾同时控制买/卖
 META_KEY_BUY = "strategy_enabled_buy"
@@ -23,7 +24,7 @@ META_KEY_SELL = "strategy_enabled_sell"
 META_KEY_HIDDEN_BUY = "strategy_hidden_buy"
 META_KEY_HIDDEN_SELL = "strategy_hidden_sell"
 RULES_VER_KEY = "strategy_rules_ver"
-RULES_VER = "13.0.41"
+RULES_VER = "13.0.42"
 DEFAULT_BUY_IDS = ["A"]
 DEFAULT_SELL_IDS = ["ST", "SO", "SR"]
 DEFAULT_IDS = list(DEFAULT_BUY_IDS)  # 兼容旧测试/调用，仅表示买点默认
@@ -147,7 +148,7 @@ _reg_buy(SidePlan(
     where="m.buy_index >= 80 AND s.main_net_in > 0",
     fallback_where="m.buy_index >= 65 AND s.main_net_in > 0",
     action="极佳买点·可分批建仓",
-    extra_docs=BUY_INDEX_FORMULA,
+    extra_docs=BUY_INDEX_FORMULA + "\n附加：" + lucky_price.DOC + "命中后若同时是吉利低点则优先排序。",
 ))
 
 # —— 其余买点方案可并行勾选，不再作为默认 ——
@@ -173,7 +174,7 @@ _reg_buy(SidePlan(
         "AND (m.rsi14 IS NULL OR (m.rsi14 >= 40 AND m.rsi14 <= 68))"
     ),
     action="中位净流入·潜力观察，可分批跟踪",
-    extra_docs=BUY_INDEX_FORMULA,
+    extra_docs=BUY_INDEX_FORMULA + "\n附加：" + lucky_price.DOC + "命中后若同时是吉利低点则优先排序。",
 ))
 
 _reg_buy(SidePlan(
@@ -194,16 +195,19 @@ _reg_buy(SidePlan(
     ),
     action="趋势回踩·等稳可跟",
     order="m.macd_bar DESC",
+    extra_docs="附加：" + lucky_price.DOC + "命中后若同时是吉利低点则优先排序。",
 ))
 
 _reg_buy(SidePlan(
     id="BZ",
-    name="企稳蓄势",
-    summary="四闸门已过、低位、资金连续回流，且 RSI 已离开冰点。不是超卖接飞刀。",
+    name="方案B-企稳趋势",
+    summary="四闸门企稳，或近期最低价正好是对子/连号/吉利数字且现价贴着该低点。不是超卖接飞刀，缺K线不编低点。",
     formula=(
-        "stabilize_score ≥ 65  ∧  当日及5日主力净流入不差\n"
+        "路径1：stabilize_score ≥ 65  ∧  当日及5日主力净流入不差\n"
         "∧  pos60 ≤ 0.42  ∧  BuyIndex ≥ 55\n"
-        "∧  RSI 有值则 ≥ 32（已离开极端超卖） ∧  5日跌幅 > −10%"
+        "∧  RSI 有值则 ≥ 32（已离开极端超卖） ∧  5日跌幅 > −10%\n"
+        "路径2：近20/60日真实最低价为对子/连号/吉利数字  ∧  现价不超过该低点2%\n"
+        "∧  主力净流入>0  ∧  BuyIndex≥50  ∧  pos60≤0.55  ∧  当日>−5%"
     ),
     where=(
         f"{_BUY_SAFE} AND m.stabilize_score IS NOT NULL AND m.stabilize_score >= 65 "
@@ -212,9 +216,9 @@ _reg_buy(SidePlan(
         "AND (m.rsi14 IS NULL OR m.rsi14 >= 32) "
         "AND (s.pct_d5 IS NULL OR s.pct_d5 > -10)"
     ),
-    action="低位企稳·轻仓蓄势",
+    action="企稳趋势·或吉利低点可跟踪",
     order="m.stabilize_score DESC",
-    extra_docs=STABILIZE_FORMULA,
+    extra_docs=STABILIZE_FORMULA + "\n" + lucky_price.DOC,
 ))
 
 _reg_buy(SidePlan(
@@ -233,7 +237,7 @@ _reg_buy(SidePlan(
     ),
     action="暗中吸筹·跟踪资金",
     order="m.dark_power DESC",
-    extra_docs=DARK_FORMULA,
+    extra_docs=DARK_FORMULA + "\n附加：" + lucky_price.DOC + "命中后若同时是吉利低点则优先排序。",
 ))
 
 _reg_buy(SidePlan(
@@ -616,8 +620,9 @@ def _sort_hits(items: list[dict], kind: str) -> list[dict]:
         bi = float(bi) if bi is not None else 0.0
         pos = r.get("pos60")
         pos = float(pos) if pos is not None else 0.0
+        lucky = 1 if r.get("lucky_low") else 0
         if kind == "buy":
-            return (-n, -bi, pos)
+            return (-lucky, -n, -bi, pos)
         return (-n, -pos, bi)
     items.sort(key=key)
     return items
@@ -627,6 +632,8 @@ def plan_caption(pid: str, kind: str = "buy") -> str:
     p = catalog_map(kind).get(pid)
     if kind != "sell" and pid == "A":
         return (p.name if p else "选股方案A")
+    if kind != "sell" and pid == "BZ":
+        return (p.name if p else "方案B-企稳趋势")
     prefix = "买点方案" if kind == "buy" else "卖点方案"
     name = p.name if p else pid
     return f"{prefix}{pid}·{name}"
@@ -708,6 +715,27 @@ def _week_gate_on() -> bool:
         return True
 
 
+def _merge_lucky_low_hits(bucket: dict[str, dict], enabled: list[str]) -> None:
+    """现有买点方案附加吉利/对子/连号低点。选股方案A仍走第一版，不由此改门槛。"""
+    targets = [pid for pid in enabled if pid and pid != "A"]
+    if not targets:
+        return
+    rows = _fetch(
+        f"{_BUY_SAFE} AND s.main_net_in > 0 AND m.buy_index >= 50 "
+        "AND (m.pos60 IS NULL OR m.pos60 <= 0.55)",
+        "m.buy_index DESC",
+    )
+    lows = lucky_price.recent_low_map([r.get("code") for r in rows if r.get("code")])
+    for row in rows:
+        info = lows.get(row.get("code") or "") or {}
+        feat = lucky_price.annotate(row.get("price"), info.get("low"))
+        if not feat.get("lucky_low"):
+            continue
+        row.update(feat)
+        for pid in targets:
+            _merge(bucket, row, pid)
+
+
 def collect_hits(
     kind: str,
     enabled: list[str] | None = None,
@@ -736,6 +764,9 @@ def collect_hits(
             continue
         for row in _fetch(plan.where, plan.order):
             _merge(bucket, row, pid)
+    if kind == "buy":
+        _merge_lucky_low_hits(bucket, enabled)
+        lucky_price.attach_rows(list(bucket.values()))
     items = _annotate(_sort_hits(list(bucket.values()), kind), kind)
     items = [r for r in items if len(r.get("plans") or []) >= need]
     if kind == "buy" and use_week_gate is not False:
@@ -1114,6 +1145,7 @@ def _attach_buy_display(items: list[dict], backfill: bool = True) -> list[dict]:
         r["side"] = "buy"
         r["op_advice"] = point_advice("buy", r.get("score_advice") or "", r.get("room_to_high"))
         r["point_gate"] = "plan_a" if "A" in (r.get("plans") or []) else "hit"
+    lucky_price.attach_rows(items)
     return items
 
 

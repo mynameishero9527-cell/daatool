@@ -148,8 +148,10 @@ class StrategyPointsTests(unittest.TestCase):
         self.assertTrue(sell_names)
         self.assertFalse(buy_names & sell_names)
         self.assertIn("选股方案A", buy_names)
+        self.assertIn("方案B-企稳趋势", buy_names)
         self.assertIn("潜力主升", buy_names)
         self.assertIn("高位止盈", sell_names)
+        self.assertEqual(strategy.BUY_PLANS["BZ"].name, "方案B-企稳趋势")
 
     def test_legacy_a_maps_separately(self):
         self.assertEqual(strategy._normalize_ids(["A"], "buy"), ["A"])

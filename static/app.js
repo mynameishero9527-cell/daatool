@@ -7476,6 +7476,7 @@ async function loadBuyPoints() {
           ${r.point_gate === "new_stock" ? `<span class="m">新股通道</span>` : ""}
           ${r.half_range_pct != null ? `<span class="m">半年振幅 <b>${fmt(r.half_range_pct, 0)}%</b></span>` : ""}
           ${r.half_pos != null ? `<span class="m">半年位置 <b>${fmt(r.half_pos * 100, 0)}%</b></span>` : ""}
+          ${(r.lucky_tags || []).length ? `<span class="m">吉利价 <b>${esc(r.lucky_label || (r.lucky_tags || []).join("·"))}</b></span>` : ""}
           <span class="m">财报评级 ${finBadge(r)}</span>
           <span class="m">五行 ${wxBadges(r.wuxing) || "—"}</span>
           <span class="m">板块 ${esc(r.board_text || r.industry || "—")}</span>
