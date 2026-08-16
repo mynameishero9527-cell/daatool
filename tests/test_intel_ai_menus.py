@@ -24,10 +24,11 @@ class IntelAiMenuTests(unittest.TestCase):
 
     def test_all_macro_sources_allowed(self):
         for src in ("news", "outlook", "calendar", "sector_event", "policy",
-                    "official", "announce", "hot_term", "knowledge", "holders", "major"):
+                    "official", "announce", "hot_term", "knowledge", "holders", "major", "fx"):
             self.assertIn(src, intel_ai.ALLOWED_SOURCES, src)
         self.assertFalse(intel_ai.SKIP_MENUS)
         self.assertEqual(intel_ai.SOURCE_LABELS["knowledge"], "股票常识")
+        self.assertEqual(intel_ai.SOURCE_LABELS["fx"], "各国汇率")
 
     def test_knowledge_save_index_and_keep_on_empty_patch(self):
         rec = intel_ai.save(

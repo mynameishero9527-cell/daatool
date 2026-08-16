@@ -4783,6 +4783,7 @@ async function loadFxPage() {
             <input type="date" id="fxEnd" value="${escAttr(keepEnd)}"></span>
           <button class="btn small" id="fxYearBtn">拉取近一年</button>
           <button class="btn small ghost" id="fxPullBtn">拉取区间</button>
+          <button class="btn small" id="fxBoardAiBtn">AI利好利空大A板块回填</button>
           <span class="muted" id="fxPullMsg">${esc(fxLastPullMsg)}</span>
         </div>
         <div class="muted" style="margin-bottom:8px;font-size:calc(12px * var(--font-scale))">
@@ -4813,6 +4814,13 @@ async function loadFxPage() {
         <div class="card-title" id="fxChartTitle">汇率走势</div>
         <div class="muted" id="fxChartNote" style="margin-bottom:8px"></div>
         <div id="fxChart" style="height:320px"></div>
+      </div>
+      <div class="card" id="fxBoardCard">
+        <div class="card-title">汇率对照 · 大A利好/利空板块
+          <span class="muted" id="fxBoardMeta"></span>
+        </div>
+        <div id="fxBoardBox"><div class="muted">点击「AI利好利空大A板块回填」根据当前人民币汇率回填；失败不覆盖上次结果。</div></div>
+        <div id="fxStockBox"></div>
       </div>`;
     const tbl = $("#fxTable");
     tbl?.addEventListener("click", (e) => {
@@ -4826,7 +4834,14 @@ async function loadFxPage() {
     $("#fxEnd")?.addEventListener("change", () => { fxPullEnd = $("#fxEnd").value; });
     $("#fxPullBtn")?.addEventListener("click", () => pullFxRange(false));
     $("#fxYearBtn")?.addEventListener("click", () => pullFxRange(true));
+    $("#fxBoardAiBtn")?.addEventListener("click", runFxBoardAi);
+    $("#fxBoardBox")?.addEventListener("click", (e) => {
+      const chip = e.target.closest(".js-fx-sector");
+      if (!chip) return;
+      openFxSector(chip.dataset.sector || "", chip.dataset.dir || "");
+    });
     await loadFxHistory(fxPair);
+    await loadFxBoards();
   } catch (err) {
     box.innerHTML = '<div class="empty">汇率加载失败</div>';
     console.warn(err);
@@ -4912,6 +4927,107 @@ async function loadFxHistory(pair) {
   } catch (err) {
     if (note) note.textContent = "走势加载失败";
     console.warn(err);
+  }
+}
+
+let fxStockLimit = 20;
+let fxStockSeq = 0;
+let fxFocusSector = "";
+
+function fxBoardNames(list) {
+  return (list || []).map((x) => (typeof x === "string" ? x : (x && x.name) || "")).filter(Boolean);
+}
+function renderFxBoards(d) {
+  const box = $("#fxBoardBox");
+  const meta = $("#fxBoardMeta");
+  if (!box) return;
+  const split = exclusiveBoards(fxBoardNames(d.bull), fxBoardNames(d.bear));
+  let bull = split.bull;
+  let bear = split.bear;
+  let fromLocal = false;
+  if (!bull.length && !bear.length && d.local) {
+    const loc = exclusiveBoards(fxBoardNames(d.local.bull), fxBoardNames(d.local.bear));
+    bull = loc.bull;
+    bear = loc.bear;
+    fromLocal = !!(bull.length || bear.length);
+  }
+  const chip = (s, kind) => {
+    const on = s === fxFocusSector ? " active" : "";
+    return `<span class="badge dir-${kind} js-fx-sector${on}" data-sector="${esc(s)}" data-dir="${kind}" title="点击查看相关大A个股 TOP20–50">${esc(s)}</span>`;
+  };
+  const why = (list) => (list || []).filter((x) => x && x.why).map((x) => `${x.name}：${x.why}`).slice(0, 6).join("；");
+  const err = d.error ? `<div class="offline-banner" style="margin-bottom:8px">${esc(d.error)}${d.hint ? " · " + esc(d.hint) : ""}。未覆盖上次回填。</div>` : "";
+  const tag = d.applied ? "已回填" : (fromLocal ? "规则预览（未当AI成功）" : "尚未回填");
+  if (meta) meta.textContent = `${tag}${d.updated_at ? " · " + d.updated_at : ""}${d.context ? " · " + d.context : ""}`;
+  box.innerHTML = `
+    ${err}
+    <div class="kv"><span class="k">利好板块</span><span>${bull.length ? bull.map((s) => chip(s, "利好")).join("") : '<span class="muted">暂无明确利好板块</span>'}</span></div>
+    <div class="kv"><span class="k">利空板块</span><span>${bear.length ? bear.map((s) => chip(s, "利空")).join("") : '<span class="muted">暂无明确利空板块</span>'}</span></div>
+    ${d.reason || (d.local && d.local.reason) ? `<div class="muted" style="margin:6px 0">${esc(d.reason || d.local.reason)}</div>` : ""}
+    ${d.reading ? `<div class="hold-ai-text" style="margin:8px 0">${esc(d.reading).replace(/\n/g, "<br>")}</div>` : ""}
+    ${why(d.bull) || why(d.bear) ? `<div class="muted" style="margin:4px 0">${esc(why((d.bull || []).concat(d.bear || [])))}</div>` : ""}
+    <div class="muted" style="margin-top:6px">${esc(d.disclaimer || "")} 点击板块查看相关大A个股，默认 TOP20。</div>`;
+}
+
+async function loadFxBoards() {
+  try {
+    const d = await api(`/api/fx/boards?_=${Date.now()}`);
+    renderFxBoards(d);
+  } catch (err) {
+    const box = $("#fxBoardBox");
+    if (box) box.innerHTML = '<div class="empty">板块回填信息加载失败</div>';
+  }
+}
+
+async function runFxBoardAi() {
+  const btn = $("#fxBoardAiBtn");
+  const box = $("#fxBoardBox");
+  if (btn) { btn.disabled = true; btn.textContent = "正在回填…"; }
+  if (box) box.innerHTML = '<div class="empty">正在根据当前人民币汇率分析大A利好/利空板块…</div>';
+  try {
+    const d = await api("/api/fx/boards-ai", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    renderFxBoards(d);
+    if (fxFocusSector) await openFxSector(fxFocusSector, "");
+  } catch (err) {
+    if (box) box.innerHTML = `<div class="empty">回填失败：${esc(err.message || err)}</div>`;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "AI利好利空大A板块回填"; }
+  }
+}
+
+async function openFxSector(sector, dir) {
+  const seq = ++fxStockSeq;
+  fxFocusSector = sector || "";
+  const box = $("#fxStockBox");
+  if (!box || !sector) return;
+  $$("#fxBoardBox .js-fx-sector").forEach((el) => el.classList.toggle("active", el.dataset.sector === sector));
+  const dirTxt = dir === "利好" || dir === "利空" ? dir : "";
+  box.innerHTML = `<div class="empty">正在加载「${esc(sector)}」个股 TOP${fxStockLimit || 20}…</div>`;
+  try {
+    const d = await api(`/api/macro/hot-sector-stocks?sector=${encodeURIComponent(sector)}&limit=${fxStockLimit || 20}&_=${seq}`);
+    if (seq !== fxStockSeq) return;
+    if ((d.sector || sector) !== sector) {
+      box.innerHTML = '<div class="empty">板块串了，已忽略过期结果</div>';
+      return;
+    }
+    const lim = `<span class="btn-group" id="fxStockLimitBtns" style="margin-left:8px">
+      ${[20, 30, 50].map((n) =>
+        `<button type="button" class="opt ${Number(fxStockLimit) === n ? "active" : ""}" data-n="${n}">TOP${n}</button>`).join("")}
+    </span>`;
+    box.innerHTML = `
+      <div class="muted" style="margin:10px 0 6px">${dirTxt ? `<span class="hot-chip-lab ${dir === "利好" ? "bull" : "bear"}">${esc(dirTxt)}</span>` : ""}板块「${esc(sector)}」相关大A个股
+        ${lim}${d.match ? " · " + esc(d.match) : ""}</div>
+      ${d.stocks && d.stocks.length ? renderHotSectorStockTable(d.stocks, sector) : `<div class="empty">${esc(d.empty_reason || "无个股")}</div>`}
+      <div class="muted" style="font-size:calc(11px * var(--font-scale));margin-top:4px">${esc(d.disclaimer || "")}</div>`;
+    $("#fxStockLimitBtns")?.addEventListener("click", (e) => {
+      const b = e.target.closest(".opt");
+      if (!b) return;
+      fxStockLimit = Number(b.dataset.n) || 20;
+      openFxSector(sector, dir);
+    });
+  } catch (err) {
+    if (seq !== fxStockSeq) return;
+    box.innerHTML = `<div class="empty">「${esc(sector)}」个股加载失败</div>`;
   }
 }
 

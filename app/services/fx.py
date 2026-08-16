@@ -618,3 +618,151 @@ def fx_session_open(now: datetime | None = None) -> bool:
     if wd == 4:
         return t <= dtime(22, 0)
     return True
+
+
+FX_AI_KEY = "fx:rmb"
+_FX_MOVE_MIN = 0.15
+# 仅用宏观词库里的板块名，再经 _resolve_ai_name 过滤；不编造未入库行业
+_WEAK_RMB_BULL = ("汽车", "新能源", "消费")
+_WEAK_RMB_BEAR = ("能源",)
+_STRONG_RMB_BULL = ("能源",)
+_STRONG_RMB_BEAR = ("汽车", "新能源")
+
+
+def _pick_fx_quote(items: list[dict], pair: str) -> dict:
+    for it in items or []:
+        if it.get("pair") == pair:
+            return it
+    return {}
+
+
+def build_fx_ai_context(items: list[dict] | None = None) -> dict:
+    """用当前人民币汇率快照拼分析上下文。缺涨跌幅不编方向。"""
+    if items is None:
+        items = (get_snapshot() or {}).get("items") or []
+    focus = ["USDCNY", "USDCNH", "EURCNY", "JPYCNY", "GBPCNY", "HKDCNY"]
+    lines = []
+    for pair in focus:
+        it = _pick_fx_quote(items, pair)
+        if not it:
+            continue
+        rate = it.get("rate")
+        pct = it.get("pct")
+        if rate is None:
+            continue
+        pct_s = f"{pct:+.4f}%" if pct is not None else "涨跌幅未知"
+        lines.append(f"{it.get('name') or pair} {pair}={rate}（{pct_s}，来源{it.get('source') or '未知'}）")
+    usd = _pick_fx_quote(items, "USDCNY")
+    pct = usd.get("pct")
+    direction = ""
+    if pct is not None and abs(float(pct)) >= _FX_MOVE_MIN:
+        direction = "利空" if float(pct) > 0 else "利好"
+        # 美元兑人民币上涨=人民币贬值，对进口成本偏利空、对出口偏利好
+        if float(pct) > 0:
+            direction = "出口偏利好"
+        else:
+            direction = "进口偏利好"
+    text = "当前人民币汇率快照：\n" + ("\n".join(lines) if lines else "暂无可用报价")
+    if direction:
+        text += f"\n规则提示：美元兑人民币涨跌幅 {pct:+.4f}%，{direction}。"
+    else:
+        text += "\n规则提示：美元兑人民币当日波动不足或缺失，不据此编造板块。"
+    return {
+        "text": text[:1200],
+        "asof": _now().replace(tzinfo=None).isoformat(timespec="seconds"),
+        "direction": "利好" if direction == "出口偏利好" else ("利空" if direction == "进口偏利好" else ""),
+        "usd_pct": pct,
+        "brief": "；".join(lines[:4]),
+    }
+
+
+def local_fx_boards(ctx: dict | None = None) -> dict:
+    """本地规则：仅在美元兑人民币波动足够时映射词库板块，失败不编造。"""
+    from . import hot_terms
+    from . import intel_ai
+
+    ctx = ctx or build_fx_ai_context()
+    pct = ctx.get("usd_pct")
+    try:
+        move = float(pct) if pct is not None else None
+    except (TypeError, ValueError):
+        move = None
+    if move is None or abs(move) < _FX_MOVE_MIN:
+        return {
+            "bull": [], "bear": [],
+            "reason": "美元兑人民币当日波动不足或缺失，不编造利好利空板块",
+            "simulated": True,
+        }
+    raw_b = _WEAK_RMB_BULL if move > 0 else _STRONG_RMB_BULL
+    raw_w = _WEAK_RMB_BEAR if move > 0 else _STRONG_RMB_BEAR
+    why_b = "人民币相对美元走弱，出口链或受益" if move > 0 else "人民币相对美元走强，进口成本或下降"
+    why_w = "人民币相对美元走弱，进口能源成本或上升" if move > 0 else "人民币相对美元走强，出口链或承压"
+    bull = hot_terms._norm_ai_side([{"name": n, "why": why_b} for n in raw_b])  # noqa: SLF001
+    bear = hot_terms._norm_ai_side([{"name": n, "why": why_w} for n in raw_w])  # noqa: SLF001
+    bull, bear = intel_ai.exclusive_boards(bull, bear)
+    return {
+        "bull": bull, "bear": bear,
+        "reason": f"美元兑人民币 {move:+.2f}% 的规则映射，不是大模型结论",
+        "simulated": True,
+    }
+
+
+def get_fx_boards() -> dict:
+    """读取已回填的汇率→大A板块，没有则带本地规则预览（不假装 AI 成功）。"""
+    from . import intel_ai
+    saved = intel_ai.get_detail(FX_AI_KEY)
+    ctx = build_fx_ai_context()
+    local = local_fx_boards(ctx)
+    has = bool(saved.get("applied") and (saved.get("bull") or saved.get("bear")))
+    return {
+        "ok": True,
+        "item_key": FX_AI_KEY,
+        "saved": has,
+        "applied": bool(saved.get("applied")),
+        "ai": bool(saved.get("applied")),
+        "bull": saved.get("bull") or [],
+        "bear": saved.get("bear") or [],
+        "reading": saved.get("reading") or "",
+        "reason": saved.get("reason") or "",
+        "updated_at": saved.get("updated_at") or "",
+        "ai_source": saved.get("ai_source") or "",
+        "error": saved.get("error") or "",
+        "hint": saved.get("hint") or "",
+        "local": local,
+        "context": ctx.get("brief") or "",
+        "disclaimer": "板块为汇率对照下的回填，点击后个股来自本地行业/概念映射。仅供参考，不构成投资建议。",
+    }
+
+
+def analyze_fx_boards() -> dict:
+    """AI 回填汇率对大A板块的利好/利空。失败不覆盖上次成功结果。"""
+    from . import intel_ai
+    ctx = build_fx_ai_context()
+    local = local_fx_boards(ctx)
+    orig = [x["name"] for x in (local.get("bull") or []) + (local.get("bear") or [])]
+    out = intel_ai.analyze({
+        "source": "fx",
+        "ident": "rmb",
+        "title": "人民币汇率与大A板块",
+        "text": ctx["text"],
+        "time": ctx["asof"],
+        "mode": "boards",
+        "orig_sectors": orig,
+        "direction": ctx.get("direction") or "",
+    })
+    saved = get_fx_boards()
+    # 失败且 kept 时沿用上次成功回填，不把 applied 打成失败以免界面当成未回填
+    applied = bool(out.get("applied")) or (bool(out.get("kept")) and bool(saved.get("applied")))
+    return {
+        **saved,
+        "ok": True,
+        "applied": applied,
+        "ai": bool(out.get("ai")) or applied,
+        "kept": bool(out.get("kept")),
+        "configured": bool(out.get("configured")),
+        "error": out.get("error") or "",
+        "hint": out.get("hint") or "",
+        "source_call": out.get("source_call") or "",
+        "text": out.get("text") or "",
+        "local": local,
+    }

@@ -463,6 +463,18 @@ def fx_pull(payload: dict | None = Body(default=None),
     )
 
 
+@router.get("/fx/boards")
+def fx_boards():
+    """已回填的汇率→大A利好/利空板块。"""
+    return fx.get_fx_boards()
+
+
+@router.post("/fx/boards-ai")
+def fx_boards_ai():
+    """AI 回填汇率对大A板块利好/利空。失败不覆盖上次成功结果。"""
+    return fx.analyze_fx_boards()
+
+
 # ---------------- 个股推荐 ----------------
 
 @router.get("/recommend")

@@ -245,6 +245,61 @@ class FxPersistTests(unittest.TestCase):
         up = intelpick.get_page("up")
         self.assertEqual(up["items"], [])
 
+    def test_fx_ai_key_and_no_invent_when_flat(self):
+        from app.services import intel_ai
+        self.assertEqual(intel_ai.make_key("fx", "rmb"), "fx:rmb")
+        self.assertIn("fx", intel_ai.ALLOWED_SOURCES)
+        ctx = {"usd_pct": 0.02, "brief": ""}
+        local = fx_svc.local_fx_boards(ctx)
+        self.assertEqual(local["bull"], [])
+        self.assertEqual(local["bear"], [])
+        self.assertIn("不编造", local["reason"])
+        self.assertTrue(local["simulated"])
+
+    def test_fx_local_boards_exclusive_and_vocab(self):
+        from app.services import intel_ai
+        weak = fx_svc.local_fx_boards({"usd_pct": 0.8})
+        names_b = {x["name"] for x in weak["bull"]}
+        names_w = {x["name"] for x in weak["bear"]}
+        self.assertFalse(names_b & names_w)
+        for n in names_b | names_w:
+            self.assertNotIn(n, ("无明显利空", "未映射影响板块", "A股", "大盘"))
+        saved = fx_svc.get_fx_boards()
+        self.assertEqual(saved["item_key"], "fx:rmb")
+        self.assertIn("个股", saved["disclaimer"])
+        # 未配置大模型时分析失败不假装成功
+        out = fx_svc.analyze_fx_boards()
+        if not out.get("configured"):
+            self.assertFalse(out.get("applied") and out.get("ai") and not out.get("kept") and not out.get("error"))
+        empty = intelpick.get_page("up")
+        self.assertEqual(empty["items"], [])
+
+    def test_fx_analyze_keeps_last_save(self):
+        from app.database import execute
+        from app.services import intel_ai
+        ident = "__t13027_fx"
+        key = intel_ai.make_key("fx", ident)
+        try:
+            intel_ai.save(
+                {"source": "fx", "ident": ident, "title": "测试汇率板块"},
+                {"bull": [{"name": "汽车", "why": "上次成功"}],
+                 "bear": [{"name": "能源", "why": "上次成功"}],
+                 "source": "测试写入", "reason": "上次成功"},
+            )
+            before = {x["name"] for x in (intel_ai.load(key).get("bull") or [])}
+            self.assertIn("汽车", before)
+            out = intel_ai.analyze({
+                "source": "fx", "ident": ident, "title": "测试汇率板块",
+                "text": "无报价", "mode": "boards",
+            })
+            self.assertFalse(out.get("applied"))
+            self.assertTrue(out.get("kept"))
+            after = intel_ai.load(key)
+            self.assertEqual({x["name"] for x in (after.get("bull") or [])}, before)
+        finally:
+            execute("DELETE FROM intel_item_ai WHERE item_key=?", (key,))
+        self.assertEqual(intelpick.get_page("up")["items"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

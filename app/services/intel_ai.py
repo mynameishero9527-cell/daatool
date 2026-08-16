@@ -27,6 +27,7 @@ SOURCE_LABELS = {
     "holders": "持股情况",
     "hot_term": "热度词汇",
     "knowledge": "股票常识",
+    "fx": "各国汇率",
 }
 
 ALLOWED_SOURCES = set(SOURCE_LABELS)
