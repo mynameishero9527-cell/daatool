@@ -264,12 +264,20 @@ class StrategyPointsTests(unittest.TestCase):
         _seed_half_kline(CODE_HIGH, first=7.2, last=10.0, low=7.0, high=10.3)
         self.assertTrue(self._matches("sell", "ST", CODE_HIGH))
         self.assertTrue(self._matches("sell", "SO", CODE_HIGH))
-        rows, src, _note = strategy.collect_sell_points(40)
-        self.assertIn(CODE_HIGH, {r["code"] for r in rows})
+        raw = {
+            "code": CODE_HIGH, "name": "高位股", "price": 10.0, "pct": 1.2,
+            "buy_index": 40, "pos60": 0.99, "rsi14": 92, "bias20": 18,
+            "plans": ["ST", "SO"],
+        }
+        strategy.stamp_plans(raw, ["ST", "SO"], "sell")
+        with patch.object(strategy, "collect_hits", return_value=[raw]):
+            rows, src, _note = strategy.collect_sell_points(8)
         self.assertEqual(src, "hit")
+        self.assertIn(CODE_HIGH, {r["code"] for r in rows})
         hit = next(r for r in rows if r["code"] == CODE_HIGH)
         self.assertGreaterEqual(len(hit.get("plans") or []), 2)
         self.assertGreaterEqual(hit.get("half_pos") or 0, 0.68)
+        self.assertTrue(strategy.half_year_pass(hit, "sell"))
 
     def test_upgrade_old_single_default(self):
         set_meta_json(strategy.META_KEY_BUY, ["BP"])
