@@ -77,6 +77,14 @@ def set_tags(code: str, tags: list[str]) -> dict:
     return {"ok": True, "tags": tags}
 
 
+def industries_for(elements) -> list[str]:
+    """五行 → 本地行业名。只返回词表里已有的行业，不编造板块。"""
+    want = {str(x) for x in (elements or []) if x in WUXING}
+    if not want:
+        return []
+    return [ind for ind, tags in _INDUSTRY_WUXING.items() if want.intersection(tags)]
+
+
 def tags_for_list(items: list[dict], code_key: str = "code",
                   industry_key: str = "industry") -> None:
     """批量为列表项附加五行标签（就地修改，供榜单/推荐使用）。"""

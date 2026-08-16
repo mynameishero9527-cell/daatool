@@ -466,6 +466,7 @@ def _store_almanac(payload: dict) -> bool:
                     "stored", "stored_days", "hour", "hour_ganzhi", "clock",
                     "shichen_hours", "qimen", "qimen_plates", "ziwei", "ziwei_plates",
                     "calendar", "selected_shichen",
+                    "yijing", "yijing_plates", "liuren", "liuren_plates",
                 )}
         execute(
             "INSERT INTO almanac_day(day, payload, updated_at) VALUES(?,?,?) "
@@ -518,6 +519,12 @@ def get_almanac(d: date | None = None, persist: bool = True,
     from . import ziwei as ziwei_svc
     qimen_plates = qimen_svc.plates_for_day(d)
     qimen_now = qimen_svc.plate(d, pick_hour)
+    from . import yijing as yijing_svc
+    from . import liuren as liuren_svc
+    yijing_now = yijing_svc.for_datetime(d, pick_hour)
+    yijing_plates = yijing_svc.plates_for_day(d)
+    liuren_now = liuren_svc.for_datetime(d, pick_hour)
+    liuren_plates = liuren_svc.plates_for_day(d)
     lunar_day = (lunar or {}).get("day") if lunar else None
     ziwei = ziwei_svc.day_chart(lunar_day, pick["ganzhi"][1], ygz[0])
     ziwei_plates = [ziwei_svc.day_chart(lunar_day, ZHI[i], ygz[0]) for i in range(12)]
@@ -551,6 +558,10 @@ def get_almanac(d: date | None = None, persist: bool = True,
         "shichen_hours": hours_luck,
         "qimen": qimen_now,
         "qimen_plates": qimen_plates,
+        "yijing": yijing_now,
+        "yijing_plates": yijing_plates,
+        "liuren": liuren_now,
+        "liuren_plates": liuren_plates,
         "ziwei": ziwei,
         "ziwei_plates": ziwei_plates,
         "calendar": cal,
@@ -568,7 +579,7 @@ def get_almanac(d: date | None = None, persist: bool = True,
         "huangdao": hd,
         "tomorrow": _day_summary(d + timedelta(days=1)),
         "stored": False,
-        "note": "干支日柱按1949-10-01甲子日；年柱以春节为界；月柱按节气寅月；时柱五鼠遁用北京时间；农历为1900-2100月历表；时辰吉凶/奇门/紫微为民俗推算，不是官方黄历",
+        "note": "干支日柱按1949-10-01甲子日；年柱以春节为界；月柱按节气寅月；时柱五鼠遁用北京时间；农历为1900-2100月历表；时辰吉凶/奇门/紫微/易经/大六壬为民俗推算，不是官方黄历",
     }
     if persist:
         payload["stored"] = _store_almanac(payload)

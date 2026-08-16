@@ -589,6 +589,99 @@ function renderZiwei(z) {
         <div>${esc(p.stars_txt || (p.stars || []).join("、") || "—")}</div>
       </div>`).join("")}</div>`;
 }
+function guaLineHtml(yang, changing, label) {
+  const line = yang ? "━━━━" : "━━  ━━";
+  return `<div class="gua-yao ${yang ? "yang" : "yin"}">${line}<span>${esc(label || "")}${changing ? " ○" : ""}</span></div>`;
+}
+function renderYijing(y) {
+  if (!y) return '<div class="empty">无易经日课</div>';
+  const ben = y.ben || {};
+  const bagua = (y.bagua || []).map((b) =>
+    `<span class="badge">${esc(b.name)}·${esc(b.wuxing)}</span>`).join("");
+  return `
+    <div class="muted">${esc(y.lunar_note || "")} · 上卦${esc(y.upper || "")}（${esc(y.upper_wx || "")}）下卦${esc(y.lower || "")}（${esc(y.lower_wx || "")}）动爻第${y.dong_yao || "—"}爻</div>
+    <div class="kv"><span class="k">本卦</span><span><b>${ben.num || ""} ${esc(ben.name || "")}</b>　${esc(ben.brief || "")}</span></div>
+    <div class="muted" style="margin:6px 0 4px">后天八卦五行</div>
+    <div>${bagua}</div>
+    <div class="muted" style="margin-top:6px">${esc(y.jiugong_map || "")}</div>
+    <div class="muted" style="font-size:calc(11px * var(--font-scale))">${esc(y.note || "")}</div>`;
+}
+function renderLiuren(l) {
+  if (!l) return '<div class="empty">无大六壬课</div>';
+  const yj = l.yuejiang || {};
+  const kes = (l.sike || []).map((k) =>
+    `<div class="lr-ke"><b>${esc(k.name)}</b> ${esc(k.xia)}上${esc(k.shang)}<i>${esc(k.note || "")}</i></div>`).join("");
+  const gods = (l.shenjiang || []).map((g) =>
+    `<span class="badge">${esc(g.god)}·${esc(g.zhi)}</span>`).join("");
+  const chuan = (l.san_chuan || []).length
+    ? (l.san_chuan || []).map((c) => `${c.name}${c.zhi}`).join(" → ")
+    : (l.san_chuan_note || "不硬断三传");
+  return `
+    <div class="muted">${esc(l.day_ganzhi || "")} ${esc(l.hour_ganzhi || "")}
+      · 月将${esc(yj.zhi || "")}（${esc(yj.term || "")}后第${yj.days_into ?? "—"}日）
+      · ${l.gui_day ? "昼" : "夜"}贵${esc(l.gui_ren || "")} ${l.yang_gui ? "阳贵顺行" : "阴贵逆行"}</div>
+    <div class="lr-sike">${kes}</div>
+    <div class="muted" style="margin:6px 0 4px">十二神将</div>
+    <div>${gods}</div>
+    <div class="muted" style="margin-top:6px">三传：${esc(chuan)}</div>
+    <div class="muted" style="font-size:calc(11px * var(--font-scale))">${esc(l.note || "")}</div>`;
+}
+function renderAlmanacPickTable(stocks) {
+  if (!stocks || !stocks.length) return "";
+  return `<table><thead><tr>
+    <th>名称</th><th>代码</th><th>现价</th><th>行业</th><th>五行</th>
+    <th>涨跌幅</th><th>购买指数</th><th>综合评分</th><th>策略</th>
+  </tr></thead><tbody>${stocks.map((r) => `
+    <tr data-code="${r.code}" data-name="${esc(r.name)}" onclick="openStock('${r.code}','${esc(r.name)}')">
+      <td>${esc(r.name)}</td>
+      <td class="muted">${esc(r.code)}</td>
+      <td class="num">${r.price == null ? "-" : pxHtml(r.price, r.pct)}</td>
+      <td class="muted">${esc(r.industry || "-")}</td>
+      <td>${wxBadges(r.wuxing)}${(r.wx_state || []).length ? ` <span class="muted">${esc((r.wx_state || []).join(" "))}</span>` : ""}</td>
+      <td class="num ${cls(r.pct)}">${pct(r.pct)}</td>
+      <td class="num">${r.buy_index != null ? fmt(r.buy_index, 0) : "-"}</td>
+      <td class="num"><b>${r.score != null ? fmt(r.score, 1) : "-"}</b></td>
+      <td>${r.advice ? `<span class="badge ${r.advice === "增持" ? "advice-buy" : r.advice === "减持" ? "advice-sell" : "advice-hold"}">${esc(r.advice)}</span>` : "-"}</td>
+    </tr>`).join("")}</tbody></table>`;
+}
+function renderDivineBox(d) {
+  if (!d || d.ok === false) return `<div class="empty">${esc((d && d.error) || "卜卦失败")}</div>`;
+  const gua = d.gua || {};
+  const ben = gua.ben || {};
+  const bian = gua.bian;
+  const yaos = d.yaos || [];
+  const lines = [...yaos].reverse().map((y) =>
+    guaLineHtml(y.yang, y.changing, `第${y.idx}爻 ${y.name || ""} ${y.yao || ""}`)).join("");
+  const stocks = d.stocks || [];
+  return `
+    <div class="muted">${esc(d.method || "")}</div>
+    <div class="gua-board">${lines}</div>
+    <div class="kv"><span class="k">本卦</span><span><b>${ben.num || ""} ${esc(ben.name || "")}</b>　${esc(ben.brief || "")}</span></div>
+    ${bian ? `<div class="kv"><span class="k">变卦</span><span><b>${bian.num || ""} ${esc(bian.name || "")}</b>　${esc(bian.brief || "")}</span></div>` : '<div class="muted">无动爻，不变卦</div>'}
+    <div class="muted">爻数 ${esc((d.yao_digits || []).join(""))} · 钱数 ${esc((d.bit_digits || []).join(""))} · 排列 ${d.candidate_count || 0} 个号码 · 本地匹配 ${d.matched_count || 0} 只 · 未匹配不显示</div>
+    ${stocks.length ? renderAlmanacPickTable(stocks) : `<div class="empty">${esc(d.empty_reason || "无匹配个股")}</div>`}
+    <div class="muted" style="font-size:calc(11px * var(--font-scale));margin-top:4px">${esc(d.note || "")}</div>`;
+}
+function renderQimenPickBox(d) {
+  if (!d || d.ok === false) return `<div class="empty">${esc((d && d.error) || "预测失败")}</div>`;
+  const wx = d.wangxiang || {};
+  const qm = d.qimen || {};
+  const ju = `${qm.yang ? "阳遁" : "阴遁"}${qm.ju || ""}局 ${esc(qm.yuan || "")}`;
+  const stocks = d.stocks || [];
+  return `
+    <div class="muted">${esc(d.lunar || d.lunar_note || "")} · ${esc(qm.shichen || "")} ${esc(qm.hour_ganzhi || "")} · ${ju}
+      · 值符${esc(qm.zhi_fu_star || "")} 值使${esc(qm.zhi_shi_door || "")}门</div>
+    <div class="muted">${esc(d.season || "")}季：旺${esc(wx["旺"] || "")} 相${esc(wx["相"] || "")} 休${esc(wx["休"] || "")} 囚${esc(wx["囚"] || "")} 死${esc(wx["死"] || "")}
+      · 只取旺相行业 · 综合评分≥${d.min_score || 55} · 购买指数≥${d.min_buy_index || 50} · 策略非减持 · ${d.count || 0}/50</div>
+    ${stocks.length ? renderAlmanacPickTable(stocks) : `<div class="empty">${esc(d.empty_reason || "无个股")}</div>`}
+    <div class="muted" style="font-size:calc(11px * var(--font-scale));margin-top:4px">${esc(d.note || "")}</div>`;
+}
+function almanacSelectedHour() {
+  const hours = (almanacCache && almanacCache.shichen_hours) || [];
+  const cur = hours.find((h) => h.zhi_index === almanacZhi);
+  if (cur && cur.hour != null) return Number(cur.hour);
+  return 12;
+}
 function calPackHtml(title, pack) {
   pack = pack || {};
   const today = pack.today || [];
@@ -618,6 +711,10 @@ function paintAlmanacHour(zhi) {
   if (qm) qm.innerHTML = renderQimen((a.qimen_plates || []).find((p) => p.zhi_index === zhi) || a.qimen);
   const zw = $("#almanacZiwei");
   if (zw) zw.innerHTML = renderZiwei((a.ziwei_plates || [])[zhi] || a.ziwei);
+  const yj = $("#almanacYijing");
+  if (yj) yj.innerHTML = renderYijing((a.yijing_plates || []).find((p) => p.zhi_index === zhi) || a.yijing);
+  const lr = $("#almanacLiuren");
+  if (lr) lr.innerHTML = renderLiuren((a.liuren_plates || []).find((p) => p.zhi_index === zhi) || a.liuren);
 }
 function almanacTodayStr() {
   const n = new Date();
@@ -726,6 +823,23 @@ async function loadDashAlmanac(forceDate) {
         <div class="card-title" style="margin:10px 0 6px">紫微斗数 <span class="muted">流日示意，不是本命盘</span></div>
         <div id="almanacZiwei"></div>
       </div>
+      <div class="almanac-block">
+        <div class="card-title" style="margin:10px 0 6px">易经 <span class="muted">梅花日课 · 随所选时辰变下卦</span></div>
+        <div id="almanacYijing"></div>
+      </div>
+      <div class="almanac-block">
+        <div class="card-title" style="margin:10px 0 6px">大六壬 <span class="muted">月将加时 · 四课十二神</span></div>
+        <div id="almanacLiuren"></div>
+      </div>
+      <div class="almanac-block">
+        <div class="card-title" style="margin:10px 0 6px">卜卦与奇门预测 <span class="muted">民俗推算 · 个股只显示本地已匹配</span></div>
+        <div class="almanac-actions">
+          <button type="button" class="btn small" id="almanacDivineBtn">易经卜卦</button>
+          <button type="button" class="btn small" id="almanacQimenPickBtn">奇门遁甲预测</button>
+        </div>
+        <div id="almanacDivineBox" class="muted" style="margin-top:8px">点「易经卜卦」用三钱法连卜六次；号码对不上本地代码则不显示个股。</div>
+        <div id="almanacQimenPickBox" class="muted" style="margin-top:8px">点「奇门遁甲预测」按当前时辰起盘，旺相五行加高分策略最多推荐 50 只。</div>
+      </div>
       <div class="almanac-block cal-box">
         <div class="card-title" style="margin:10px 0 6px">节气与节假日</div>
         ${cal.current_term ? `<div>当前交节后处于「${esc(cal.current_term.name)}」${cal.current_term.days_ago ? `（已过 ${cal.current_term.days_ago} 天）` : "（今日交节）"}。</div>` : ""}
@@ -747,6 +861,8 @@ async function loadDashAlmanac(forceDate) {
       if (!btn) return;
       paintAlmanacHour(Number(btn.dataset.zhi));
     });
+    $("#almanacDivineBtn")?.addEventListener("click", runAlmanacDivine);
+    $("#almanacQimenPickBtn")?.addEventListener("click", runAlmanacQimenPick);
   } catch (err) {
     if (seq !== almanacLoadSeq) return;
     console.warn(err);
@@ -765,6 +881,44 @@ $("#almanacNext")?.addEventListener("click", () => {
   loadDashAlmanac(shiftAlmanacDate(almanacPick || almanacTodayStr(), 1));
 });
 $("#almanacToday")?.addEventListener("click", () => loadDashAlmanac(almanacTodayStr()));
+
+async function runAlmanacDivine() {
+  const box = $("#almanacDivineBox");
+  const btn = $("#almanacDivineBtn");
+  if (box) box.innerHTML = '<div class="empty">正在卜六次卦…</div>';
+  if (btn) { btn.disabled = true; btn.textContent = "卜卦中…"; }
+  try {
+    const d = await api("/api/macro/almanac/divination", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ date: almanacPick || "", hour: almanacSelectedHour() }),
+    });
+    if (box) box.innerHTML = renderDivineBox(d);
+  } catch (err) {
+    if (box) box.innerHTML = `<div class="empty">卜卦失败：${esc(err.message || err)}</div>`;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "易经卜卦"; }
+  }
+}
+
+async function runAlmanacQimenPick() {
+  const box = $("#almanacQimenPickBox");
+  const btn = $("#almanacQimenPickBtn");
+  if (box) box.innerHTML = '<div class="empty">正在按所选时辰起奇门盘并筛选本地个股…</div>';
+  if (btn) { btn.disabled = true; btn.textContent = "推算中…"; }
+  try {
+    const d = await api("/api/macro/almanac/qimen-predict", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ date: almanacPick || "", hour: almanacSelectedHour() }),
+    });
+    if (box) box.innerHTML = renderQimenPickBox(d);
+  } catch (err) {
+    if (box) box.innerHTML = `<div class="empty">预测失败：${esc(err.message || err)}</div>`;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "奇门遁甲预测"; }
+  }
+}
 
 let miniChart = null;
 let miniIndexCode = "sh000001";

@@ -303,6 +303,32 @@ def macro_almanac(day: str = Query("", alias="date"), span: int = Query(7, ge=0,
     return payload
 
 
+@router.post("/macro/almanac/divination")
+def macro_almanac_divination(payload: dict | None = Body(default=None)):
+    """三钱法连卜六次。排列出的号码只匹配本地已有代码，对不上的不显示。"""
+    from .services import yijing
+    body = payload or {}
+    hour = body.get("hour")
+    try:
+        hour = int(hour) if hour is not None and hour != "" else None
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "时辰小时无效", "stocks": []}
+    return yijing.divination(str(body.get("date") or body.get("day") or ""), hour)
+
+
+@router.post("/macro/almanac/qimen-predict")
+def macro_almanac_qimen_predict(payload: dict | None = Body(default=None)):
+    """按所点时辰起奇门盘，旺相五行+综合评分/策略门槛筛本地个股，最多 50。"""
+    from .services import almanac_pick
+    body = payload or {}
+    hour = body.get("hour")
+    try:
+        hour = int(hour) if hour is not None and hour != "" else None
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "时辰小时无效", "stocks": []}
+    return almanac_pick.predict(str(body.get("date") or body.get("day") or ""), hour)
+
+
 @router.post("/macro/almanac/sync")
 def macro_almanac_sync(day: str = Query("", alias="date"), span: int = Query(7, ge=0, le=31)):
     """把选定日及前后 span 天的干支/黄道写入本地 SQLite。"""

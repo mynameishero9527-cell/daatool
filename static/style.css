@@ -728,6 +728,15 @@ input:focus { border-color: var(--accent); }
 .zw-cell .k { color: var(--muted); font-size: calc(11px * var(--font-scale)); }
 .cal-box { font-size: calc(13px * var(--font-scale)); line-height: 1.7; }
 .almanac-block { margin-top: 8px; }
+.almanac-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0; }
+.gua-board { display: flex; flex-direction: column; gap: 2px; margin: 8px 0; font-family: ui-monospace, monospace; }
+.gua-yao { letter-spacing: 1px; }
+.gua-yao span { margin-left: 10px; color: var(--muted); font-size: calc(12px * var(--font-scale)); }
+.gua-yao.yang { color: var(--text); }
+.gua-yao.yin { color: var(--muted); }
+.lr-sike { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+.lr-ke { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; min-width: 120px; }
+.lr-ke i { display: block; font-style: normal; color: var(--muted); font-size: calc(11px * var(--font-scale)); }
 
 .kb-item { padding: 10px 4px; border-bottom: 1px solid var(--hairline); cursor: context-menu; }
 .kb-item .term { color: var(--accent); font-weight: 700; font-size: calc(15px * var(--font-scale)); }
