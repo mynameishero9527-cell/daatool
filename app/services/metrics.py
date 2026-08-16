@@ -82,7 +82,7 @@ def attach_flow_list(rows: list[dict]) -> list[dict]:
         attach_flow_fields(r)
     return rows
 
-KLINE_DAYS = 120
+KLINE_DAYS = 180
 SYNC_WORKERS = 10
 
 

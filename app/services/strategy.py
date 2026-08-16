@@ -4,8 +4,9 @@ SQL 条件全部硬编码在本模块，不接受前端拼 SQL。
 财报评级为独立维度，不并入购买指数。
 空命中必须带回原因，不拿观察池或低质量票凑数。
 方案 I/J 只用已缓存持股/解禁，缺则零命中。
-最佳买/卖点须同时命中至少 2 个启用方案，并结合近半年真实日K与当前价位；
-缺日K不编造（不用涨跌幅冒充），不推荐。
+最佳买/卖点多方案并行扫描；老股须交叉命中至少 2 个方案并结合近半年真实日K；
+日K不完整即时补真实K线（不用涨跌幅/离线哈希冒充）；
+新股改走综合评分 + 财报评级，未评级不伪造 A。
 """
 from __future__ import annotations
 
@@ -19,22 +20,26 @@ META_KEY = "strategy_enabled"  # 兼容旧键：曾同时控制买/卖
 META_KEY_BUY = "strategy_enabled_buy"
 META_KEY_SELL = "strategy_enabled_sell"
 RULES_VER_KEY = "strategy_rules_ver"
-RULES_VER = "13.0.31"
+RULES_VER = "13.0.32"
 DEFAULT_BUY_IDS = ["BP", "BT", "BZ"]
 DEFAULT_SELL_IDS = ["ST", "SO", "SR"]
 DEFAULT_IDS = list(DEFAULT_BUY_IDS)  # 兼容旧测试/调用，仅表示买点默认
 MIN_PLAN_HITS = 2
 HALF_CAL_DAYS = 180
 HALF_MIN_BARS = 60
+NEW_LAST_DAYS = 12
+NEW_BUY_MIN_SCORE = 65.0
+NEW_SELL_MIN_SCORE = 72.0
+NEW_BUY_GRADES = ("A", "B")
 NAME_OK = "s.name NOT LIKE '%ST%' AND s.name NOT LIKE '%退%'"
 PER_PLAN_CAP = 80
 _TZ = ZoneInfo("Asia/Shanghai")
 _EMPTY_BUY_TAIL = (
     "已去掉观察池/降低门槛回退，避免把高风险或无结构的票凑进最佳买点。"
-    "缺近半年日K不编造、不推荐。"
+    "缺日K会即时补真实K线，不用涨跌幅冒充；补不到且不是新股则不推荐。"
 )
 _EMPTY_SELL_TAIL = (
-    "卖点不再用低购买指数弱票凑数。缺近半年日K不编造、不推荐。"
+    "卖点不再用低购买指数弱票凑数。缺日K会即时补真实K线，不用涨跌幅冒充。"
 )
 
 # 买点共用安全闸：排除暴跌、情绪过热追高、已在 60 日顶部
@@ -647,6 +652,12 @@ def half_year_stats(codes: list[str]) -> dict[str, dict]:
             half_low = min(lows)
             first = closes[0]
             last = closes[-1]
+            last_date = None
+            for b in reversed(bars):
+                if b.get("close") is None:
+                    continue
+                last_date = str(b.get("date") or "")[:10]
+                break
             span = half_high - half_low
             half_ret = ((last / first) - 1.0) * 100.0 if first else None
             half_range = (span / half_low * 100.0) if half_low else None
@@ -656,6 +667,7 @@ def half_year_stats(codes: list[str]) -> dict[str, dict]:
                 "half_low": half_low,
                 "half_first": first,
                 "half_last": last,
+                "half_last_date": last_date,
                 "half_ret": half_ret,
                 "half_range_pct": half_range,
             }
@@ -671,6 +683,7 @@ def attach_half_year(row: dict, stats: dict | None) -> dict:
         row["half_ret"] = None
         row["half_range_pct"] = None
         row["half_pos"] = None
+        row["half_last_date"] = None
         return row
     row.update(stats)
     price = row.get("price")
@@ -710,15 +723,92 @@ def half_year_pass(row: dict, kind: str) -> bool:
     return ret > -40
 
 
-def apply_half_year_gate(items: list[dict], kind: str) -> list[dict]:
-    codes = [r.get("code") for r in items if r.get("code")]
+def _codes_needing_backfill(codes: list[str]) -> list[str]:
     stats = half_year_stats(codes)
+    return [c for c in codes if int((stats.get(c) or {}).get("half_bars") or 0) < HALF_MIN_BARS]
+
+
+def _attach_score_finance(items: list[dict]) -> None:
+    from . import finance as finance_svc
+    from . import rating as rating_svc
+    finance_svc.attach_grades(items)
+    for r in items:
+        if r.get("score") is None:
+            score, advice = rating_svc.quick_score(r)
+            r["score"] = score
+            r.setdefault("op_advice", advice)
+        r["finance_grade"] = (r.get("finance_grade") or "").strip()
+
+
+def is_new_listing(row: dict) -> bool:
+    """短历史且最近一根日K仍新鲜，才当新股。拉取失败的空K线不当新股。"""
+    bars = int(row.get("half_bars") or 0)
+    if bars <= 0 or bars >= HALF_MIN_BARS:
+        return False
+    last = str(row.get("half_last_date") or "")[:10]
+    if len(last) < 10:
+        return False
+    try:
+        from datetime import date
+        d = date.fromisoformat(last)
+    except ValueError:
+        return False
+    return (_shanghai_today() - d).days <= NEW_LAST_DAYS
+
+
+def new_stock_pass(row: dict, kind: str) -> bool:
+    """新股门：综合评分 + 财报评级。评级不并入评分，未评级不伪造 A。"""
+    score = row.get("score")
+    grade = (row.get("finance_grade") or "").strip()
+    if score is None:
+        return False
+    try:
+        score = float(score)
+    except (TypeError, ValueError):
+        return False
+    if kind == "sell":
+        if grade in ("C", "D") and score >= 50:
+            return True
+        return score >= NEW_SELL_MIN_SCORE
+    return score >= NEW_BUY_MIN_SCORE and grade in NEW_BUY_GRADES
+
+
+def apply_recommend_gate(
+    items: list[dict],
+    kind: str,
+    backfill: bool = True,
+    min_hits: int = MIN_PLAN_HITS,
+) -> list[dict]:
+    """老股：并行扫描后须命中 min_hits 且过半年波动门。新股：综合评分+财报评级。"""
+    codes = [r.get("code") for r in items if r.get("code")]
+    backfilled: set[str] = set()
+    if backfill:
+        need = _codes_needing_backfill(codes)
+        if need:
+            from . import kline as kline_svc
+            res = kline_svc.backfill_daily_real(need, count=180, limit=min(16, len(need)))
+            backfilled = set(res.get("ok") or [])
+    stats = half_year_stats(codes)
+    _attach_score_finance(items)
+    need_hits = max(1, int(min_hits or 1))
     kept: list[dict] = []
     for r in items:
         attach_half_year(r, stats.get(r.get("code") or ""))
-        if half_year_pass(r, kind):
+        r["kline_backfilled"] = r.get("code") in backfilled
+        hits = len(r.get("plans") or [])
+        if half_year_pass(r, kind) and hits >= need_hits:
+            r["point_gate"] = "half_year"
             kept.append(r)
+        elif is_new_listing(r) and new_stock_pass(r, kind) and hits >= 1:
+            r["point_gate"] = "new_stock"
+            kept.append(r)
+        else:
+            r["point_gate"] = ""
     return kept
+
+
+def apply_half_year_gate(items: list[dict], kind: str, backfill: bool = False) -> list[dict]:
+    return apply_recommend_gate(items, kind, backfill=backfill, min_hits=1)
 
 
 def _need_multi_reason(enabled: list[str], kind: str) -> str:
@@ -726,21 +816,22 @@ def _need_multi_reason(enabled: list[str], kind: str) -> str:
     side = "买点" if kind == "buy" else "卖点"
     tail = _EMPTY_BUY_TAIL if kind == "buy" else _EMPTY_SELL_TAIL
     return (
-        f"当前仅启用 {len(enabled)} 个{side}方案（{names}）。"
-        f"须同时勾选并命中至少 {MIN_PLAN_HITS} 个方案，再结合近半年日K与当前价位才推荐。"
+        f"当前未启用任何{side}方案（{names}）。"
+        f"可并行勾选多个方案；老股须交叉命中至少 {MIN_PLAN_HITS} 个，新股看综合评分与财报评级。"
         f"{tail}"
     )
 
 
-def _empty_half_reason(enabled: list[str], kind: str, had_multi: bool) -> str:
+def _empty_half_reason(enabled: list[str], kind: str, had_hits: bool) -> str:
     names = "、".join(plan_caption(i, kind) for i in enabled)
     side = "买点" if kind == "buy" else "卖点"
     tail = _EMPTY_BUY_TAIL if kind == "buy" else _EMPTY_SELL_TAIL
-    if had_multi:
+    if had_hits:
         return (
-            f"当前启用{side}方案（{names}）有个股同时命中至少 {MIN_PLAN_HITS} 个方案，"
-            "但近半年日K不足或波动/位置不符合（买点要有空间且非顶部，卖点要靠近半年高位）。"
-            f"{tail}请先同步日K，不要用涨跌幅冒充K线。"
+            f"当前启用{side}方案（{names}）已并行扫描到命中，"
+            "但老股未同时过半年波动门（或未交叉命中足够方案），"
+            "新股也未同时达到综合评分与财报评级门槛。"
+            f"{tail}已尝试补真实日K；补不到的不编造。"
         )
     extra = (
         "请确认已同步行情并重建指标，或在设置里加开趋势回踩/企稳蓄势。"
@@ -748,39 +839,44 @@ def _empty_half_reason(enabled: list[str], kind: str, had_multi: bool) -> str:
         else "请确认已同步行情并重建指标。"
     )
     return (
-        f"当前启用{side}方案（{names}）暂无同时命中至少 {MIN_PLAN_HITS} 个方案的标的。"
+        f"当前启用{side}方案（{names}）并行扫描暂无命中。"
         f"{tail}{extra}"
     )
 
 
-def collect_buy_points(limit: int = 12) -> tuple[list[dict], str, str]:
-    """实时买点窗：须命中≥2个方案 + 近半年日K门。无命中给原因，不回退观察池。"""
+def collect_buy_points(limit: int = 12, backfill: bool = True) -> tuple[list[dict], str, str]:
+    """实时买点窗：多方案并行；老股交叉命中+半年日K，新股综合评分+财报评级。"""
     limit = max(3, min(int(limit or 12), 40))
     enabled = get_enabled("buy")
-    if len(enabled) < MIN_PLAN_HITS:
+    if not enabled:
         return [], "empty", _need_multi_reason(enabled, "buy")
-    raw = collect_hits("buy", enabled, limit=PER_PLAN_CAP, min_hits=MIN_PLAN_HITS)
-    kept = apply_half_year_gate(raw, "buy")
+    need = MIN_PLAN_HITS if len(enabled) >= MIN_PLAN_HITS else 1
+    raw = collect_hits("buy", enabled, limit=PER_PLAN_CAP, min_hits=1)
+    kept = apply_recommend_gate(raw, "buy", backfill=backfill, min_hits=need)
     if kept:
         return _fair_take(kept, enabled, limit), "hit", _hit_note(enabled, "buy")
-    return [], "empty", _empty_half_reason(enabled, "buy", had_multi=bool(raw))
+    return [], "empty", _empty_half_reason(enabled, "buy", had_hits=bool(raw))
 
 
-def collect_sell_points(limit: int = 12) -> tuple[list[dict], str, str]:
+def collect_sell_points(limit: int = 12, backfill: bool = True) -> tuple[list[dict], str, str]:
     limit = max(3, min(int(limit or 12), 40))
     enabled = get_enabled("sell")
-    if len(enabled) < MIN_PLAN_HITS:
+    if not enabled:
         return [], "empty", _need_multi_reason(enabled, "sell")
-    raw = collect_hits("sell", enabled, limit=PER_PLAN_CAP, min_hits=MIN_PLAN_HITS)
-    kept = apply_half_year_gate(raw, "sell")
+    need = MIN_PLAN_HITS if len(enabled) >= MIN_PLAN_HITS else 1
+    raw = collect_hits("sell", enabled, limit=PER_PLAN_CAP, min_hits=1)
+    kept = apply_recommend_gate(raw, "sell", backfill=backfill, min_hits=need)
     if kept:
         return _fair_take(kept, enabled, limit), "hit", _hit_note(enabled, "sell")
-    return [], "empty", _empty_half_reason(enabled, "sell", had_multi=bool(raw))
+    return [], "empty", _empty_half_reason(enabled, "sell", had_hits=bool(raw))
 
 
 def _hit_note(enabled: list[str], kind: str) -> str:
     labels = "、".join(plan_caption(i, kind) for i in enabled)
-    gate = f"须同时命中至少 {MIN_PLAN_HITS} 个启用方案，并结合近半年真实日K波动与当前价位；缺K线不编造、不推荐。"
+    gate = (
+        f"多方案并行扫描。老股须交叉命中至少 {MIN_PLAN_HITS} 个方案并结合近半年真实日K；"
+        "日K不足会即时补真实K线；新股改看综合评分与财报评级（未评级不伪造）。"
+    )
     if kind == "buy":
         extra = "买点只保留有潜力结构的命中，不接飞刀、不追高潮、不展示观察池。"
     else:
@@ -813,8 +909,9 @@ def executing_text(kind: str = "buy", enabled: list[str] | None = None) -> dict:
     blocks = [
         f"当前执行的{prefix}策略：{title}",
         f"{prefix}与另一侧完全分开勾选、分开扫描，方案名称也不共用。",
-        f"推荐须同时命中至少 {MIN_PLAN_HITS} 个启用方案，并结合近半年真实日K波动与当前价位。",
-        "财报评级为独立维度，不并入购买指数。",
+        f"多方案可并行勾选。老股须交叉命中至少 {MIN_PLAN_HITS} 个方案，并结合近半年真实日K。",
+        "日K不完整会即时补真实K线；新股按综合评分+财报评级，未评级不伪造 A。",
+        "财报评级为独立维度，不并入购买指数或综合评分。",
         "空名单不回退观察池，不编造个股，不用涨跌幅冒充日K。",
         "",
     ]
@@ -891,7 +988,7 @@ def get_config() -> dict:
         "note": (
             "买点策略与卖点策略分开勾选、分开扫描，名称也不共用。"
             "买点默认「潜力主升 + 趋势回踩 + 企稳蓄势」，卖点默认「高位止盈 + 超买回吐 + 资金出逃避险」。"
-            f"须同时命中至少 {MIN_PLAN_HITS} 个方案，并结合近半年日K与当前价位才推荐；"
-            "缺K线不编造。空列表回退到该侧默认方案，不再用观察池凑数。"
+            f"多方案并行扫描；老股须交叉命中至少 {MIN_PLAN_HITS} 个方案并结合近半年日K；"
+            "缺K线即时补真实日K；新股按综合评分+财报评级。空列表回退到该侧默认方案，不再用观察池凑数。"
         ),
     }

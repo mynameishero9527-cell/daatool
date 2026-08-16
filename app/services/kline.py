@@ -18,6 +18,92 @@ def _persist_day(code: str, rows: list[list]) -> None:
     )
 
 
+def fetch_daily_real(code: str, count: int = 180) -> list[list]:
+    """只拉真实日K。失败返回空，不用离线哈希，不用涨跌幅编造。"""
+    try:
+        rows = tencent.fetch_kline(code, "day", max(20, min(int(count or 180), 320)))
+    except Exception:  # noqa: BLE001
+        return []
+    out = []
+    for r in rows or []:
+        if not isinstance(r, (list, tuple)) or len(r) < 6:
+            continue
+        day = str(r[0] or "")[:10]
+        if len(day) < 10 or day[4:5] != "-":
+            continue
+        try:
+            out.append([day, float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5])])
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def backfill_daily_real(
+    codes: list[str],
+    count: int = 180,
+    workers: int = 6,
+    limit: int = 16,
+) -> dict:
+    """对日K不足的个股即时补真实K线并落库。不写离线假K。"""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import time
+
+    codes = list(dict.fromkeys(c for c in codes if c))[: max(0, int(limit or 0))]
+    out = {"ok": [], "fail": [], "empty": []}
+    if not codes:
+        return out
+
+    def one(code: str):
+        rows = fetch_daily_real(code, count)
+        if not rows:
+            return code, "empty"
+        _persist_day(code, rows)
+        return code, "ok"
+
+    deadline = time.time() + 12
+    with ThreadPoolExecutor(max_workers=max(1, min(int(workers or 6), 8))) as pool:
+        futs = {pool.submit(one, c): c for c in codes}
+        try:
+            for fut in as_completed(futs, timeout=max(0.2, deadline - time.time())):
+                code = futs[fut]
+                try:
+                    _code, st = fut.result()
+                    out[st].append(_code)
+                except Exception:  # noqa: BLE001
+                    out["fail"].append(code)
+        except Exception:  # noqa: BLE001 — 超时未完成的记失败，不编造
+            for fut, code in futs.items():
+                if not fut.done():
+                    fut.cancel()
+                    if code not in out["ok"] and code not in out["empty"] and code not in out["fail"]:
+                        out["fail"].append(code)
+    return out
+
+
+def list_incomplete_daily_codes(min_bars: int = 60, cal_days: int = 180, limit: int = 80) -> list[str]:
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    start = (datetime.now(ZoneInfo("Asia/Shanghai")).date() - timedelta(days=cal_days)).isoformat()
+    rows = query(
+        """SELECT l.code AS code, COUNT(k.date) AS n
+           FROM stock_list l
+           LEFT JOIN daily_kline k ON k.code = l.code AND k.date >= ?
+           GROUP BY l.code
+           HAVING n < ?
+           ORDER BY n ASC, l.code
+           LIMIT ?""",
+        (start, max(1, int(min_bars or 60)), max(1, min(int(limit or 80), 200))),
+    )
+    return [r["code"] for r in rows if r.get("code")]
+
+
+def backfill_incomplete_market(batch: int = 80) -> dict:
+    """后台分批补全本地日K不足的个股，只写真实拉取结果。"""
+    codes = list_incomplete_daily_codes(min_bars=60, cal_days=180, limit=batch)
+    return backfill_daily_real(codes, count=180, workers=8, limit=len(codes))
+
+
 def _load_day_from_db(code: str, limit: int = 320) -> list[list]:
     rows = query(
         "SELECT date,open,close,high,low,volume FROM daily_kline WHERE code=? ORDER BY date DESC LIMIT ?",

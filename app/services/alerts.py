@@ -293,6 +293,10 @@ def _advice_summary(r: dict, kind: str, buy_lv: str, buy_act: str, op: str) -> s
     pos = r.get("pos60")
     pos_txt = f"60日位置 {pos * 100:.0f}% 分位" if pos is not None else ""
     half = _half_txt(r)
+    if (r.get("point_gate") or "") == "new_stock":
+        sc = r.get("score")
+        sc_txt = f"{sc:.0f}" if sc is not None else "—"
+        half = "，".join(x for x in (half, f"新股通道 综合评分 {sc_txt}") if x)
     net = r.get("main_net_in")
     if net is None:
         flow_txt = ""
@@ -319,8 +323,8 @@ def _advice_summary(r: dict, kind: str, buy_lv: str, buy_act: str, op: str) -> s
 def get_buy_points(limit: int = 8) -> dict:
     """实时最佳买点（供全局弹窗）。空结果必须带回原因，避免窗口空白。
 
-    须同时命中至少 2 个启用买点方案，并结合近半年真实日K与当前价位。
-    只保留有潜力结构的命中，不再回退观察池或降低门槛凑数。
+    多方案并行扫描。老股须交叉命中至少 2 个方案并结合近半年日K；
+    日K不足即时补真实K线；新股按综合评分+财报评级。不回退观察池。
     """
     from . import strategy as strategy_svc
 

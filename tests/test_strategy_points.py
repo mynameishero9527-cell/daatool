@@ -1,4 +1,4 @@
-"""13.0.31：买/卖点须命中≥2个方案，并结合近半年真实日K。不回退观察池。"""
+"""13.0.32：多方案并行；老股交叉命中+半年日K；新股综合评分+财报评级。不回退观察池。"""
 from __future__ import annotations
 
 from datetime import timedelta
@@ -22,6 +22,7 @@ def _purge(*codes: str) -> None:
             "DELETE FROM stock_metrics WHERE code=?",
             "DELETE FROM stock_list WHERE code=?",
             "DELETE FROM daily_kline WHERE code=?",
+            "DELETE FROM stock_finance_grade WHERE code=?",
         ):
             execute(sql, (code,))
 
@@ -159,11 +160,11 @@ class StrategyPointsTests(unittest.TestCase):
     def test_no_watch_pool_fallback(self):
         _seed(CODE_RISK, name="仅指数高", buy_index=99, main_net_in=-100, pos60=0.95, rsi14=80, bias20=16)
         self.assertFalse(self._matches("buy", "BP", CODE_RISK))
-        rows, src, note = strategy.collect_buy_points(8)
+        rows, src, note = strategy.collect_buy_points(8, backfill=False)
         self.assertNotIn(src, ("top_buy_index", "relaxed_65"))
         self.assertNotIn(CODE_RISK, {r["code"] for r in rows})
         with patch.object(strategy, "collect_hits", return_value=[]):
-            empty, src2, note2 = strategy.collect_buy_points(8)
+            empty, src2, note2 = strategy.collect_buy_points(8, backfill=False)
         self.assertEqual(empty, [])
         self.assertEqual(src2, "empty")
         self.assertIn("观察池", note2)
@@ -194,20 +195,19 @@ class StrategyPointsTests(unittest.TestCase):
         self.assertIn("五行", summary)
 
     def test_empty_sell_has_reason(self):
-        rows, src, note = strategy.collect_sell_points(8)
+        rows, src, note = strategy.collect_sell_points(8, backfill=False)
         if not rows:
             self.assertEqual(src, "empty")
             self.assertTrue(note)
         self.assertEqual(intelpick.get_page("up")["items"], [])
 
-    def test_one_plan_enabled_not_recommended(self):
-        _seed(CODE_OK, name="潜力股")
+    def test_one_plan_parallel_with_half_kline(self):
+        _seed(CODE_OK, name="潜力股", buy_index=99.5, macd_bar=9.5)
         _seed_half_kline(CODE_OK)
-        rows, src, note = strategy.collect_buy_points(8)
-        self.assertEqual(rows, [])
-        self.assertEqual(src, "empty")
-        self.assertIn("至少 2 个方案", note)
-        self.assertIn("观察池", note)
+        rows, src, note = strategy.collect_buy_points(40, backfill=False)
+        self.assertEqual(src, "hit")
+        self.assertIn(CODE_OK, {r["code"] for r in rows})
+        self.assertIn("并行", note)
 
     def test_single_plan_hit_not_recommended(self):
         set_meta_json(strategy.META_KEY_BUY, ["BP", "BT", "BZ"])
@@ -216,11 +216,11 @@ class StrategyPointsTests(unittest.TestCase):
         self.assertTrue(self._matches("buy", "BP", CODE_OK))
         self.assertFalse(self._matches("buy", "BT", CODE_OK))
         self.assertFalse(self._matches("buy", "BZ", CODE_OK))
-        rows, src, note = strategy.collect_buy_points(8)
+        rows, src, note = strategy.collect_buy_points(8, backfill=False)
         self.assertNotIn(CODE_OK, {r["code"] for r in rows})
         if not rows:
             self.assertEqual(src, "empty")
-            self.assertIn("至少 2 个方案", note)
+            self.assertTrue(note)
 
     def test_multi_hit_with_half_kline_recommended(self):
         set_meta_json(strategy.META_KEY_BUY, ["BP", "BT", "BZ"])
@@ -228,7 +228,7 @@ class StrategyPointsTests(unittest.TestCase):
         _seed_half_kline(CODE_OK)
         self.assertTrue(self._matches("buy", "BP", CODE_OK))
         self.assertTrue(self._matches("buy", "BT", CODE_OK))
-        rows, src, note = strategy.collect_buy_points(40)
+        rows, src, note = strategy.collect_buy_points(40, backfill=False)
         codes = {r["code"] for r in rows}
         self.assertIn(CODE_OK, codes)
         self.assertEqual(src, "hit")
@@ -244,7 +244,7 @@ class StrategyPointsTests(unittest.TestCase):
         _seed(CODE_OK, name="潜力股")
         self.assertTrue(self._matches("buy", "BP", CODE_OK))
         self.assertTrue(self._matches("buy", "BT", CODE_OK))
-        rows, src, note = strategy.collect_buy_points(8)
+        rows, src, note = strategy.collect_buy_points(8, backfill=False)
         self.assertNotIn(CODE_OK, {r["code"] for r in rows})
         if not rows:
             self.assertEqual(src, "empty")
@@ -253,7 +253,7 @@ class StrategyPointsTests(unittest.TestCase):
     def test_no_invent_kline_from_pct(self):
         set_meta_json(strategy.META_KEY_BUY, ["BP", "BT", "BZ"])
         _seed(CODE_OK, name="潜力股", pct_d20=18, pct_d60=30)
-        rows, src, _note = strategy.collect_buy_points(8)
+        rows, src, _note = strategy.collect_buy_points(8, backfill=False)
         self.assertNotIn(CODE_OK, {r["code"] for r in rows})
         stats = strategy.half_year_stats([CODE_OK])
         self.assertNotIn(CODE_OK, stats)
@@ -271,7 +271,7 @@ class StrategyPointsTests(unittest.TestCase):
         }
         strategy.stamp_plans(raw, ["ST", "SO"], "sell")
         with patch.object(strategy, "collect_hits", return_value=[raw]):
-            rows, src, _note = strategy.collect_sell_points(8)
+            rows, src, _note = strategy.collect_sell_points(8, backfill=False)
         self.assertEqual(src, "hit")
         self.assertIn(CODE_HIGH, {r["code"] for r in rows})
         hit = next(r for r in rows if r["code"] == CODE_HIGH)
@@ -294,6 +294,79 @@ class StrategyPointsTests(unittest.TestCase):
         strategy.ensure_multi_plan_defaults()
         self.assertEqual(strategy.get_enabled("buy"), ["BP", "BD"])
         self.assertEqual(strategy.get_enabled("sell"), ["ST", "SB"])
+
+    def test_new_stock_uses_score_and_finance_grade(self):
+        set_meta_json(strategy.META_KEY_BUY, ["BP", "BT", "BZ"])
+        _seed(CODE_OK, name="新股", buy_index=90, main_net_in=8000, pct=2.0, pct_d5=5, pct_d20=8, pct_d60=10)
+        _seed_half_kline(CODE_OK, n=20)
+        execute(
+            "INSERT OR REPLACE INTO stock_finance_grade(code,grade,score,summary,updated_at)"
+            " VALUES(?,?,?,?,?)",
+            (CODE_OK, "A", 6, "测试评级", "2026-08-16"),
+        )
+        raw = {
+            "code": CODE_OK, "name": "新股", "price": 10.0, "pct": 2.0,
+            "pct_d5": 5, "pct_d20": 8, "pct_d60": 10,
+            "buy_index": 90, "main_net_in": 8000, "float_mv": 80,
+            "volume_ratio": 1.3, "dark_power": 62, "pos60": 0.48,
+            "plans": ["BP"],
+        }
+        strategy.stamp_plans(raw, ["BP"], "buy")
+        with patch.object(strategy, "collect_hits", return_value=[raw]):
+            rows, src, note = strategy.collect_buy_points(8, backfill=False)
+        self.assertEqual(src, "hit")
+        self.assertIn(CODE_OK, {r["code"] for r in rows})
+        hit = next(r for r in rows if r["code"] == CODE_OK)
+        self.assertEqual(hit.get("point_gate"), "new_stock")
+        self.assertEqual(hit.get("finance_grade"), "A")
+        self.assertGreaterEqual(hit.get("score") or 0, strategy.NEW_BUY_MIN_SCORE)
+        self.assertIn("新股", note)
+
+    def test_new_stock_ungraded_not_faked(self):
+        set_meta_json(strategy.META_KEY_BUY, ["BP", "BT", "BZ"])
+        _seed(CODE_OK, name="新股", buy_index=90, main_net_in=8000, pct=2.0, pct_d5=5)
+        _seed_half_kline(CODE_OK, n=20)
+        raw = {
+            "code": CODE_OK, "name": "新股", "price": 10.0, "pct": 2.0,
+            "pct_d5": 5, "pct_d20": 8, "pct_d60": 10,
+            "buy_index": 90, "main_net_in": 8000, "float_mv": 80,
+            "volume_ratio": 1.3, "dark_power": 62, "pos60": 0.48,
+            "plans": ["BP"],
+        }
+        strategy.stamp_plans(raw, ["BP"], "buy")
+        with patch.object(strategy, "collect_hits", return_value=[raw]):
+            rows, src, _note = strategy.collect_buy_points(8, backfill=False)
+        self.assertNotIn(CODE_OK, {r["code"] for r in rows})
+        self.assertNotEqual((raw.get("finance_grade") or ""), "A")
+
+    def test_backfill_persists_real_kline_not_pct(self):
+        set_meta_json(strategy.META_KEY_BUY, ["BP", "BT", "BZ"])
+        _seed(CODE_OK, name="潜力股", buy_index=99.5, macd_bar=9.5)
+        end = strategy._shanghai_today()
+        fake = []
+        d = end
+        days = []
+        while len(days) < 80:
+            if d.weekday() < 5:
+                days.append(d)
+            d -= timedelta(days=1)
+        days.reverse()
+        fake = []
+        for i, day in enumerate(days):
+            t = i / 79
+            close = 8.5 + 1.5 * t
+            hi, lo = close + 0.25, close - 0.25
+            if i == 0:
+                lo = 8.0
+            if i == 79:
+                hi = 12.0
+            fake.append([day.isoformat(), close, close, hi, lo, 1000])
+        with patch("app.services.kline.fetch_daily_real", return_value=fake):
+            rows, src, _note = strategy.collect_buy_points(40, backfill=True)
+        stored = query("SELECT COUNT(*) AS n FROM daily_kline WHERE code=?", (CODE_OK,))[0]["n"]
+        self.assertGreaterEqual(stored, 60)
+        self.assertIn(CODE_OK, {r["code"] for r in rows})
+        self.assertEqual(src, "hit")
 
     def test_collect_hits_min_hits_keeps_single_for_engine(self):
         _seed(CODE_OK, name="潜力股")

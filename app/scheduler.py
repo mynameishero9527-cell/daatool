@@ -159,6 +159,12 @@ def _job_fund_kline_backfill():
     kline_svc.sync_watchlist_fund(lookback=240)
 
 
+def _job_daily_kline_backfill():
+    """日K不足的个股分批补真实日K，不用涨跌幅或离线哈希冒充。"""
+    from .services import kline as kline_svc
+    kline_svc.backfill_incomplete_market(batch=80)
+
+
 def _job_fx_snapshot():
     """外汇即时价：每 5 分钟，不限于 A 股交易时段。"""
     fx.job_snapshot()
@@ -184,7 +190,7 @@ from .database import get_meta_json, set_meta_json
 # 间隔型任务（可调频率，分钟）
 INTERVAL_JOBS = {"medium": 1, "news": 1, "snapshot": 5, "metrics_recompute": 10, "alerts": 10,
                  "sector_flow": 5, "hot_terms": 60, "official_policy": 240, "engine_intraday": 10,
-                 "fund_kline": 5, "fx_snapshot": 5}
+                 "fund_kline": 5, "fx_snapshot": 5, "kline_backfill": 30}
 ALLOWED_MINUTES = [1, 5, 10, 15, 30, 60, 120, 180, 240]
 
 
@@ -281,6 +287,8 @@ def start() -> None:
                   "interval", minutes=5, id="fund_kline")
     sched.add_job(_run("个股主力资金历史回补", _job_fund_kline_backfill), "cron",
                   day_of_week="mon-fri", hour=15, minute=32, id="fund_kline_backfill")
+    sched.add_job(_run("个股日K缺口回补", _job_daily_kline_backfill),
+                  "interval", minutes=30, id="kline_backfill")
     sched.add_job(_run("各国汇率即时", _job_fx_snapshot),
                   "interval", minutes=5, id="fx_snapshot")
     sched.add_job(_run("各国汇率官方日线", _job_fx_daily), "cron",
@@ -312,6 +320,7 @@ def status() -> list[dict]:
                     "engine_intraday": "策略引擎盘中增量",
                     "fund_kline": "个股主力资金增量",
                     "fund_kline_backfill": "个股主力资金历史回补",
+                    "kline_backfill": "个股日K缺口回补",
                     "fx_snapshot": "各国汇率即时",
                     "fx_daily": "各国汇率官方日线",
                     "fx_year": "各国汇率近一年回补"}.get(job.id, job.id)
