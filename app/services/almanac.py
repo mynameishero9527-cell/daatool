@@ -6,8 +6,12 @@
 import json
 import logging
 from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
+
+from .lunar import solar_to_lunar
 
 log = logging.getLogger("almanac")
+_TZ = ZoneInfo("Asia/Shanghai")
 
 GAN = "甲乙丙丁戊己庚辛壬癸"
 ZHI = "子丑寅卯辰巳午未申酉戌亥"
@@ -81,6 +85,34 @@ def year_ganzhi(d: date) -> tuple[str, str]:
     if spring and d < spring:
         year -= 1
     return GAN[(year - 4) % 10] + ZHI[(year - 4) % 12], ZODIAC[(year - 4) % 12]
+
+
+def now_shanghai() -> datetime:
+    return datetime.now(_TZ)
+
+
+def shichen_index(hour: int) -> int:
+    """北京时间小时 → 时支序号。23/0 子，1-2 丑，…，21-22 亥。"""
+    h = int(hour) % 24
+    return ((h + 1) // 2) % 12
+
+
+def hour_ganzhi(d: date, hour: int) -> dict:
+    """时柱：五鼠遁（甲己还加甲）。日柱用公历日，不把 23 点改成次日。"""
+    dgz = day_ganzhi(d)
+    zhi_i = shichen_index(hour)
+    start = {0: 0, 5: 0, 1: 2, 6: 2, 2: 4, 7: 4, 3: 6, 8: 6, 4: 8, 9: 8}[GAN.index(dgz[0])]
+    gan = GAN[(start + zhi_i) % 10]
+    zhi = ZHI[zhi_i]
+    name, direction = SHICHEN[zhi_i]
+    return {
+        "ganzhi": gan + zhi,
+        "text": f"{gan}{zhi}时",
+        "name": name,
+        "direction": direction,
+        "hour": int(hour) % 24,
+        "zhi_index": zhi_i,
+    }
 
 
 def month_ganzhi(d: date) -> str:
@@ -213,7 +245,8 @@ def _store_almanac(payload: dict) -> bool:
         return False
     try:
         from ..database import execute
-        body = {k: v for k, v in payload.items() if k not in ("stored", "stored_days")}
+        body = {k: v for k, v in payload.items()
+                if k not in ("stored", "stored_days", "hour", "hour_ganzhi", "clock")}
         execute(
             "INSERT INTO almanac_day(day, payload, updated_at) VALUES(?,?,?) "
             "ON CONFLICT(day) DO UPDATE SET payload=excluded.payload, updated_at=excluded.updated_at",
@@ -236,8 +269,10 @@ def prefetch_almanac_range(center: date, span: int = 7) -> list[str]:
     return stored
 
 
-def get_almanac(d: date | None = None, persist: bool = True) -> dict:
-    d = d or date.today()
+def get_almanac(d: date | None = None, persist: bool = True,
+                now: datetime | None = None) -> dict:
+    clock = now or now_shanghai()
+    d = d or clock.date()
     ygz, zodiac = year_ganzhi(d)
     dgz = day_ganzhi(d)
     mgz = month_ganzhi(d)
@@ -245,15 +280,36 @@ def get_almanac(d: date | None = None, persist: bool = True) -> dict:
     term_today = next((n for n, m, dd in SOLAR_TERMS if m == d.month and dd == d.day), None)
     season = _season_of(d)
     wx = _WANGXIANG[season]
-    today = date.today()
+    today = clock.date()
     hd = huangdao_of(d)
+    lunar = solar_to_lunar(d)
+    hour = hour_ganzhi(d, clock.hour) if d == today else None
+    pillars = [f"{ygz}年", f"{mgz}月", f"{dgz}日"]
+    if hour:
+        pillars.append(hour["text"])
+    lunar_year_gz = GAN[(lunar["year"] - 4) % 10] + ZHI[(lunar["year"] - 4) % 12] if lunar else ""
+    if lunar:
+        lunar = {
+            **lunar,
+            "year_ganzhi": f"{lunar_year_gz}年",
+            "zodiac": ZODIAC[(lunar["year"] - 4) % 12],
+            "full": f"{lunar_year_gz}年{lunar['text']}",
+        }
     payload = {
         "ok": True,
         "date": d.isoformat(),
         "is_today": d == today,
         "weekday": "周" + "一二三四五六日"[d.weekday()],
+        "solar": {
+            "year": d.year, "month": d.month, "day": d.day,
+            "text": f"{d.year}年{d.month}月{d.day}日",
+        },
+        "lunar": lunar or {"ok": False, "text": "", "full": "", "error": "超出农历对照表，不猜测"},
         "year_ganzhi": f"{ygz}年", "zodiac": zodiac,
         "month_ganzhi": f"{mgz}月", "day_ganzhi": f"{dgz}日",
+        "hour_ganzhi": hour["text"] if hour else "",
+        "hour": hour,
+        "pillars_text": " ".join(pillars),
         "wuxing": f"日干{day_gan}属{GAN_WUXING[day_gan]}，日支{dgz[1]}属{ZHI_WUXING[dgz[1]]}",
         "caishen": CAISHEN[day_gan],
         "zhi_dir": ZHI_DIR[dgz[1]],
@@ -267,7 +323,7 @@ def get_almanac(d: date | None = None, persist: bool = True) -> dict:
         "huangdao": hd,
         "tomorrow": _day_summary(d + timedelta(days=1)),
         "stored": False,
-        "note": "干支按1949-10-01甲子日推算；节气/农历为通用近似日期；方位五行为民俗文化参考",
+        "note": "干支日柱按1949-10-01甲子日；年柱以春节为界；月柱按节气寅月；时柱五鼠遁用北京时间；农历为1900-2100月历表；民俗参考",
     }
     if persist:
         payload["stored"] = _store_almanac(payload)

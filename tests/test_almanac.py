@@ -120,6 +120,46 @@ class AlmanacDateTests(unittest.TestCase):
         self.assertTrue(sync.json().get("ok"))
         self.assertEqual(sync.json().get("stored_days"), 5)
 
+    def test_solar_lunar_and_hour_pillars(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("Asia/Shanghai")
+        now = datetime(2026, 8, 16, 11, 0, tzinfo=tz)
+        a = almanac.get_almanac(date(2026, 8, 16), persist=False, now=now)
+        self.assertEqual(a["solar"]["text"], "2026年8月16日")
+        self.assertTrue(a["lunar"]["ok"])
+        self.assertEqual(a["lunar"]["text"], "七月初四")
+        self.assertIn("丙午年", a["lunar"]["full"])
+        self.assertEqual(a["year_ganzhi"], "丙午年")
+        self.assertEqual(a["day_ganzhi"], "壬戌日")
+        self.assertEqual(a["hour_ganzhi"], "丙午时")
+        self.assertIn("丙午年", a["pillars_text"])
+        self.assertIn("壬戌日", a["pillars_text"])
+        self.assertIn("丙午时", a["pillars_text"])
+        self.assertTrue(a["huangdao"]["text"])
+        other = almanac.get_almanac(date(2026, 2, 17), persist=False, now=now)
+        self.assertEqual(other["lunar"]["text"], "正月初一")
+        self.assertEqual(other["hour_ganzhi"], "")
+        self.assertIsNone(other["hour"])
+
+    def test_hour_ganzhi_jiazi_day(self):
+        self.assertEqual(almanac.day_ganzhi(date(1949, 10, 1)), "甲子")
+        self.assertEqual(almanac.hour_ganzhi(date(1949, 10, 1), 0)["text"], "甲子时")
+        self.assertEqual(almanac.hour_ganzhi(date(1949, 10, 1), 23)["text"], "甲子时")
+        self.assertEqual(almanac.hour_ganzhi(date(1949, 10, 1), 1)["text"], "乙丑时")
+        self.assertEqual(almanac.hour_ganzhi(date(1949, 10, 1), 11)["text"], "庚午时")
+
+    def test_api_includes_calendars(self):
+        from fastapi.testclient import TestClient
+        client = TestClient(app)
+        body = client.get("/api/macro/almanac?date=2026-02-17&span=0").json()
+        self.assertTrue(body.get("ok"))
+        self.assertEqual(body["solar"]["text"], "2026年2月17日")
+        self.assertEqual(body["lunar"]["text"], "正月初一")
+        self.assertIn("年", body["year_ganzhi"])
+        self.assertIn("月", body["month_ganzhi"])
+        self.assertIn("日", body["day_ganzhi"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -324,6 +324,7 @@ CREATE TABLE IF NOT EXISTS stock_ai_brief (
 -- 13.0.19：黄历九宫可按日期查询（干支按甲子日推算，不编造官方黄历）
 -- 13.0.20：切换日期时同步更新干支/黄道等，并写入本地 almanac_day
 -- 13.0.21：个股主力资金K多源补历史并定时同步到本地 stock_fund_daily
+-- 13.0.22：顶栏黄历补齐阳历农历与干支年月日时
 -- intel_item_ai / hot_term_ai 表结构不变，失败仍不覆盖已保存结果
 
 CREATE TABLE IF NOT EXISTS knowledge_ai (

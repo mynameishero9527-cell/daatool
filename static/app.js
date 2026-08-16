@@ -513,16 +513,33 @@ async function loadBoardMonthCycle() {
   }
 }
 
+function renderTopAlmanac(a) {
+  const el = $("#topAlmanac");
+  if (!el || !a) return;
+  const h = a.huangdao || {};
+  const solar = (a.solar && a.solar.text) || a.date || "";
+  const lunar = (a.lunar && a.lunar.ok) ? (a.lunar.full || a.lunar.text) : "农历暂无对照";
+  const pillars = a.pillars_text || [a.year_ganzhi, a.month_ganzhi, a.day_ganzhi, a.hour_ganzhi].filter(Boolean).join(" ");
+  el.innerHTML = `<span class="ta-line">📅 ${esc(solar)} ${esc(a.weekday || "")} · 农历${esc(lunar)}</span>`
+    + `<span class="ta-line">${esc(pillars)}${h.text ? ` · ${esc(h.text)}` : ""}</span>`;
+  el.title = [
+    `${solar} ${a.weekday || ""}`,
+    `农历${lunar}`,
+    pillars,
+    h.text || "",
+    a.wuxing || "",
+    a.caishen ? `财神：${a.caishen}` : "",
+    "民俗参考，不构成投资建议",
+  ].filter(Boolean).join("\n");
+  el.classList.toggle("heidao", !h.is_huangdao);
+}
 async function loadTopAlmanac() {
   try {
-    const a = await api("/api/macro/almanac");
-    const h = a.huangdao || {};
-    const el = $("#topAlmanac");
-    el.textContent = `📅 ${a.day_ganzhi} · ${a.zodiac}年 · ${h.text || ""}`;
-    el.title = `${a.date} ${a.weekday}\n${a.year_ganzhi}【${a.zodiac}年】 ${a.month_ganzhi} ${a.day_ganzhi}\n`
-      + `${h.text || ""}\n${a.wuxing}\n财神：${a.caishen}\n（民俗参考，不构成投资建议）`;
-    el.classList.toggle("heidao", !h.is_huangdao);
+    renderTopAlmanac(await api("/api/macro/almanac"));
   } catch (err) { console.warn(err); }
+}
+if (!window._topAlmanacTimer) {
+  window._topAlmanacTimer = setInterval(loadTopAlmanac, 30000);
 }
 
 let almanacPick = "";
@@ -598,14 +615,18 @@ async function loadDashAlmanac(forceDate) {
     }
     const nextLab = a.is_today ? "明日预览" : "次日预览";
     const wxCompact = wx["旺"] ? `${wx["旺"]}旺 ${wx["相"] || ""}相` : (a.wangxiang_text || "—");
+    const solarTxt = (a.solar && a.solar.text) || a.date;
+    const lunarTxt = (a.lunar && a.lunar.ok) ? (a.lunar.full || ("农历" + a.lunar.text)) : "";
     host.innerHTML = `
-      <div class="almanac-head">${esc(a.date)}（${esc(a.weekday)}）${a.is_today ? '<span class="badge level-3">今天</span>' : ""}
+      <div class="almanac-head">${esc(solarTxt)}（${esc(a.weekday)}）${a.is_today ? '<span class="badge level-3">今天</span>' : ""}
+        ${lunarTxt ? `<span class="badge level-2">${esc(lunarTxt)}</span>` : ""}
         ${a.solar_term ? `<span class="badge level-3">${esc(a.solar_term)}</span>` : ""}
         ${a.stored ? '<span class="badge level-2">已存本地</span>' : ""}</div>
       <div class="almanac-kpi">
         <div class="kpi"><span class="k">年柱</span><span class="v">${esc(a.year_ganzhi)}【${esc(a.zodiac)}】</span></div>
         <div class="kpi"><span class="k">月柱</span><span class="v">${esc(a.month_ganzhi)}</span></div>
         <div class="kpi"><span class="k">日柱</span><span class="v">${esc(a.day_ganzhi)}</span></div>
+        <div class="kpi"><span class="k">时柱</span><span class="v">${esc(a.hour_ganzhi || (a.is_today ? "—" : "仅当天"))}</span></div>
         <div class="kpi ${h.is_huangdao ? "hd" : "bd"}"><span class="k">黄道</span><span class="v">${esc(h.text || "—")}</span></div>
         <div class="kpi caishen"><span class="k">财神</span><span class="v">${esc(a.caishen || "—")}${a.zhi_dir ? ` · 日支${esc(a.zhi_dir)}` : ""}</span></div>
         <div class="kpi"><span class="k">旺相</span><span class="v">${esc(wxCompact)}</span></div>
@@ -2513,7 +2534,8 @@ async function almanacCard() {
     return `
       <div class="outlook-summary" style="border-color:rgba(232,196,107,.4);background:rgba(232,196,107,.06)">
         <b>📅 今日黄历</b> <span class="muted">${esc(a.note)}</span><br>
-        ${esc(a.date)}（${esc(a.weekday)}）｜ ${esc(a.year_ganzhi)}【${esc(a.zodiac)}年】 ${esc(a.month_ganzhi)} ${esc(a.day_ganzhi)}
+        ${esc((a.solar && a.solar.text) || a.date)}（${esc(a.weekday)}）｜ 农历${esc((a.lunar && a.lunar.ok && (a.lunar.full || a.lunar.text)) || "暂无对照")}<br>
+        ${esc(a.pillars_text || (`${a.year_ganzhi} ${a.month_ganzhi} ${a.day_ganzhi} ${a.hour_ganzhi || ""}`).trim())}
         ${a.solar_term ? `｜ <span class="badge level-3">今日${esc(a.solar_term)}</span>` : ""}
         ${a.huangdao ? `｜ <span class="badge ${a.huangdao.is_huangdao ? "level-3" : "level-2"}">${esc(a.huangdao.text)}</span>` : ""}<br>
         <span class="muted">五行：${esc(a.wuxing)} ｜ 财神方位：${esc(a.caishen)}（民俗参考）</span><br>
