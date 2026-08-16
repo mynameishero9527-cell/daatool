@@ -87,6 +87,40 @@ class ForecastRecTests(unittest.TestCase):
         self.assertEqual(forecast_rec.list_page()["count"], 0)
         self.assertEqual(intelpick.get_page("down")["items"], [])
 
+    def test_same_stock_not_shown_twice(self):
+        first = forecast_rec.record("yijing", self._payload("yijing"))
+        again = forecast_rec.record("qimen", self._payload("qimen", [{
+            "code": "sz012350", "name": "测木", "industry": "银行",
+            "wuxing": ["金"], "score": 99.0, "advice": "保持不变",
+        }]))
+        self.assertEqual(first["count"], 1)
+        self.assertEqual(again["added"], 0)
+        self.assertEqual(again["skipped"], 1)
+        self.assertIsNone(again["batch_no"])
+        page = forecast_rec.list_page()
+        self.assertEqual(page["count"], 1)
+        self.assertEqual(page["items"][0]["kind"], "yijing")
+        self.assertEqual(page["items"][0]["score"], 80.0)
+        one = forecast_rec.list_page(code="sz012350")
+        self.assertEqual(one["count"], 1)
+        self.assertEqual(intelpick.get_page("up")["items"], [])
+
+        execute(
+            "INSERT INTO forecast_batch(batch_no,kind,kind_label,predicted_at,almanac_date,hour,"
+            "wuxing,summary,extra,stock_count) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            ("QM-DUP", "qimen", "奇门遁甲预测", "2026-08-16 12:00:00",
+             "2026-08-16", 12, "[]", "重复", "[]", 1),
+        )
+        execute(
+            "INSERT INTO forecast_stock(batch_no,code,name,industry,wuxing,finance_grade,score,"
+            "advice,buy_index,price,pct,wx_state) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("QM-DUP", "sz012350", "测木", "银行", "[]", "", 99.0, "", None, None, None, "[]"),
+        )
+        collapsed = forecast_rec.list_page()
+        self.assertEqual(collapsed["count"], 1)
+        self.assertEqual(query("SELECT COUNT(*) AS n FROM forecast_stock")[0]["n"], 1)
+        self.assertEqual(intelpick.get_page("down")["items"], [])
+
     def test_api_saves_and_does_not_fill_intelpick(self):
         from fastapi.testclient import TestClient
         from app.main import app

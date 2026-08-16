@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>A股量化工具</title>
-<link rel="stylesheet" href="/static/style.css?v=13.0.38">
+<link rel="stylesheet" href="/static/style.css?v=13.0.39">
 <script>
 (function () {
   try {
@@ -550,6 +550,7 @@
       <button class="opt active" data-side="up">上涨预测</button>
       <button class="opt" data-side="down">下跌预测</button>
       <button class="opt" data-side="forecast">预测推荐</button>
+      <button class="opt" data-side="forecast-stock" id="ipForecastStockTab" style="display:none">预测个股</button>
     </div>
     <div class="card">
       <div class="card-title">
@@ -580,6 +581,12 @@
       </div>
       <div id="ipForecastBar"></div>
       <div id="ipForecastTable"><div class="empty">加载中…</div></div>
+    </div>
+    <div class="card" id="ipForecastStockCard" style="display:none">
+      <div class="card-title">预测个股 <span class="muted">本页只展示已保存的预测字段 · 民俗参考</span>
+        <span class="muted" id="ipForecastStockTitle"></span>
+      </div>
+      <div id="ipForecastStockBox"><div class="empty">请在预测推荐里点击一只股票</div></div>
     </div>
   </section>
 
@@ -842,6 +849,6 @@
   <div class="ctx-item" id="ctxKbRevert" style="display:none">↩ 还原内置解释</div>
 </div>
 
-<script src="/static/app.js?v=13.0.38"></script>
+<script src="/static/app.js?v=13.0.39"></script>
 </body>
 </html>

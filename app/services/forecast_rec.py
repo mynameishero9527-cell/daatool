@@ -29,6 +29,7 @@ SORTS = (
 _SORT_SQL = {s["id"]: s["sql"] for s in SORTS}
 NOTE = (
     "这里只回显黄历里「易经卜卦 / 奇门遁甲预测」已经筛出的本地个股，"
+    "同股只保留一条，再次预测到已有股票不重复显示；"
     "不编造名单，也不写入上涨/下跌预测。"
 )
 DISCLAIMER = "民俗推算 + 量化过滤，仅供参考，不构成投资建议。"
@@ -99,18 +100,108 @@ def _summary_of(payload: dict, kind: str) -> str:
     return f"{season}季旺相{favor} {qm.get('shichen') or ''}".strip()
 
 
+def _refresh_batch_counts() -> None:
+    execute(
+        "UPDATE forecast_batch SET stock_count=("
+        "SELECT COUNT(*) FROM forecast_stock s WHERE s.batch_no=forecast_batch.batch_no)"
+    )
+    execute(
+        "DELETE FROM forecast_batch WHERE NOT EXISTS ("
+        "SELECT 1 FROM forecast_stock s WHERE s.batch_no=forecast_batch.batch_no)"
+    )
+
+
+def _collapse_duplicate_codes() -> int:
+    """历史重复：同股只留最近一次预测，空批次一并删掉。"""
+    rows = query(
+        "SELECT s.id, s.code, b.predicted_at FROM forecast_stock s "
+        "JOIN forecast_batch b ON b.batch_no=s.batch_no "
+        "ORDER BY b.predicted_at DESC, s.id DESC"
+    )
+    seen: set[str] = set()
+    drop: list[int] = []
+    for r in rows:
+        code = str(r.get("code") or "").strip()
+        if not code or code in seen:
+            drop.append(int(r["id"]))
+            continue
+        seen.add(code)
+    if drop:
+        marks = ",".join("?" * len(drop))
+        execute(f"DELETE FROM forecast_stock WHERE id IN ({marks})", tuple(drop))
+        _refresh_batch_counts()
+    return len(drop)
+
+
+def _existing_codes() -> set[str]:
+    return {
+        str(r.get("code") or "").strip()
+        for r in query("SELECT DISTINCT code FROM forecast_stock")
+        if str(r.get("code") or "").strip()
+    }
+
+
+def _unique_items(items: list[dict]) -> list[dict]:
+    seen: set[str] = set()
+    out = []
+    for r in items:
+        code = str(r.get("code") or "").strip()
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        out.append(r)
+    return out
+
+
 def record(kind: str, payload: dict | None) -> dict | None:
-    """把一次预测的真实个股写入本地。无个股或失败不建批次。"""
+    """把一次预测的真实个股写入本地。已有相同股票不重复落库，无新增不建批次。"""
     kid = _norm_kind(kind)
     if not kid or not isinstance(payload, dict) or not payload.get("ok"):
         return None
     stocks = [s for s in (payload.get("stocks") or []) if s.get("code") and s.get("name")]
     if not stocks:
         return None
+    _collapse_duplicate_codes()
+    existing = _existing_codes()
+    wx = _wuxing_of(payload, kid)
+    rows = []
+    seen: set[str] = set()
+    skipped = 0
+    for s in stocks:
+        code = str(s.get("code") or "").strip()
+        if not code or code in seen:
+            continue
+        if code in existing:
+            skipped += 1
+            continue
+        seen.add(code)
+        rows.append((
+            code, str(s.get("name") or "").strip() or code,
+            str(s.get("industry") or ""),
+            _json_dump(s.get("wuxing") or []),
+            str(s.get("finance_grade") or ""),
+            s.get("score"), s.get("advice"), s.get("buy_index"),
+            s.get("price"), s.get("pct"),
+            _json_dump(s.get("wx_state") or []),
+        ))
+    payload["kind_label"] = KINDS[kid]["label"]
+    payload["added"] = len(rows)
+    payload["skipped"] = skipped
+    if not rows:
+        payload["batch_no"] = None
+        return {
+            "batch_no": None,
+            "predicted_at": None,
+            "kind": kid,
+            "kind_label": KINDS[kid]["label"],
+            "count": 0,
+            "added": 0,
+            "skipped": skipped,
+            "wuxing": wx,
+        }
     when = _now()
     batch_no = _alloc_batch_no(kid, when)
     predicted_at = when.strftime("%Y-%m-%d %H:%M:%S")
-    wx = _wuxing_of(payload, kid)
     extra = {
         "gua": payload.get("gua") if kid == "yijing" else None,
         "qimen": payload.get("qimen") if kid == "qimen" else None,
@@ -128,42 +219,25 @@ def record(kind: str, payload: dict | None) -> dict | None:
             _json_dump(wx),
             _summary_of(payload, kid),
             _json_dump(extra),
-            len(stocks),
+            len(rows),
         ),
     )
-    rows = []
-    seen = set()
-    for s in stocks:
-        code = str(s.get("code") or "").strip()
-        if not code or code in seen:
-            continue
-        seen.add(code)
-        rows.append((
-            batch_no, code, str(s.get("name") or "").strip() or code,
-            str(s.get("industry") or ""),
-            _json_dump(s.get("wuxing") or []),
-            str(s.get("finance_grade") or ""),
-            s.get("score"), s.get("advice"), s.get("buy_index"),
-            s.get("price"), s.get("pct"),
-            _json_dump(s.get("wx_state") or []),
-        ))
-    if rows:
-        executemany(
-            "INSERT OR REPLACE INTO forecast_stock("
-            "batch_no,code,name,industry,wuxing,finance_grade,score,advice,"
-            "buy_index,price,pct,wx_state) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-            rows,
-        )
-        execute("UPDATE forecast_batch SET stock_count=? WHERE batch_no=?", (len(rows), batch_no))
+    executemany(
+        "INSERT OR REPLACE INTO forecast_stock("
+        "batch_no,code,name,industry,wuxing,finance_grade,score,advice,"
+        "buy_index,price,pct,wx_state) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+        [(batch_no, *row) for row in rows],
+    )
     payload["batch_no"] = batch_no
     payload["predicted_at"] = predicted_at
-    payload["kind_label"] = KINDS[kid]["label"]
     return {
         "batch_no": batch_no,
         "predicted_at": predicted_at,
         "kind": kid,
         "kind_label": KINDS[kid]["label"],
         "count": len(rows),
+        "added": len(rows),
+        "skipped": skipped,
         "wuxing": wx,
     }
 
@@ -191,7 +265,9 @@ def list_page(
     batch_no: str = "",
     sort: str = "predicted_at",
     order: str = "desc",
+    code: str = "",
 ) -> dict:
+    _collapse_duplicate_codes()
     kid = _norm_kind(kind) if kind else None
     sort_id = sort if sort in _SORT_SQL else "predicted_at"
     direction = "ASC" if str(order or "").lower() == "asc" else "DESC"
@@ -204,6 +280,10 @@ def list_page(
     if batch_no:
         where.append("b.batch_no=?")
         params.append(batch_no)
+    code = (code or "").strip()
+    if code:
+        where.append("s.code=?")
+        params.append(code)
     sql = (
         "SELECT s.code, s.name, s.industry, s.wuxing, s.finance_grade, s.score, "
         "s.advice, s.buy_index, s.price, s.pct, s.wx_state, "
@@ -236,6 +316,7 @@ def list_page(
             "batch_wuxing": _json_load(r.get("batch_wuxing")),
             "summary": r.get("summary") or "",
         })
+    items = _unique_items(items)
     empty = ""
     if not items:
         empty = (
@@ -254,6 +335,7 @@ def list_page(
         "order": direction.lower(),
         "kind": kid or "",
         "batch_no": batch_no,
+        "code": code,
         "note": NOTE,
         "empty_reason": empty,
         "disclaimer": DISCLAIMER,

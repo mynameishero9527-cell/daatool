@@ -627,6 +627,28 @@ function renderLiuren(l) {
     <div class="muted" style="margin-top:6px">三传：${esc(chuan)}</div>
     <div class="muted" style="font-size:calc(11px * var(--font-scale))">${esc(l.note || "")}</div>`;
 }
+function forecastRecSaveLine(d, matched, fallbackKind) {
+  const n = Number(matched) || 0;
+  const added = d.added != null ? Number(d.added) : (d.batch_no ? n : 0);
+  const skipped = Number(d.skipped) || 0;
+  if (!n && !skipped) {
+    return `<div class="empty">${esc(d.empty_reason || "无匹配个股")}</div>`;
+  }
+  const batch = d.batch_no
+    ? `已写入预测推荐 · ${esc(d.kind_label || fallbackKind)} · 批次 ${esc(d.batch_no)} · ${esc(d.predicted_at || "")}`
+    : `未新建批次 · ${esc(d.kind_label || fallbackKind)} · 匹配个股均已在预测推荐中`;
+  return `<div class="muted">${esc(batch)}</div>
+    <div class="muted">匹配 ${n} 只 · 新增 ${added} 只 · 已有相同股票 ${skipped} 只不重复显示
+      <button type="button" class="btn small" id="viewForecastRecBtn" style="margin-left:8px">查看预测推荐</button>
+    </div>`;
+}
+function bindViewForecastRecBtn() {
+  $("#viewForecastRecBtn")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    showIntelpickForecastTab();
+  });
+}
 function renderAlmanacPickTable(stocks) {
   if (!stocks || !stocks.length) return "";
   return `<table><thead><tr>
@@ -665,8 +687,7 @@ function renderDivineBox(d) {
       · 财报 ${esc((d.good_grades || ["A", "B"]).join("/"))}
       · 综合评分≥${d.min_score || 65}</div>
     <div class="muted">爻数 ${esc((d.yao_digits || []).join(""))} · 钱数 ${esc((d.bit_digits || []).join(""))} · 排列 ${d.candidate_count || 0} 个号码 · 号码对照 ${d.digit_matched_count || 0} 只 · 展示 ${d.matched_count || 0} 只 · 未评级不伪造</div>
-    ${d.batch_no ? `<div class="muted">已写入预测推荐 · ${esc(d.kind_label || "易经卜卦推测")} · 批次 ${esc(d.batch_no)} · ${esc(d.predicted_at || "")}</div>` : ""}
-    ${stocks.length ? renderAlmanacPickTable(stocks) : `<div class="empty">${esc(d.empty_reason || "无匹配个股")}</div>`}
+    ${forecastRecSaveLine(d, stocks.length, "易经卜卦推测")}
     <div class="muted" style="font-size:calc(11px * var(--font-scale));margin-top:4px">${esc(d.note || "")}</div>`;
 }
 function renderQimenPickBox(d) {
@@ -680,8 +701,7 @@ function renderQimenPickBox(d) {
       · 值符${esc(qm.zhi_fu_star || "")} 值使${esc(qm.zhi_shi_door || "")}门</div>
     <div class="muted">${esc(d.season || "")}季：旺${esc(wx["旺"] || "")} 相${esc(wx["相"] || "")} 休${esc(wx["休"] || "")} 囚${esc(wx["囚"] || "")} 死${esc(wx["死"] || "")}
       · 只取旺相行业 · 综合评分≥${d.min_score || 55} · 购买指数≥${d.min_buy_index || 50} · 策略非减持 · ${d.count || 0}/50</div>
-    ${d.batch_no ? `<div class="muted">已写入预测推荐 · ${esc(d.kind_label || "奇门遁甲预测")} · 批次 ${esc(d.batch_no)} · ${esc(d.predicted_at || "")}</div>` : ""}
-    ${stocks.length ? renderAlmanacPickTable(stocks) : `<div class="empty">${esc(d.empty_reason || "无个股")}</div>`}
+    ${forecastRecSaveLine(d, stocks.length, "奇门遁甲预测")}
     <div class="muted" style="font-size:calc(11px * var(--font-scale));margin-top:4px">${esc(d.note || "")}</div>`;
 }
 function almanacSelectedHour() {
@@ -902,7 +922,8 @@ async function runAlmanacDivine() {
       body: JSON.stringify({ date: almanacPick || "", hour: almanacSelectedHour() }),
     });
     if (box) box.innerHTML = renderDivineBox(d);
-    if (intelpickSub === "forecast") loadForecastRec();
+    bindViewForecastRecBtn();
+    if (d && d.ok && ((d.stocks || []).length || d.skipped)) showIntelpickForecastTab();
   } catch (err) {
     if (box) box.innerHTML = `<div class="empty">卜卦失败：${esc(err.message || err)}</div>`;
   } finally {
@@ -922,7 +943,8 @@ async function runAlmanacQimenPick() {
       body: JSON.stringify({ date: almanacPick || "", hour: almanacSelectedHour() }),
     });
     if (box) box.innerHTML = renderQimenPickBox(d);
-    if (intelpickSub === "forecast") loadForecastRec();
+    bindViewForecastRecBtn();
+    if (d && d.ok && ((d.stocks || []).length || d.skipped)) showIntelpickForecastTab();
   } catch (err) {
     if (box) box.innerHTML = `<div class="empty">预测失败：${esc(err.message || err)}</div>`;
   } finally {
@@ -7426,14 +7448,33 @@ function bindBuyFlash() {
 /* ---------------- 智能选股（股价未来涨跌方向，菜单骨架） ---------------- */
 let intelpickSub = "up";
 let forecastRecState = { kind: "", batch_no: "", sort: "predicted_at", order: "desc" };
+let forecastStockView = null;
+function showIntelpickForecastTab() {
+  intelpickSub = "forecast";
+  $$("#intelpickTabs .opt").forEach((b) => b.classList.toggle("active", b.dataset.side === "forecast"));
+  loadIntelpick();
+}
 function syncIntelpickCards() {
   const fc = intelpickSub === "forecast";
+  const fs = intelpickSub === "forecast-stock";
+  const hideDir = fc || fs;
   const dirM = $("#ipDirMarketCard");
   const dirL = $("#ipDirListCard");
   const rec = $("#ipForecastCard");
-  if (dirM) dirM.style.display = fc ? "none" : "";
-  if (dirL) dirL.style.display = fc ? "none" : "";
+  const stockCard = $("#ipForecastStockCard");
+  const stockTab = $("#ipForecastStockTab");
+  if (dirM) dirM.style.display = hideDir ? "none" : "";
+  if (dirL) dirL.style.display = hideDir ? "none" : "";
   if (rec) rec.style.display = fc ? "" : "none";
+  if (stockCard) stockCard.style.display = fs ? "" : "none";
+  if (stockTab) {
+    stockTab.style.display = forecastStockView ? "" : "none";
+    if (forecastStockView) {
+      stockTab.textContent = forecastStockView.name
+        ? `预测个股 · ${forecastStockView.name}`
+        : "预测个股";
+    }
+  }
 }
 async function loadIntelpick() {
   const box = $("#ipTable");
@@ -7443,6 +7484,10 @@ async function loadIntelpick() {
   syncIntelpickCards();
   if (intelpickSub === "forecast") {
     await loadForecastRec();
+    return;
+  }
+  if (intelpickSub === "forecast-stock") {
+    await paintForecastStockView();
     return;
   }
   if (!box) return;
@@ -7553,7 +7598,7 @@ async function loadForecastRec() {
       <th>名称</th><th>代码</th><th>五行</th><th>预测类型</th><th>预测时间</th><th>批次号</th>
       <th>行业</th><th>财报</th><th>综合评分</th><th>策略</th>
     </tr></thead><tbody>${items.map((r) => `
-      <tr data-code="${escAttr(r.code)}" data-name="${escAttr(r.name)}" onclick="openStock('${esc(r.code)}','${esc(r.name)}')">
+      <tr class="js-fc-stock" data-code="${escAttr(r.code)}" data-name="${escAttr(r.name)}" style="cursor:pointer">
         <td>${esc(r.name)}</td>
         <td class="muted">${esc(r.code)}</td>
         <td>${wxBadges(r.wuxing || r.batch_wuxing)}${(r.batch_wuxing || []).length ? ` <span class="muted">${esc((r.batch_wuxing || []).join("、"))}</span>` : ""}</td>
@@ -7564,8 +7609,12 @@ async function loadForecastRec() {
         <td>${esc(r.finance_grade || "—")}</td>
         <td class="num"><b>${r.score != null ? fmt(r.score, 1) : "-"}</b></td>
         <td>${r.advice ? `<span class="badge ${r.advice === "增持" ? "advice-buy" : r.advice === "减持" ? "advice-sell" : "advice-hold"}">${esc(r.advice)}</span>` : "-"}</td>
-      </tr>`).join("")}</tbody></table>`;
+      </tr>`).join("")}</tbody></table>
+      <div class="muted" style="margin-top:6px;font-size:calc(11px * var(--font-scale))">同股只显示一条。点击一行在「预测个股」页查看预测数据。</div>`;
     bindForecastRecBar();
+    box.querySelectorAll(".js-fc-stock").forEach((tr) => {
+      tr.addEventListener("click", () => openForecastStockView(tr.dataset.code, tr.dataset.name));
+    });
   } catch (err) {
     box.innerHTML = '<div class="empty">预测推荐加载失败</div>';
     console.warn(err);
@@ -7613,8 +7662,64 @@ async function clearForecastRec(body) {
       forecastRecState.batch_no = "";
     }
     if (body.all) forecastRecState.kind = "";
+    if (body.all) forecastStockView = null;
     await loadForecastRec();
   } catch (err) {
+    console.warn(err);
+  }
+}
+async function openForecastStockView(code, name) {
+  forecastStockView = { code, name: name || "" };
+  intelpickSub = "forecast-stock";
+  $$("#intelpickTabs .opt").forEach((b) => b.classList.toggle("active", b.dataset.side === "forecast-stock"));
+  await loadIntelpick();
+}
+async function paintForecastStockView() {
+  const box = $("#ipForecastStockBox");
+  const title = $("#ipForecastStockTitle");
+  if (!box) return;
+  const code = forecastStockView && forecastStockView.code;
+  if (!code) {
+    box.innerHTML = '<div class="empty">请在预测推荐里点击一只股票</div>';
+    return;
+  }
+  box.innerHTML = '<div class="empty">加载中…</div>';
+  try {
+    const d = await api(`/api/intelpick/forecast?code=${encodeURIComponent(code)}`);
+    const r = (Array.isArray(d.items) ? d.items : [])[0];
+    if (!r) {
+      if (title) title.textContent = "";
+      box.innerHTML = `<div class="empty">${esc(d.empty_reason || "该股暂无已保存的预测数据，不编造。")}</div>
+        <button type="button" class="btn small ghost" id="ipFcBackList">返回预测推荐</button>`;
+      $("#ipFcBackList")?.addEventListener("click", showIntelpickForecastTab);
+      return;
+    }
+    forecastStockView = { code: r.code, name: r.name || forecastStockView.name || "" };
+    if (title) title.textContent = `${r.name || ""} ${r.code || ""}`;
+    const wx = r.wuxing && r.wuxing.length ? r.wuxing : (r.batch_wuxing || []);
+    box.innerHTML = `
+      <div class="kv"><span class="k">名称</span><span><b>${esc(r.name || "—")}</b> <span class="muted">${esc(r.code || "")}</span></span></div>
+      <div class="kv"><span class="k">预测类型</span><span><span class="badge">${esc(r.kind_label || "—")}</span></span></div>
+      <div class="kv"><span class="k">预测时间</span><span>${esc(r.predicted_at || "—")}</span></div>
+      <div class="kv"><span class="k">批次号</span><span>${esc(r.batch_no || "—")}</span></div>
+      <div class="kv"><span class="k">五行</span><span>${wxBadges(wx)}${wx.length ? ` <span class="muted">${esc(wx.join("、"))}</span>` : "—"}</span></div>
+      <div class="kv"><span class="k">卦象/盘摘要</span><span>${esc(r.summary || "—")}</span></div>
+      <div class="kv"><span class="k">行业</span><span>${esc(r.industry || "—")}</span></div>
+      <div class="kv"><span class="k">财报</span><span>${esc(r.finance_grade || "—")}</span></div>
+      <div class="kv"><span class="k">综合评分</span><span class="num"><b>${r.score != null ? fmt(r.score, 1) : "-"}</b></span></div>
+      <div class="kv"><span class="k">策略</span><span>${r.advice ? `<span class="badge ${r.advice === "增持" ? "advice-buy" : r.advice === "减持" ? "advice-sell" : "advice-hold"}">${esc(r.advice)}</span>` : "—"}</span></div>
+      <div class="kv"><span class="k">现价</span><span>${r.price == null ? "—" : pxHtml(r.price, r.pct)} ${pct(r.pct)}</span></div>
+      <div class="kv"><span class="k">购买指数</span><span class="num">${r.buy_index != null ? fmt(r.buy_index, 0) : "—"}</span></div>
+      <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+        <button type="button" class="btn small ghost" id="ipFcBackList">返回预测推荐</button>
+        <button type="button" class="btn small ghost" id="ipFcOpenStock">打开个股分析</button>
+      </div>
+      <div class="muted" style="margin-top:8px;font-size:calc(11px * var(--font-scale))">${esc(d.note || "")} ${esc(d.disclaimer || "")}</div>`;
+    $("#ipFcBackList")?.addEventListener("click", showIntelpickForecastTab);
+    $("#ipFcOpenStock")?.addEventListener("click", () => openStock(r.code, r.name));
+    syncIntelpickCards();
+  } catch (err) {
+    box.innerHTML = '<div class="empty">预测个股加载失败</div>';
     console.warn(err);
   }
 }

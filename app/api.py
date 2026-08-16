@@ -899,9 +899,12 @@ def intelpick_forecast(
     batch_no: str = "",
     sort: str = "predicted_at",
     order: str = "desc",
+    code: str = "",
 ):
-    """回显已保存的卜卦/奇门预测个股。不写入上涨/下跌名单。"""
-    return forecast_rec.list_page(kind=kind, batch_no=batch_no, sort=sort, order=order)
+    """回显已保存的卜卦/奇门预测个股。同股去重，不写入上涨/下跌名单。"""
+    return forecast_rec.list_page(
+        kind=kind, batch_no=batch_no, sort=sort, order=order, code=code,
+    )
 
 
 @router.post("/intelpick/forecast/clear")
