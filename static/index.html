@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>A股量化工具</title>
-<link rel="stylesheet" href="/static/style.css?v=13.0.36">
+<link rel="stylesheet" href="/static/style.css?v=13.0.37">
 <script>
 (function () {
   try {
@@ -549,6 +549,7 @@
     <div class="btn-group sub-tabs" id="intelpickTabs">
       <button class="opt active" data-side="up">上涨预测</button>
       <button class="opt" data-side="down">下跌预测</button>
+      <button class="opt" data-side="forecast">预测推荐</button>
     </div>
     <div class="card">
       <div class="card-title">
@@ -564,14 +565,21 @@
       </div>
       <div id="ipAlmanac"><div class="empty">加载中…</div></div>
     </div>
-    <div class="card">
+    <div class="card" id="ipDirMarketCard">
       <div class="card-title">智能选股 <span class="muted">股价未来涨跌方向分析 · 量化参考，不承诺涨跌</span></div>
       <div class="muted" id="ipNote" style="margin-bottom:10px"></div>
       <div id="ipMarket"><div class="empty">加载中…</div></div>
     </div>
-    <div class="card">
+    <div class="card" id="ipDirListCard">
       <div class="card-title" id="ipListTitle">上涨预测 <span class="muted" id="ipCount"></span></div>
       <div id="ipTable"><div class="empty">加载中…</div></div>
+    </div>
+    <div class="card" id="ipForecastCard" style="display:none">
+      <div class="card-title">预测推荐 <span class="muted">易经卜卦 / 奇门遁甲已筛出的本地个股 · 民俗参考</span>
+        <span class="muted" id="ipForecastCount"></span>
+      </div>
+      <div id="ipForecastBar"></div>
+      <div id="ipForecastTable"><div class="empty">加载中…</div></div>
     </div>
   </section>
 
@@ -834,6 +842,6 @@
   <div class="ctx-item" id="ctxKbRevert" style="display:none">↩ 还原内置解释</div>
 </div>
 
-<script src="/static/app.js?v=13.0.36"></script>
+<script src="/static/app.js?v=13.0.37"></script>
 </body>
 </html>

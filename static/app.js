@@ -665,6 +665,7 @@ function renderDivineBox(d) {
       · 财报 ${esc((d.good_grades || ["A", "B"]).join("/"))}
       · 综合评分≥${d.min_score || 65}</div>
     <div class="muted">爻数 ${esc((d.yao_digits || []).join(""))} · 钱数 ${esc((d.bit_digits || []).join(""))} · 排列 ${d.candidate_count || 0} 个号码 · 号码对照 ${d.digit_matched_count || 0} 只 · 展示 ${d.matched_count || 0} 只 · 未评级不伪造</div>
+    ${d.batch_no ? `<div class="muted">已写入预测推荐 · ${esc(d.kind_label || "易经卜卦推测")} · 批次 ${esc(d.batch_no)} · ${esc(d.predicted_at || "")}</div>` : ""}
     ${stocks.length ? renderAlmanacPickTable(stocks) : `<div class="empty">${esc(d.empty_reason || "无匹配个股")}</div>`}
     <div class="muted" style="font-size:calc(11px * var(--font-scale));margin-top:4px">${esc(d.note || "")}</div>`;
 }
@@ -679,6 +680,7 @@ function renderQimenPickBox(d) {
       · 值符${esc(qm.zhi_fu_star || "")} 值使${esc(qm.zhi_shi_door || "")}门</div>
     <div class="muted">${esc(d.season || "")}季：旺${esc(wx["旺"] || "")} 相${esc(wx["相"] || "")} 休${esc(wx["休"] || "")} 囚${esc(wx["囚"] || "")} 死${esc(wx["死"] || "")}
       · 只取旺相行业 · 综合评分≥${d.min_score || 55} · 购买指数≥${d.min_buy_index || 50} · 策略非减持 · ${d.count || 0}/50</div>
+    ${d.batch_no ? `<div class="muted">已写入预测推荐 · ${esc(d.kind_label || "奇门遁甲预测")} · 批次 ${esc(d.batch_no)} · ${esc(d.predicted_at || "")}</div>` : ""}
     ${stocks.length ? renderAlmanacPickTable(stocks) : `<div class="empty">${esc(d.empty_reason || "无个股")}</div>`}
     <div class="muted" style="font-size:calc(11px * var(--font-scale));margin-top:4px">${esc(d.note || "")}</div>`;
 }
@@ -900,6 +902,7 @@ async function runAlmanacDivine() {
       body: JSON.stringify({ date: almanacPick || "", hour: almanacSelectedHour() }),
     });
     if (box) box.innerHTML = renderDivineBox(d);
+    if (intelpickSub === "forecast") loadForecastRec();
   } catch (err) {
     if (box) box.innerHTML = `<div class="empty">卜卦失败：${esc(err.message || err)}</div>`;
   } finally {
@@ -919,6 +922,7 @@ async function runAlmanacQimenPick() {
       body: JSON.stringify({ date: almanacPick || "", hour: almanacSelectedHour() }),
     });
     if (box) box.innerHTML = renderQimenPickBox(d);
+    if (intelpickSub === "forecast") loadForecastRec();
   } catch (err) {
     if (box) box.innerHTML = `<div class="empty">预测失败：${esc(err.message || err)}</div>`;
   } finally {
@@ -7393,12 +7397,27 @@ function bindBuyFlash() {
 
 /* ---------------- 智能选股（股价未来涨跌方向，菜单骨架） ---------------- */
 let intelpickSub = "up";
+let forecastRecState = { kind: "", batch_no: "", sort: "predicted_at", order: "desc" };
+function syncIntelpickCards() {
+  const fc = intelpickSub === "forecast";
+  const dirM = $("#ipDirMarketCard");
+  const dirL = $("#ipDirListCard");
+  const rec = $("#ipForecastCard");
+  if (dirM) dirM.style.display = fc ? "none" : "";
+  if (dirL) dirL.style.display = fc ? "none" : "";
+  if (rec) rec.style.display = fc ? "" : "none";
+}
 async function loadIntelpick() {
   const box = $("#ipTable");
   const marketBox = $("#ipMarket");
   const note = $("#ipNote");
-  if (!box) return;
   loadDashAlmanac();
+  syncIntelpickCards();
+  if (intelpickSub === "forecast") {
+    await loadForecastRec();
+    return;
+  }
+  if (!box) return;
   box.innerHTML = '<div class="empty">加载中…</div>';
   try {
     const d = await api(`/api/intelpick?side=${encodeURIComponent(intelpickSub)}`);
@@ -7443,6 +7462,131 @@ async function loadIntelpick() {
       <div class="muted" style="margin-top:8px;font-size:calc(12px * var(--font-scale))">${esc(d.disclaimer || "")}</div>`;
   } catch (err) {
     box.innerHTML = '<div class="empty">加载失败</div>';
+    console.warn(err);
+  }
+}
+async function loadForecastRec() {
+  const bar = $("#ipForecastBar");
+  const box = $("#ipForecastTable");
+  const countEl = $("#ipForecastCount");
+  if (!box) return;
+  box.innerHTML = '<div class="empty">加载中…</div>';
+  const q = new URLSearchParams({
+    kind: forecastRecState.kind || "",
+    batch_no: forecastRecState.batch_no || "",
+    sort: forecastRecState.sort || "predicted_at",
+    order: forecastRecState.order || "desc",
+  });
+  try {
+    const d = await api(`/api/intelpick/forecast?${q.toString()}`);
+    const items = Array.isArray(d.items) ? d.items : [];
+    const sorts = Array.isArray(d.sorts) ? d.sorts : [];
+    const kinds = [{ id: "", name: "全部类型" }, ...((d.kinds || []))];
+    const batches = [{ batch_no: "", label: "全部批次" }, ...((d.batches || []).map((b) => ({
+      batch_no: b.batch_no,
+      label: `${b.batch_no} · ${b.kind_label || ""} · ${b.stock_count || 0}只`,
+    })))];
+    forecastRecState.sort = d.sort || forecastRecState.sort;
+    forecastRecState.order = d.order || forecastRecState.order;
+    if (countEl) countEl.textContent = items.length ? `共 ${items.length} 只` : "";
+    if (bar) {
+      bar.innerHTML = `
+        <div class="cond-inline" style="margin-bottom:10px;gap:12px;flex-wrap:wrap">
+          <span><span class="g-label muted">类型</span>
+            <span class="btn-group" id="ipFcKind">${kinds.map((k) =>
+              `<button type="button" class="opt ${(k.id || "") === (forecastRecState.kind || "") ? "active" : ""}" data-kind="${esc(k.id || "")}">${esc(k.name)}</button>`
+            ).join("")}</span></span>
+          <span><span class="g-label muted">排序</span>
+            <span class="btn-group" id="ipFcSort">${sorts.map((s) =>
+              `<button type="button" class="opt ${s.id === forecastRecState.sort ? "active" : ""}" data-sort="${esc(s.id)}">${esc(s.name)}</button>`
+            ).join("")}</span></span>
+          <span><span class="g-label muted">方向</span>
+            <span class="btn-group" id="ipFcOrder">
+              <button type="button" class="opt ${forecastRecState.order === "desc" ? "active" : ""}" data-order="desc">倒序</button>
+              <button type="button" class="opt ${forecastRecState.order === "asc" ? "active" : ""}" data-order="asc">正序</button>
+            </span></span>
+          <label class="muted">批次
+            <select id="ipFcBatch">${batches.map((b) =>
+              `<option value="${escAttr(b.batch_no)}" ${b.batch_no === (forecastRecState.batch_no || "") ? "selected" : ""}>${esc(b.label)}</option>`
+            ).join("")}</select>
+          </label>
+          <button type="button" class="btn small ghost" id="ipFcClearBatch" ${forecastRecState.batch_no ? "" : "disabled"}>清理本批次</button>
+          <button type="button" class="btn small ghost" id="ipFcClearKind" ${forecastRecState.kind ? "" : "disabled"}>清理本类型</button>
+          <button type="button" class="btn small ghost" id="ipFcClearAll">全部清理</button>
+        </div>
+        <div class="muted" style="margin-bottom:8px">${esc(d.note || "")} ${esc(d.disclaimer || "")}</div>`;
+    }
+    if (!items.length) {
+      box.innerHTML = `<div class="empty">${esc(d.empty_reason || "暂无预测推荐")}</div>`;
+      bindForecastRecBar();
+      return;
+    }
+    box.innerHTML = `<table><thead><tr>
+      <th>名称</th><th>代码</th><th>五行</th><th>预测类型</th><th>预测时间</th><th>批次号</th>
+      <th>行业</th><th>财报</th><th>综合评分</th><th>策略</th>
+    </tr></thead><tbody>${items.map((r) => `
+      <tr data-code="${escAttr(r.code)}" data-name="${escAttr(r.name)}" onclick="openStock('${esc(r.code)}','${esc(r.name)}')">
+        <td>${esc(r.name)}</td>
+        <td class="muted">${esc(r.code)}</td>
+        <td>${wxBadges(r.wuxing || r.batch_wuxing)}${(r.batch_wuxing || []).length ? ` <span class="muted">${esc((r.batch_wuxing || []).join("、"))}</span>` : ""}</td>
+        <td><span class="badge">${esc(r.kind_label || "")}</span></td>
+        <td class="muted">${esc(r.predicted_at || "")}</td>
+        <td class="muted">${esc(r.batch_no || "")}</td>
+        <td class="muted">${esc(r.industry || "—")}</td>
+        <td>${esc(r.finance_grade || "—")}</td>
+        <td class="num"><b>${r.score != null ? fmt(r.score, 1) : "-"}</b></td>
+        <td>${r.advice ? `<span class="badge ${r.advice === "增持" ? "advice-buy" : r.advice === "减持" ? "advice-sell" : "advice-hold"}">${esc(r.advice)}</span>` : "-"}</td>
+      </tr>`).join("")}</tbody></table>`;
+    bindForecastRecBar();
+  } catch (err) {
+    box.innerHTML = '<div class="empty">预测推荐加载失败</div>';
+    console.warn(err);
+  }
+}
+function bindForecastRecBar() {
+  $("#ipFcKind")?.addEventListener("click", (e) => {
+    const btn = e.target.closest(".opt");
+    if (!btn) return;
+    forecastRecState.kind = btn.dataset.kind || "";
+    loadForecastRec();
+  });
+  $("#ipFcSort")?.addEventListener("click", (e) => {
+    const btn = e.target.closest(".opt");
+    if (!btn) return;
+    forecastRecState.sort = btn.dataset.sort || "predicted_at";
+    loadForecastRec();
+  });
+  $("#ipFcOrder")?.addEventListener("click", (e) => {
+    const btn = e.target.closest(".opt");
+    if (!btn) return;
+    forecastRecState.order = btn.dataset.order === "asc" ? "asc" : "desc";
+    loadForecastRec();
+  });
+  $("#ipFcBatch")?.addEventListener("change", (e) => {
+    forecastRecState.batch_no = e.target.value || "";
+    loadForecastRec();
+  });
+  $("#ipFcClearBatch")?.addEventListener("click", () => clearForecastRec({ batch_no: forecastRecState.batch_no }));
+  $("#ipFcClearKind")?.addEventListener("click", () => clearForecastRec({ kind: forecastRecState.kind }));
+  $("#ipFcClearAll")?.addEventListener("click", () => clearForecastRec({ all: true }));
+}
+async function clearForecastRec(body) {
+  if (body.all && !window.confirm("确定清理全部预测推荐？此操作不可恢复。")) return;
+  if (body.batch_no && !window.confirm(`确定清理批次 ${body.batch_no}？`)) return;
+  if (body.kind && !window.confirm("确定清理该预测类型下的全部记录？")) return;
+  if (!body.all && !body.batch_no && !body.kind) return;
+  try {
+    await api("/api/intelpick/forecast/clear", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (body.all || (body.batch_no && body.batch_no === forecastRecState.batch_no)) {
+      forecastRecState.batch_no = "";
+    }
+    if (body.all) forecastRecState.kind = "";
+    await loadForecastRec();
+  } catch (err) {
     console.warn(err);
   }
 }

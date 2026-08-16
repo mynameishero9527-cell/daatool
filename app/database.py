@@ -339,6 +339,7 @@ CREATE TABLE IF NOT EXISTS stock_ai_brief (
 -- 13.0.34：买/卖点对齐综合评分与增持减持，叠加板块热度、财报、距半年高点上涨空间
 -- 13.0.35：点击个股进入分析时默认展示日K，不再默认分时
 -- 13.0.36：买点并行取并集+质量门禁，不再被周线门和互斥交叉命中滤空
+-- 13.0.37：卜卦/奇门预测个股落本地，智能选股「预测推荐」回显；不写入上涨/下跌名单
 -- intel_item_ai / hot_term_ai 表结构不变，失败仍不覆盖已保存结果
 
 CREATE TABLE IF NOT EXISTS knowledge_ai (
@@ -502,6 +503,38 @@ CREATE TABLE IF NOT EXISTS fx_daily (
     PRIMARY KEY (pair, trade_date)
 );
 CREATE INDEX IF NOT EXISTS idx_fx_daily_date ON fx_daily(trade_date);
+
+-- 13.0.37：易经卜卦 / 奇门遁甲预测个股本地回显，不写入上涨/下跌名单
+CREATE TABLE IF NOT EXISTS forecast_batch (
+    batch_no     TEXT PRIMARY KEY,
+    kind         TEXT NOT NULL,
+    kind_label   TEXT NOT NULL,
+    predicted_at TEXT NOT NULL,
+    almanac_date TEXT,
+    hour         INTEGER,
+    wuxing       TEXT,
+    summary      TEXT,
+    extra        TEXT,
+    stock_count  INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_forecast_batch_at ON forecast_batch(predicted_at DESC);
+CREATE TABLE IF NOT EXISTS forecast_stock (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    batch_no      TEXT NOT NULL,
+    code          TEXT NOT NULL,
+    name          TEXT NOT NULL,
+    industry      TEXT,
+    wuxing        TEXT,
+    finance_grade TEXT,
+    score         REAL,
+    advice        TEXT,
+    buy_index     REAL,
+    price         REAL,
+    pct           REAL,
+    wx_state      TEXT,
+    UNIQUE(batch_no, code)
+);
+CREATE INDEX IF NOT EXISTS idx_forecast_stock_batch ON forecast_stock(batch_no);
 """
 
 # 已有表的增量列迁移（幂等）

@@ -11,6 +11,7 @@ from .services import (
     ai, alerts, announcement, attribution, commodity, cycle, darkpool, finance,
     forecast, global_index, holders, hot_terms, intel_ai, kline, knowledge, macro, market, ranks, rating,
     intelpick, recommend, screener, sector, smartpick, stock_ai, stocklist, strategy, wuxing,
+    forecast_rec,
     fx,
 )
 from .services import metrics as metrics_svc
@@ -313,7 +314,10 @@ def macro_almanac_divination(payload: dict | None = Body(default=None)):
         hour = int(hour) if hour is not None and hour != "" else None
     except (TypeError, ValueError):
         return {"ok": False, "error": "时辰小时无效", "stocks": []}
-    return yijing.divination(str(body.get("date") or body.get("day") or ""), hour)
+    out = yijing.divination(str(body.get("date") or body.get("day") or ""), hour)
+    if out.get("ok"):
+        forecast_rec.record("yijing", out)
+    return out
 
 
 @router.post("/macro/almanac/qimen-predict")
@@ -326,7 +330,10 @@ def macro_almanac_qimen_predict(payload: dict | None = Body(default=None)):
         hour = int(hour) if hour is not None and hour != "" else None
     except (TypeError, ValueError):
         return {"ok": False, "error": "时辰小时无效", "stocks": []}
-    return almanac_pick.predict(str(body.get("date") or body.get("day") or ""), hour)
+    out = almanac_pick.predict(str(body.get("date") or body.get("day") or ""), hour)
+    if out.get("ok"):
+        forecast_rec.record("qimen", out)
+    return out
 
 
 @router.post("/macro/almanac/sync")
@@ -884,6 +891,28 @@ def paper_fill_post(payload: dict = Body(default={})):
 def intelpick_page(side: str = "up"):
     """智能选股：股价未来涨跌方向分析。本轮返回菜单骨架，不编造个股名单。"""
     return intelpick.get_page(side)
+
+
+@router.get("/intelpick/forecast")
+def intelpick_forecast(
+    kind: str = "",
+    batch_no: str = "",
+    sort: str = "predicted_at",
+    order: str = "desc",
+):
+    """回显已保存的卜卦/奇门预测个股。不写入上涨/下跌名单。"""
+    return forecast_rec.list_page(kind=kind, batch_no=batch_no, sort=sort, order=order)
+
+
+@router.post("/intelpick/forecast/clear")
+def intelpick_forecast_clear(payload: dict | None = Body(default=None)):
+    """手动清理预测推荐。必须指定批次、类型或全部。"""
+    body = payload or {}
+    return forecast_rec.clear(
+        batch_no=str(body.get("batch_no") or ""),
+        kind=str(body.get("kind") or ""),
+        clear_all=bool(body.get("all")),
+    )
 
 
 @router.get("/smartpick/meta")

@@ -17,6 +17,7 @@ class IntelpickMenuTests(unittest.TestCase):
         self.assertEqual(up["count"], 0)
         ids = [s["id"] for s in up["sides"]]
         self.assertEqual(ids, ["up", "down"])
+        self.assertNotIn("forecast", ids)
         self.assertIn("尚未接入", up["empty_reason"])
         self.assertIn("不构成投资建议", up["disclaimer"])
         self.assertIn("策略选股", up["note"])
