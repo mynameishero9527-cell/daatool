@@ -1,9 +1,12 @@
-"""13.0.6：智能选股菜单骨架；不编造个股涨跌名单。"""
+"""13.0.6 / 13.0.43：智能选股菜单骨架；主页与预测推荐分 tab；不编造个股涨跌名单。"""
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 from app.services import intelpick
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class IntelpickMenuTests(unittest.TestCase):
@@ -26,6 +29,25 @@ class IntelpickMenuTests(unittest.TestCase):
         d = intelpick.get_page("sideways")
         self.assertEqual(d["side"], "up")
         self.assertEqual(d["items"], [])
+
+    def test_home_tab_and_forecast_pane_split(self):
+        html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+        self.assertIn('data-page="home">主页</button>', html)
+        self.assertIn('data-page="forecast">预测推荐</button>', html)
+        self.assertIn('id="ipHomePane"', html)
+        self.assertIn('id="ipForecastPane"', html)
+        home = html[html.index('id="ipHomePane"'):html.index('id="ipForecastPane"')]
+        forecast = html[html.index('id="ipForecastPane"'):]
+        self.assertIn("上涨预测", home)
+        self.assertIn("下跌预测", home)
+        self.assertIn("ipAlmanac", home)
+        self.assertNotIn("ipForecastTable", home)
+        self.assertIn("ipForecastTable", forecast)
+        self.assertNotIn('data-side="forecast"', html)
+        js = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+        self.assertIn('let intelpickPage = "home"', js)
+        self.assertIn('intelpickPage === "forecast"', js)
+        self.assertNotIn('intelpickSub === "forecast"', js)
 
 
 if __name__ == "__main__":

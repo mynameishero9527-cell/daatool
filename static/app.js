@@ -7528,28 +7528,41 @@ function bindBuyFlash() {
   applyBuyFlashPos();
 }
 
-/* ---------------- 智能选股（股价未来涨跌方向，菜单骨架） ---------------- */
+/* ---------------- 智能选股（主页 / 预测推荐 分 tab） ---------------- */
+let intelpickPage = "home";
 let intelpickSub = "up";
 let forecastRecState = { kind: "", batch_no: "", sort: "predicted_at", order: "desc" };
 let forecastStockView = null;
+function activateIntelpickMain() {
+  if (activeTab === "intelpick") return false;
+  const btn = $(`#mainTabs .tab[data-tab="intelpick"]`);
+  if (!btn) return false;
+  activeTab = "intelpick";
+  $$("#mainTabs .tab").forEach((t) => t.classList.toggle("active", t === btn));
+  $$(".page").forEach((p) => p.classList.toggle("active", p.id === "page-intelpick"));
+  return true;
+}
+function syncIntelpickPageTabs() {
+  $$("#intelpickTabs .opt").forEach((b) => b.classList.toggle("active", b.dataset.page === intelpickPage));
+  $$("#intelpickDirTabs .opt").forEach((b) => b.classList.toggle("active", b.dataset.side === intelpickSub));
+}
 function showIntelpickForecastTab() {
-  intelpickSub = "forecast";
-  $$("#intelpickTabs .opt").forEach((b) => b.classList.toggle("active", b.dataset.side === "forecast"));
+  intelpickPage = "forecast";
+  syncIntelpickPageTabs();
+  activateIntelpickMain();
   loadIntelpick();
 }
 function syncIntelpickCards() {
-  const fc = intelpickSub === "forecast";
-  const fs = intelpickSub === "forecast-stock";
-  const hideDir = fc || fs;
-  const dirM = $("#ipDirMarketCard");
-  const dirL = $("#ipDirListCard");
-  const rec = $("#ipForecastCard");
-  const stockCard = $("#ipForecastStockCard");
+  const home = intelpickPage === "home";
+  const fc = intelpickPage === "forecast";
+  const fs = intelpickPage === "forecast-stock";
+  const homePane = $("#ipHomePane");
+  const recPane = $("#ipForecastPane");
+  const stockPane = $("#ipForecastStockPane");
   const stockTab = $("#ipForecastStockTab");
-  if (dirM) dirM.style.display = hideDir ? "none" : "";
-  if (dirL) dirL.style.display = hideDir ? "none" : "";
-  if (rec) rec.style.display = fc ? "" : "none";
-  if (stockCard) stockCard.style.display = fs ? "" : "none";
+  if (homePane) homePane.style.display = home ? "" : "none";
+  if (recPane) recPane.style.display = fc ? "" : "none";
+  if (stockPane) stockPane.style.display = fs ? "" : "none";
   if (stockTab) {
     stockTab.style.display = forecastStockView ? "" : "none";
     if (forecastStockView) {
@@ -7563,16 +7576,17 @@ async function loadIntelpick() {
   const box = $("#ipTable");
   const marketBox = $("#ipMarket");
   const note = $("#ipNote");
-  loadDashAlmanac();
+  syncIntelpickPageTabs();
   syncIntelpickCards();
-  if (intelpickSub === "forecast") {
+  if (intelpickPage === "forecast") {
     await loadForecastRec();
     return;
   }
-  if (intelpickSub === "forecast-stock") {
+  if (intelpickPage === "forecast-stock") {
     await paintForecastStockView();
     return;
   }
+  loadDashAlmanac();
   if (!box) return;
   box.innerHTML = '<div class="empty">加载中…</div>';
   try {
@@ -7753,8 +7767,9 @@ async function clearForecastRec(body) {
 }
 async function openForecastStockView(code, name) {
   forecastStockView = { code, name: name || "" };
-  intelpickSub = "forecast-stock";
-  $$("#intelpickTabs .opt").forEach((b) => b.classList.toggle("active", b.dataset.side === "forecast-stock"));
+  intelpickPage = "forecast-stock";
+  syncIntelpickPageTabs();
+  activateIntelpickMain();
   await loadIntelpick();
 }
 async function paintForecastStockView() {
@@ -7809,8 +7824,16 @@ async function paintForecastStockView() {
 $("#intelpickTabs")?.addEventListener("click", (e) => {
   const btn = e.target.closest(".opt");
   if (!btn) return;
+  intelpickPage = btn.dataset.page || "home";
+  syncIntelpickPageTabs();
+  loadIntelpick();
+});
+$("#intelpickDirTabs")?.addEventListener("click", (e) => {
+  const btn = e.target.closest(".opt");
+  if (!btn) return;
+  intelpickPage = "home";
   intelpickSub = btn.dataset.side || "up";
-  $$("#intelpickTabs .opt").forEach((b) => b.classList.toggle("active", b === btn));
+  syncIntelpickPageTabs();
   loadIntelpick();
 });
 

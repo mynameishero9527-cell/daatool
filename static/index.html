@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>A股量化工具</title>
-<link rel="stylesheet" href="/static/style.css?v=13.0.42">
+<link rel="stylesheet" href="/static/style.css?v=13.0.43">
 <script>
 (function () {
   try {
@@ -544,49 +544,61 @@
     </div>
   </section>
 
-  <!-- 智能选股：股价未来涨跌方向 -->
+  <!-- 智能选股：主页（黄历+涨跌）与预测推荐分 tab -->
   <section class="page" id="page-intelpick">
     <div class="btn-group sub-tabs" id="intelpickTabs">
-      <button class="opt active" data-side="up">上涨预测</button>
-      <button class="opt" data-side="down">下跌预测</button>
-      <button class="opt" data-side="forecast">预测推荐</button>
-      <button class="opt" data-side="forecast-stock" id="ipForecastStockTab" style="display:none">预测个股</button>
+      <button class="opt active" data-page="home">主页</button>
+      <button class="opt" data-page="forecast">预测推荐</button>
+      <button class="opt" data-page="forecast-stock" id="ipForecastStockTab" style="display:none">预测个股</button>
     </div>
-    <div class="card">
-      <div class="card-title">
-        <span id="ipAlmanacTitle">今日黄历 · 九宫方位</span>
-        <span class="almanac-date-bar">
-          <button type="button" class="btn small ghost" id="almanacPrev" title="前一天">‹</button>
-          <input type="date" id="almanacDate" aria-label="选择黄历日期">
-          <button type="button" class="btn small ghost" id="almanacNext" title="后一天">›</button>
-          <button type="button" class="btn small ghost" id="almanacToday">今天</button>
-          <span id="almanacStored" class="muted"></span>
-          <span class="muted">民俗文化参考</span>
-        </span>
+
+    <div id="ipHomePane">
+      <div class="card">
+        <div class="card-title">
+          <span id="ipAlmanacTitle">今日黄历 · 九宫方位</span>
+          <span class="almanac-date-bar">
+            <button type="button" class="btn small ghost" id="almanacPrev" title="前一天">‹</button>
+            <input type="date" id="almanacDate" aria-label="选择黄历日期">
+            <button type="button" class="btn small ghost" id="almanacNext" title="后一天">›</button>
+            <button type="button" class="btn small ghost" id="almanacToday">今天</button>
+            <span id="almanacStored" class="muted"></span>
+            <span class="muted">民俗文化参考</span>
+          </span>
+        </div>
+        <div id="ipAlmanac"><div class="empty">加载中…</div></div>
       </div>
-      <div id="ipAlmanac"><div class="empty">加载中…</div></div>
-    </div>
-    <div class="card" id="ipDirMarketCard">
-      <div class="card-title">智能选股 <span class="muted">股价未来涨跌方向分析 · 量化参考，不承诺涨跌</span></div>
-      <div class="muted" id="ipNote" style="margin-bottom:10px"></div>
-      <div id="ipMarket"><div class="empty">加载中…</div></div>
-    </div>
-    <div class="card" id="ipDirListCard">
-      <div class="card-title" id="ipListTitle">上涨预测 <span class="muted" id="ipCount"></span></div>
-      <div id="ipTable"><div class="empty">加载中…</div></div>
-    </div>
-    <div class="card" id="ipForecastCard" style="display:none">
-      <div class="card-title">预测推荐 <span class="muted">易经卜卦 / 奇门遁甲已筛出的本地个股 · 民俗参考</span>
-        <span class="muted" id="ipForecastCount"></span>
+      <div class="btn-group sub-tabs" id="intelpickDirTabs">
+        <button class="opt active" data-side="up">上涨预测</button>
+        <button class="opt" data-side="down">下跌预测</button>
       </div>
-      <div id="ipForecastBar"></div>
-      <div id="ipForecastTable"><div class="empty">加载中…</div></div>
-    </div>
-    <div class="card" id="ipForecastStockCard" style="display:none">
-      <div class="card-title">预测个股 <span class="muted">本页只展示已保存的预测字段 · 民俗参考</span>
-        <span class="muted" id="ipForecastStockTitle"></span>
+      <div class="card" id="ipDirMarketCard">
+        <div class="card-title">智能选股 <span class="muted">股价未来涨跌方向分析 · 量化参考，不承诺涨跌</span></div>
+        <div class="muted" id="ipNote" style="margin-bottom:10px"></div>
+        <div id="ipMarket"><div class="empty">加载中…</div></div>
       </div>
-      <div id="ipForecastStockBox"><div class="empty">请在预测推荐里点击一只股票</div></div>
+      <div class="card" id="ipDirListCard">
+        <div class="card-title" id="ipListTitle">上涨预测 <span class="muted" id="ipCount"></span></div>
+        <div id="ipTable"><div class="empty">加载中…</div></div>
+      </div>
+    </div>
+
+    <div id="ipForecastPane" style="display:none">
+      <div class="card" id="ipForecastCard">
+        <div class="card-title">预测推荐 <span class="muted">易经卜卦 / 奇门遁甲已筛出的本地个股 · 民俗参考</span>
+          <span class="muted" id="ipForecastCount"></span>
+        </div>
+        <div id="ipForecastBar"></div>
+        <div id="ipForecastTable"><div class="empty">加载中…</div></div>
+      </div>
+    </div>
+
+    <div id="ipForecastStockPane" style="display:none">
+      <div class="card" id="ipForecastStockCard">
+        <div class="card-title">预测个股 <span class="muted">本页只展示已保存的预测字段 · 民俗参考</span>
+          <span class="muted" id="ipForecastStockTitle"></span>
+        </div>
+        <div id="ipForecastStockBox"><div class="empty">请在预测推荐里点击一只股票</div></div>
+      </div>
     </div>
   </section>
 
@@ -849,6 +861,6 @@
   <div class="ctx-item" id="ctxKbRevert" style="display:none">↩ 还原内置解释</div>
 </div>
 
-<script src="/static/app.js?v=13.0.42"></script>
+<script src="/static/app.js?v=13.0.43"></script>
 </body>
 </html>
