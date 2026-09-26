@@ -8,8 +8,8 @@ from datetime import datetime
 from pathlib import Path
 
 # 与 run.py 一致，日志时间戳和报告统计窗口才对得上
-os.environ.setdefault("TZ", "Asia/Shanghai")
 if hasattr(time, "tzset"):
+    os.environ.setdefault("TZ", "Asia/Shanghai")
     time.tzset()
 
 ROOT = Path(__file__).resolve().parent.parent

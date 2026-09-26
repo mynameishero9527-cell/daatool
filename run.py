@@ -11,8 +11,9 @@ import sys
 import threading
 import time
 
-os.environ.setdefault("TZ", "Asia/Shanghai")
+# Windows 的 C 运行库不认 "Asia/Shanghai" 这种 TZ 写法，会按 UTC 处理，所以只在有 tzset 的系统上设置
 if hasattr(time, "tzset"):
+    os.environ.setdefault("TZ", "Asia/Shanghai")
     time.tzset()
 
 import uvicorn
