@@ -36,6 +36,27 @@ python run.py
 
 首次启动会自动在后台执行全市场股票同步（约 10 秒），完成后看板统计与推荐榜单即有数据。
 
+### Windows 一键脚本
+
+| 脚本 | 作用 |
+|------|------|
+| `start.bat` | 一键启动：首次自动在项目内建 `.venv` 并安装依赖，生成启动报告，启动服务并打开浏览器；服务已在运行则直接打开页面 |
+| `update.bat` | 更新：需先关闭服务。备份数据库 → `git pull --ff-only` → 重装依赖，过程写入 `data\logs\update.log` |
+| `check_logs.bat [天数]` | 统计最近 N 天（默认 7）的 WARNING/ERROR/Traceback，检查服务状态，生成报告并用记事本打开 |
+
+需要 Python 3.10+：建议安装到非 C 盘并勾选加入 PATH，或把完整版 Python 目录放到项目内 `runtime\python\`（脚本优先使用）。端口默认 8000，可先 `set QUANT_PORT=8001` 再运行脚本。
+
+运行期文件全部在项目目录内，不写 C 盘用户目录：
+
+| 路径 | 内容 |
+|------|------|
+| `.venv\` | Python 虚拟环境与依赖 |
+| `data\quant.db` | 数据库（行情、指标、以及数据源/AI/策略等全部配置） |
+| `data\logs\` | `app.log` 全部日志、`error.log` 警告及以上、`launcher.log` 启动器记录、`update.log` 更新记录（10MB 轮转） |
+| `data\reports\` | `startup_*.txt` 启动报告、`log_report_*.txt` 异常日志报告，各保留 30 份，`*_latest.txt` 为最新一份 |
+| `data\backup\` | 更新前的数据库备份，保留 10 份 |
+| `data\cache\`、`data\tmp\` | pip 下载缓存、pyc 缓存、临时文件 |
+
 ## 目录结构
 
 ```
@@ -49,6 +70,8 @@ app/
 ├── datasources/        # 腾讯、新浪、离线兜底 + 熔断故障切换
 └── services/           # 行情、K线、股票列表、宏观、商品、全球指数、评分、推荐
 static/                 # 前端单页应用（含本地 ECharts）
+scripts/                # bat 公共环境 env.bat、启动报告、异常日志报告、数据库备份
+start.bat / update.bat / check_logs.bat
 ```
 
 ## 说明

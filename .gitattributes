@@ -1,0 +1,2 @@
+# Windows 批处理必须是 CRLF，原样存储避免 zip 下载或 autocrlf 改坏
+*.bat -text

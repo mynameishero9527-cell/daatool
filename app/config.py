@@ -5,6 +5,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 DB_PATH = DATA_DIR / "quant.db"
+LOG_DIR = DATA_DIR / "logs"
+REPORT_DIR = DATA_DIR / "reports"
+BACKUP_DIR = DATA_DIR / "backup"
 
 # HTTP
 HTTP_TIMEOUT = 6.0          # 单次请求超时（秒）
