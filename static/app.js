@@ -10,7 +10,7 @@ function apiUrl(path) {
   const abs = path.startsWith("/") ? path : `/${path}`;
   const origin = window.location.origin || "";
   if (!origin || origin === "null" || origin.startsWith("file:")) {
-    return "http://127.0.0.1:8000" + abs;
+    return "http://127.0.0.1:8888" + abs;
   }
   try {
     const u = new URL(abs, origin);
@@ -49,7 +49,7 @@ async function api(path, opts = {}) {
   const resp = await fetch(apiUrl(path), opts);
   const ct = resp.headers.get("content-type") || "";
   if (!ct.includes("application/json")) {
-    throw new Error(`${path} → ${resp.status}（返回的不是 JSON，请用 http://主机:8000/ 打开前端，不要直接打开本地 HTML 文件）`);
+    throw new Error(`${path} → ${resp.status}（返回的不是 JSON，请用 http://主机:8888/ 打开前端，不要直接打开本地 HTML 文件）`);
   }
   const data = await resp.json();
   if (!resp.ok) throw new Error(`${path} → ${resp.status} ${data.detail ? JSON.stringify(data.detail) : ""}`);

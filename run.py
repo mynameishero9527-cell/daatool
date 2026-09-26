@@ -1,4 +1,4 @@
-"""启动脚本：python run.py，浏览器访问 http://127.0.0.1:8000
+"""启动脚本：python run.py，浏览器访问 http://127.0.0.1:8888
 
 日志写入 data/logs：app.log（全部）、error.log（WARNING 及以上），按 10MB 轮转。
 端口可用环境变量 QUANT_PORT 覆盖；QUANT_OPEN_BROWSER=1 时启动后自动打开浏览器。
@@ -72,7 +72,7 @@ if __name__ == "__main__":
     log_config = build_log_config()
     logging.config.dictConfig(log_config)
     _install_excepthooks()
-    port = int(os.environ.get("QUANT_PORT") or 8000)
+    port = int(os.environ.get("QUANT_PORT") or 8888)
     if os.environ.get("QUANT_OPEN_BROWSER") == "1":
         import webbrowser
         threading.Timer(3.0, webbrowser.open, [f"http://127.0.0.1:{port}"]).start()

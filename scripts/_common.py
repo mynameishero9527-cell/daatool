@@ -27,11 +27,11 @@ __all__ = [
 
 
 def env_port() -> int:
-    """QUANT_PORT 非法时回退 8000，报告脚本不能因为配置写错而跟着崩溃。"""
+    """QUANT_PORT 非法时回退 8888，报告脚本不能因为配置写错而跟着崩溃。"""
     try:
-        return int(os.environ.get("QUANT_PORT") or 8000)
+        return int(os.environ.get("QUANT_PORT") or 8888)
     except ValueError:
-        return 8000
+        return 8888
 
 
 def fmt_size(n: int) -> str:

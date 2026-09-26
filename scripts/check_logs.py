@@ -1,4 +1,4 @@
-"""扫描 data/logs 生成异常日志报告：python scripts/check_logs.py [--days 7] [--port 8000]
+"""扫描 data/logs 生成异常日志报告：python scripts/check_logs.py [--days 7] [--port 8888]
 
 报告写入 data/reports/log_report_<时间>.txt，同时覆盖 log_report_latest.txt。
 有 ERROR/CRITICAL 时退出码为 1，便于脚本判断。

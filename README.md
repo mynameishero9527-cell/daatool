@@ -31,7 +31,7 @@
 ```bash
 pip install -r requirements.txt
 python run.py
-# 浏览器访问 http://127.0.0.1:8000
+# 浏览器访问 http://127.0.0.1:8888
 ```
 
 首次启动会自动在后台执行全市场股票同步（约 10 秒），完成后看板统计与推荐榜单即有数据。
@@ -44,7 +44,7 @@ python run.py
 | `update.bat` | 更新：需先关闭服务。备份数据库 → `git pull --ff-only` → 重装依赖，过程写入 `data\logs\update.log` |
 | `check_logs.bat [天数]` | 统计最近 N 天（默认 7）的 WARNING/ERROR/Traceback，检查服务状态，生成报告并用记事本打开 |
 
-需要 Python 3.10+：建议安装到非 C 盘并勾选加入 PATH，或把完整版 Python 目录放到项目内 `runtime\python\`（脚本优先使用）。端口默认 8000，可先 `set QUANT_PORT=8001` 再运行脚本。
+需要 Python 3.10+：建议安装到非 C 盘并勾选加入 PATH，或把完整版 Python 目录放到项目内 `runtime\python\`（脚本优先使用）。端口默认 8888，可先 `set QUANT_PORT=8889` 再运行脚本。
 
 运行期文件全部在项目目录内，不写 C 盘用户目录：
 

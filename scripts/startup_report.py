@@ -1,4 +1,4 @@
-"""启动前生成环境与文件报告：python scripts/startup_report.py [--port 8000]
+"""启动前生成环境与文件报告：python scripts/startup_report.py [--port 8888]
 
 报告写入 data/reports/startup_<时间>.txt，同时覆盖 startup_latest.txt。
 """
@@ -99,7 +99,7 @@ def build(port: int) -> str:
     out += ["", "[文件落盘位置]"]
     for key in ENV_KEYS:
         val = os.environ.get(key)
-        out.append(f"  {key}: {_where(val) if key != 'QUANT_PORT' else (val or '未设置(默认 8000)')}")
+        out.append(f"  {key}: {_where(val) if key != 'QUANT_PORT' else (val or '未设置(默认 8888)')}")
     out += [
         f"  数据目录: {_where(str(DATA_DIR))}",
         f"  日志目录: {_where(str(LOG_DIR))}",

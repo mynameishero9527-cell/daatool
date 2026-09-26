@@ -17,7 +17,7 @@ set "PYTHONNOUSERSITE=1"
 set "PYTHONUTF8=1"
 set "PYTHONIOENCODING=utf-8"
 set "PIP_DISABLE_PIP_VERSION_CHECK=1"
-if not defined QUANT_PORT set "QUANT_PORT=8000"
+if not defined QUANT_PORT set "QUANT_PORT=8888"
 rem 国内下载依赖慢时，去掉下一行开头的 rem 改用清华镜像
 rem if not defined PIP_INDEX_URL set "PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple"
 
