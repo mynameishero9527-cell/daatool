@@ -32,7 +32,8 @@ goto %~1
 
 :venv
 if not defined PY goto :venv_create
-"%PY%" -c "import sys" >nul 2>&1 && exit /b 0
+"%PY%" -c "import sys" >nul 2>&1
+if not errorlevel 1 exit /b 0
 echo 虚拟环境不可用（可能 Python 被卸载或移动），正在重建...
 rmdir /s /q "%VENV%"
 set "PY="
@@ -53,9 +54,11 @@ exit /b 1
 set "BASEPY="
 if exist "%ROOT%\runtime\python\python.exe" set BASEPY="%ROOT%\runtime\python\python.exe"
 if defined BASEPY goto :check_base
-py -3 -c "import sys" >nul 2>&1 && set "BASEPY=py -3"
+py -3 -c "import sys" >nul 2>&1
+if not errorlevel 1 set "BASEPY=py -3"
 if defined BASEPY goto :check_base
-python -c "import sys" >nul 2>&1 && set "BASEPY=python"
+python -c "import sys" >nul 2>&1
+if not errorlevel 1 set "BASEPY=python"
 if defined BASEPY goto :check_base
 echo [错误] 未找到 Python 3.10 及以上版本。可任选一种方式：
 echo   1. 安装 Python 到非 C 盘，例如 D:\Python312，安装时勾选 Add python.exe to PATH
@@ -72,7 +75,9 @@ exit /b 1
 set "REQ=%ROOT%\requirements.txt"
 set "STAMP=%DATA%\cache\requirements.installed"
 if /i "%~2"=="force" goto :deps_install
-if exist "%STAMP%" fc /b "%REQ%" "%STAMP%" >nul 2>&1 && exit /b 0
+if not exist "%STAMP%" goto :deps_install
+fc /b "%REQ%" "%STAMP%" >nul 2>&1
+if not errorlevel 1 exit /b 0
 :deps_install
 echo 正在安装依赖，下载缓存在 data\cache\pip ...
 "%PY%" -m pip install -r "%REQ%"

@@ -30,7 +30,8 @@ if errorlevel 1 goto :fail_logged
 
 echo [2/3] 拉取最新代码 ...
 if not exist "%ROOT%\.git" goto :no_git
-git --version >nul 2>&1 || goto :no_git
+git --version >nul 2>&1
+if errorlevel 1 goto :no_git
 for /f "delims=" %%V in ('git log -1 --format^=%%h') do set "OLDREV=%%V"
 git pull --ff-only >"%OUT%" 2>&1
 set "RC=%errorlevel%"
