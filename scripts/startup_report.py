@@ -15,7 +15,7 @@ from importlib import metadata
 from pathlib import Path
 
 from _common import (BACKUP_DIR, DATA_DIR, DB_PATH, LOG_DIR, REPORT_DIR, ROOT,
-                     fmt_size, inside_project, write_report)
+                     env_port, fmt_size, inside_project, write_report)
 
 PACKAGES = ("fastapi", "uvicorn", "httpx", "apscheduler", "starlette", "pydantic")
 ENV_KEYS = ("TEMP", "TMP", "PIP_CACHE_DIR", "PYTHONPYCACHEPREFIX", "VIRTUAL_ENV", "QUANT_PORT")
@@ -127,7 +127,7 @@ def build(port: int) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--port", type=int, default=int(os.environ.get("QUANT_PORT") or 8000))
+    parser.add_argument("--port", type=int, default=env_port())
     args = parser.parse_args()
     text = build(args.port)
     path = write_report("startup", text)

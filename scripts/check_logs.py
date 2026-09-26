@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import sys
 import urllib.request
@@ -15,7 +14,7 @@ from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from _common import LOG_DIR, fmt_size, write_report
+from _common import LOG_DIR, env_port, fmt_size, write_report
 
 LINE_RE = re.compile(
     r"^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(?:,\d+)? (?P<level>DEBUG|INFO|WARNING|ERROR|CRITICAL) "
@@ -142,7 +141,7 @@ def build(days: int, port: int) -> tuple[str, int]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--days", type=int, default=7)
-    parser.add_argument("--port", type=int, default=int(os.environ.get("QUANT_PORT") or 8000))
+    parser.add_argument("--port", type=int, default=env_port())
     args = parser.parse_args()
     text, code = build(max(1, args.days), args.port)
     path = write_report("log_report", text)

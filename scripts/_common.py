@@ -21,9 +21,17 @@ from app.config import BACKUP_DIR, DATA_DIR, DB_PATH, LOG_DIR, REPORT_DIR  # noq
 KEEP_REPORTS = 30
 
 __all__ = [
-    "ROOT", "DATA_DIR", "DB_PATH", "LOG_DIR", "REPORT_DIR", "BACKUP_DIR",
+    "ROOT", "DATA_DIR", "DB_PATH", "LOG_DIR", "REPORT_DIR", "BACKUP_DIR", "env_port",
     "fmt_size", "inside_project", "write_report",
 ]
+
+
+def env_port() -> int:
+    """QUANT_PORT 非法时回退 8000，报告脚本不能因为配置写错而跟着崩溃。"""
+    try:
+        return int(os.environ.get("QUANT_PORT") or 8000)
+    except ValueError:
+        return 8000
 
 
 def fmt_size(n: int) -> str:

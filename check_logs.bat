@@ -11,7 +11,7 @@ if errorlevel 1 goto :fail
 set "DAYS=%~1"
 if "%DAYS%"=="" set "DAYS=7"
 
-"%PY%" scripts\check_logs.py --days %DAYS% --port %QUANT_PORT%
+"%PY%" scripts\check_logs.py --days %DAYS%
 if exist "%REPORTDIR%\log_report_latest.txt" start "" notepad "%REPORTDIR%\log_report_latest.txt"
 pause
 exit /b 0

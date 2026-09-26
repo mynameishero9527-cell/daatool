@@ -17,7 +17,7 @@ goto :end
 
 :launch
 "%PY%" scripts\launcher_log.py INFO 启动服务 port=%QUANT_PORT%
-"%PY%" scripts\startup_report.py --port %QUANT_PORT%
+"%PY%" scripts\startup_report.py
 echo.
 echo ============================================================
 echo  服务地址: http://127.0.0.1:%QUANT_PORT%
@@ -33,7 +33,7 @@ if "%RC%"=="0" goto :stopped
 "%PY%" scripts\launcher_log.py ERROR 服务异常退出 exit_code=%RC%
 echo.
 echo [错误] 服务异常退出，退出码 %RC%，正在生成异常日志报告...
-"%PY%" scripts\check_logs.py --days 1 --port %QUANT_PORT%
+"%PY%" scripts\check_logs.py --days 1
 pause
 exit /b %RC%
 
