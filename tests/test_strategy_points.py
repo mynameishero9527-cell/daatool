@@ -178,6 +178,7 @@ class StrategyPointsTests(unittest.TestCase):
 
     def test_points_cache_and_light_config(self):
         from app.services import alerts
+        _seed(CODE_OK)
         alerts.invalidate_points_cache()
         first = alerts.get_buy_points(8, backfill=False)
         second = alerts.get_buy_points(8, backfill=False)
