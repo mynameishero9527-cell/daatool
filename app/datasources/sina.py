@@ -289,6 +289,37 @@ def fetch_board_moneyflow(fenlei: int = 0, pages: int = 3, num: int = 80) -> lis
     return out
 
 
+def fetch_board_flow_history(board_code: str, lookback: int = 20) -> list[dict]:
+    """单个板块的主力净流入日序列。net_in 万元，日期用接口 opendate，缺净额的日子不补 0。"""
+    code = (board_code or "").strip()
+    if not code:
+        return []
+    num = max(5, min(int(lookback or 20), 60))
+    url = (
+        "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/"
+        f"MoneyFlow.ssl_bkzj_zjlrqs?page=1&num={num}&sort=opendate&asc=0&bankuai={code}"
+    )
+    resp = tracked_get(SOURCE, url, headers=_BKZJ_HEADERS)
+    rows = resp.json()
+    if not isinstance(rows, list):
+        return []
+    out = []
+    for r in rows:
+        day = str(r.get("opendate") or "")[:10]
+        if len(day) != 10 or day[4] != "-" or day[7] != "-":
+            continue
+        net = _f(r.get("netamount"))
+        if net is None:
+            continue
+        turnover = _f(r.get("turnover"))
+        out.append({
+            "trade_date": day,
+            "net_in": round(net / 10000.0, 2),
+            "amount": round(turnover * 10000.0, 2) if turnover is not None else 0.0,
+        })
+    return out
+
+
 def fetch_news(page: int = 1, size: int = 50) -> list[dict]:
     """新浪财经 7x24 快讯。"""
     resp = tracked_get(SOURCE, _NEWS_URL.format(page=page, size=size))

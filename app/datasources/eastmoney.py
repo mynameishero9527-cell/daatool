@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutTimeout
 
 import httpx
 
-from .base import tracked_get
+from .base import get_health, tracked_get
 
 SOURCE = "东方财富"
 log = logging.getLogger("eastmoney")
@@ -16,9 +16,15 @@ _HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
     "Referer": "https://data.eastmoney.com/bkzj/hy.html",
 }
-_CLIST = (
-    "https://push2delay.eastmoney.com/api/qt/clist/get"
-    "?fid=f62&po=1&pz={pz}&pn=1&np=1&fltt=2&invt=2&fs={fs}&fields=f12,f14,f62,f6"
+_CLIST_HOSTS = (
+    "https://push2.eastmoney.com",
+    "https://88.push2.eastmoney.com",
+    "https://push2delay.eastmoney.com",
+    "https://82.push2.eastmoney.com",
+)
+_CLIST_PATH = (
+    "/api/qt/clist/get?fid=f62&po=1&pz={pz}&pn=1&np=1&fltt=2&invt=2"
+    "&fs={fs}&fields=f12,f14,f62,f6&ut=8dec03ba335b81bf4ebdf7b29ec27d15"
 )
 _FFLOW_PATH = (
     "/api/qt/stock/fflow/daykline/get?lmt={lmt}&klt=101&secid=90.{code}"
@@ -50,11 +56,30 @@ def _f(v) -> float | None:
 
 
 def fetch_board_list(kind: str = "industry", pz: int = 200) -> list[dict]:
-    """板块资金榜。kind=industry 行业 / concept 概念。net_in 万元，amount 万元。"""
+    """板块资金榜。kind=industry 行业 / concept 概念。net_in 万元，amount 万元。
+
+    push2 节点经常 502，换主机重试；全部失败只记一次熔断，避免一次手动拉取打满东财熔断。
+    """
     fs = FS_HY if kind != "concept" else FS_GN
-    resp = tracked_get(SOURCE, _CLIST.format(pz=max(20, min(int(pz or 200), 500)), fs=fs),
-                       headers=_HEADERS)
-    data = (resp.json() or {}).get("data") or {}
+    path = _CLIST_PATH.format(pz=max(20, min(int(pz or 200), 500)), fs=fs)
+    payload = None
+    last: Exception | None = None
+    for host in _CLIST_HOSTS:
+        try:
+            with httpx.Client(timeout=8.0, headers=_HEADERS, follow_redirects=True) as client:
+                resp = client.get(host + path)
+                resp.raise_for_status()
+                body = resp.json()
+            if (body or {}).get("data"):
+                payload = body
+                get_health(SOURCE).record_success(1)
+                break
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+    if payload is None:
+        get_health(SOURCE).record_failure(str(last or "空响应")[:200])
+        raise RuntimeError(f"东财板块列表不可用: {last}") from last
+    data = (payload or {}).get("data") or {}
     rows = data.get("diff") or []
     out = []
     seen: set[str] = set()
