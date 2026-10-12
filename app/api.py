@@ -584,13 +584,13 @@ def sector_flow_trend(dim: str = "industry", name: str = "",
 
 @router.post("/sector/flow-sync")
 def sector_flow_sync():
-    local = sector.record_daily_flow()
-    remote = sector.pull_remote_flow()
-    em_hy = sector.pull_em_flow_history("industry", force=True)
-    em_gn = sector.pull_em_flow_history("concept", force=True)
-    vol = market.record_market_volume(local.get("date") or "")
-    return {"ok": True, "local": local, "remote": remote, "em_hy": em_hy, "em_gn": em_gn,
-            "market_vol": vol, "stats": sector.flow_history_stats()}
+    data = sector.sync_flow_sources()
+    try:
+        data["market_vol"] = market.record_market_volume((data.get("local") or {}).get("date") or "")
+    except Exception as exc:  # noqa: BLE001
+        data["market_vol"] = {"error": str(exc)[:180]}
+    data["stats"] = sector.flow_history_stats()
+    return data
 
 
 @router.get("/sector/flow-bar/stocks")

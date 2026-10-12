@@ -6792,11 +6792,24 @@ function loadFinanceState(fin, flow, intel) {
 
 window.syncSectorFlow = async () => {
   const ib = $("#intelState");
-  if (ib) ib.innerHTML = '<div class="muted">正在拉取新浪板块资金…</div>';
+  if (ib) ib.innerHTML = '<div class="muted">正在拉取板块资金（新浪当日与日K，东财失败不中断）…</div>';
   try {
     const d = await post("/api/sector/flow-sync");
-    const st = d.stats || {};
-    if (ib) ib.innerHTML = `<div class="muted">独立源已写入 ${d.remote?.industry || 0} 个行业、${d.remote?.concept || 0} 个概念（账本日 ${esc(d.remote?.date || st.last_date || "")}）</div>`;
+    const remote = d.remote || {};
+    const hist = d.sina_history || {};
+    const emErr = [d.em_hy, d.em_gn].map((x) => (x && x.error) || "").filter(Boolean)[0];
+    const parts = [
+      `新浪当日 ${remote.industry || 0} 个行业、${remote.concept || 0} 个概念`,
+      `日K ${hist.days || 0} 个交易日、${hist.rows || 0} 条`,
+    ];
+    if (remote.error) parts.push(`当日拉取失败：${remote.error}`);
+    if (hist.error) parts.push(`日K失败：${hist.error}`);
+    if (emErr) parts.push(`东财日K暂不可用：${emErr}`);
+    else if ((d.em_hy && d.em_hy.rows) || (d.em_gn && d.em_gn.rows)) {
+      parts.push(`东财写入 ${(d.em_hy && d.em_hy.rows) || 0}+${(d.em_gn && d.em_gn.rows) || 0} 条`);
+    }
+    const cls = d.ok ? "muted" : "empty";
+    if (ib) ib.innerHTML = `<div class="${cls}">${parts.map((t) => esc(t)).join(" · ")}</div>`;
     loadSettings();
   } catch (err) {
     if (ib) ib.innerHTML = `<div class="empty">拉取失败：${esc(err.message || err)}</div>`;

@@ -529,6 +529,92 @@ def pull_remote_flow() -> dict:
     return {"date": asof, "industry": len(hy), "concept": len(gn), "source": "sina", "rows": len(pairs)}
 
 
+def _upsert_flow_rows(rows: list[tuple]) -> None:
+    if not rows:
+        return
+    try:
+        executemany(
+            """INSERT INTO sector_flow_daily(dim,name,trade_date,net_in,amount,stocks,source,board_code)
+               VALUES(?,?,?,?,?,?,?,?)
+               ON CONFLICT(dim,name,trade_date) DO UPDATE SET
+                 net_in=excluded.net_in, amount=COALESCE(excluded.amount, sector_flow_daily.amount),
+                 source=excluded.source, board_code=excluded.board_code""",
+            rows)
+    except Exception:  # noqa: BLE001
+        executemany(
+            """INSERT INTO sector_flow_daily(dim,name,trade_date,net_in,amount,stocks)
+               VALUES(?,?,?,?,?,?)
+               ON CONFLICT(dim,name,trade_date) DO UPDATE SET net_in=excluded.net_in""",
+            [(a, b, c, d, e, f) for a, b, c, d, e, f, *_ in rows])
+
+
+def pull_sina_flow_history(lookback: int = 20, industry_n: int = 36, concept_n: int = 24) -> dict:
+    """新浪板块资金日序列。东财列表 502 时，手动拉取仍能落下多个交易日。"""
+    lookback = max(5, min(int(lookback or 20), 40))
+    industry_n = max(1, min(int(industry_n or 36), 80))
+    concept_n = max(1, min(int(concept_n or 24), 80))
+    groups = [
+        ("remote_hy", sina.fetch_board_moneyflow(0, pages=1, num=industry_n)[:industry_n]),
+        ("remote_gn", sina.fetch_board_moneyflow(1, pages=1, num=concept_n)[:concept_n]),
+    ]
+    boards = [(dim, b) for dim, rows in groups for b in rows if b.get("board_code")]
+
+    def one(item: tuple) -> tuple:
+        dim, board = item
+        hist = sina.fetch_board_flow_history(board["board_code"], lookback)
+        return dim, board, hist
+
+    payload: list[tuple] = []
+    ok = fail = 0
+    dates: set[str] = set()
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        futs = [pool.submit(one, item) for item in boards]
+        for fut in as_completed(futs):
+            try:
+                dim, board, hist = fut.result()
+                ok += 1
+                for p in hist:
+                    dates.add(p["trade_date"])
+                    payload.append((
+                        dim, board["name"], p["trade_date"], p["net_in"], p.get("amount") or 0,
+                        0, "sina", board.get("board_code") or "",
+                    ))
+            except Exception as exc:  # noqa: BLE001
+                fail += 1
+                log.warning("新浪板块资金日K失败: %s", exc)
+    _upsert_flow_rows(payload)
+    return {"rows": len(payload), "boards": ok, "fail": fail, "days": len(dates), "source": "sina"}
+
+
+def _safe_flow(label: str, fn) -> dict:
+    try:
+        out = fn()
+        if isinstance(out, dict):
+            return out
+        return {"rows": 0, "note": label}
+    except Exception as exc:  # noqa: BLE001
+        log.warning("%s失败: %s", label, exc)
+        return {"rows": 0, "error": str(exc)[:180]}
+
+
+def sync_flow_sources() -> dict:
+    """手动拉取：本地账本、新浪当日、新浪日K、东财日K。任一路失败不挡住已成功的写入。"""
+    local = record_daily_flow()
+    remote = _safe_flow("新浪板块资金", pull_remote_flow)
+    history = _safe_flow("新浪板块资金日K", lambda: pull_sina_flow_history())
+    em_hy = _safe_flow("东财行业资金", lambda: pull_em_flow_history("industry", force=True))
+    em_gn = _safe_flow("东财概念资金", lambda: pull_em_flow_history("concept", force=True))
+    wrote = sum(int((item or {}).get("rows") or 0) for item in (remote, history, em_hy, em_gn))
+    return {
+        "ok": wrote > 0,
+        "local": local,
+        "remote": remote,
+        "sina_history": history,
+        "em_hy": em_hy,
+        "em_gn": em_gn,
+    }
+
+
 def _em_distinct_days(em_dim: str) -> int:
     return query("SELECT COUNT(DISTINCT trade_date) AS n FROM sector_flow_daily WHERE dim=?",
                  (em_dim,))[0]["n"]
